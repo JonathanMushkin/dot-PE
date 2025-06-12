@@ -1,0 +1,16 @@
+[project]
+name = "tbd"
+version = "0.1.0"
+authors = [
+    { name = "Jonathan Mushkin", email = "yonatanmushkin@gmail.com" },
+]
+description = "A short description of your project"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+]
+dependencies = [
+    "cogwheel-pe>=1.2.0",
+] 
