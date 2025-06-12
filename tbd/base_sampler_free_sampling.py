@@ -21,12 +21,7 @@ import numpy as np
 from cogwheel import gw_plotting, plotting
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, mkdirs
 from tbd import config, evidence_calculator, posterior
-from tbd.sampler_free_utils import (
-    setup_logger,
-    safe_logsumexp,
-    get_device_per_dtype,
-    torch_dtype,
-)
+from tbd.sampler_free_utils import setup_logger
 from tbd.marginalization import (
     MarginalizationExtrinsicSamplerFreeLikelihood,
 )

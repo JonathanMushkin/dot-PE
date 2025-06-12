@@ -13,4 +13,13 @@ classifiers = [
 ]
 dependencies = [
     "cogwheel-pe>=1.2.0",
+    "pandas",
+    "scipy",
+    "numpy",
+    "torch",
+    "matplotlib",
+    "gwfast",
+    "tqdm",
+    "lal",
+    "lalsimulation"
 ] 

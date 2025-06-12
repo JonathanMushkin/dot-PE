@@ -10,7 +10,8 @@ from typing import List, Tuple, Union
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
-
+from scipy.stats import chi2
+from lal import GreenwichMeanSiderealTime
 from cogwheel.data import EventData
 from cogwheel.posterior import Posterior
 from cogwheel.waveform import WaveformGenerator
@@ -222,8 +223,8 @@ def find_bestfit_parameters(
     Perform sampling run using BlockLikelihood object and configuration
     parameters. Create rundir in event_dir to store the run results.
     """
-    if isinstance(event, EventData):
-        event_data = event
+
+    event_data = get_event_data(event)
 
     tgps = event_data.tgps
     gmst = GreenwichMeanSiderealTime(tgps)
@@ -328,7 +329,7 @@ def get_par_dic_0(
     par_dic_0 = post.likelihood.par_dic_0
     if save_path is not None:
         with open(save_path, "w") as f:
-            json.dump(post.par_dic_0, f)
+            json.dump(par_dic_0, f)
     return par_dic_0
 
 

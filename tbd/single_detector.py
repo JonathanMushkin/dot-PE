@@ -12,7 +12,6 @@ import itertools
 import numpy as np
 import pandas as pd
 from lal import GreenwichMeanSiderealTime
-from typing import Dict, List, Optional, Tuple, Union
 
 # add cogwheel path
 
