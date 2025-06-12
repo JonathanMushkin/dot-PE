@@ -8,15 +8,15 @@ import random
 
 
 from cogwheel import utils
-from cogwheel.sampler_free.base_sampler_free_sampling import (
+from tbd.base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
 )
-from cogwheel.sampler_free.sampler_free_utils import (
+from tbd.sampler_free_utils import (
     safe_logsumexp,
 )
-from cogwheel.sampler_free import config
-from cogwheel.sampler_free import evidence_calculator
+from tbd import config
+from tbd import evidence_calculator
 
 
 class BlockLikelihoodEvaluator(utils.JSONMixin, Loggable):

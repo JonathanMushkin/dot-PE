@@ -21,9 +21,9 @@ from cogwheel.data import EventData
 from cogwheel.likelihood import RelativeBinningLikelihood, CBCLikelihood
 from cogwheel.posterior import Posterior
 from cogwheel.waveform import WaveformGenerator
-from cogwheel.sampler_free.single_detector import BlockLikelihood
-from cogwheel.sampler_free.evidence_calculator import LinearFree
-from cogwheel.sampler_free.sampler_free_utils import get_event_data
+from tbd.single_detector import BlockLikelihood
+from tbd.evidence_calculator import LinearFree
+from tbd.sampler_free_utils import get_event_data
 
 
 class Vetoer:

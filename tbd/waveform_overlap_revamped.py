@@ -16,9 +16,23 @@ from scipy.stats import qmc
 from lal import MSUN_SI
 from lalsimulation import SimInspiralTransformPrecessingNewInitialConditions
 
+# COGWHEEL imports
 from cogwheel import data, gw_utils, posterior, utils, waveform
-from cogwheel.sampler_free import config
-from cogwheel.sampler_free.sampler_free_utils import setup_logger
+from cogwheel.likelihood import RelativeBinningLikelihood
+
+# TBD imports
+from tbd import config
+from tbd.evidence_calculator import (
+    IntrinsicSampleProcessor,
+    LinearFree,
+)
+from tbd.sampler_free_utils import (
+    flex_reshape,
+    get_device_per_dtype,
+    torch_dtype,
+    safe_move_and_cast,
+    setup_logger,
+)
 
 import cProfile
 import pstats
@@ -28,22 +42,6 @@ from scipy.sparse import coo_matrix, lil_matrix
 
 import torch
 from torch.types import Device
-
-from cogwheel import utils
-from cogwheel import gw_utils
-from cogwheel import data
-from cogwheel import waveform
-from cogwheel.likelihood import RelativeBinningLikelihood
-from cogwheel.sampler_free.evidence_calculator import (
-    IntrinsicSampleProcessor,
-    LinearFree,
-)
-from cogwheel.sampler_free.sampler_free_utils import (
-    flex_reshape,
-    get_device_per_dtype,
-    torch_dtype,
-    safe_move_and_cast,
-)
 
 PRECOMPUTE_BLOCKSIZE = 128
 EVENT_DATA_KWARGS = {

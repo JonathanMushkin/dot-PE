@@ -20,12 +20,14 @@ import numpy as np
 
 from cogwheel import utils, gw_plotting, plotting
 
-from cogwheel.sampler_free import config, evidence_calculator, posterior
-from cogwheel.sampler_free.sampler_free_utils import (
+from tbd import config, evidence_calculator, posterior
+from tbd.sampler_free_utils import (
     setup_logger,
     safe_logsumexp,
+    get_device_per_dtype,
+    torch_dtype,
 )
-from cogwheel.sampler_free.marginalization import (
+from tbd.marginalization import (
     MarginalizationExtrinsicSamplerFreeLikelihood,
 )
 

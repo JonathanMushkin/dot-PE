@@ -27,11 +27,11 @@ from cogwheel import gw_utils
 from cogwheel import data
 from cogwheel import waveform
 from cogwheel.likelihood import RelativeBinningLikelihood
-from cogwheel.sampler_free.evidence_calculator import (
+from tbd.evidence_calculator import (
     IntrinsicSampleProcessor,
     LinearFree,
 )
-from cogwheel.sampler_free.sampler_free_utils import (
+from tbd.sampler_free_utils import (
     flex_reshape,
     get_device_per_dtype,
     torch_dtype,

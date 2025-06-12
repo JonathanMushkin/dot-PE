@@ -41,20 +41,22 @@ from cogwheel import skyloc_angles
 from cogwheel import utils
 from cogwheel import waveform
 from cogwheel.likelihood import RelativeBinningLikelihood, LookupTable
-from cogwheel.sampler_free.base_sampler_free_sampling import (
+
+# TBD imports
+from tbd.base_sampler_free_sampling import (
     get_n_effective_total_i_e,
 )
-from cogwheel.sampler_free.evidence_calculator import LinearFree
-from cogwheel.sampler_free.single_detector import BlockLikelihood
-from cogwheel.sampler_free.sampler_free_sampling import (
+from tbd.evidence_calculator import LinearFree
+from tbd.single_detector import BlockLikelihood
+from tbd.sampler_free_sampling import (
     CoherentExtrinsicSamplesGenerator,
     BlockLikelihoodEvaluator,
 )
-from cogwheel.sampler_free.sampler_free_utils import (
+from tbd.sampler_free_utils import (
     get_event_data,
     safe_logsumexp,
 )
-from cogwheel.sampler_free.marginalization import (
+from tbd.marginalization import (
     MarginalizationExtrinsicSamplerFreeLikelihood,
 )
 
