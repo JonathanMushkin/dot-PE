@@ -18,8 +18,8 @@ from numba import njit
 from math import ceil
 import numpy as np
 
-from cogwheel import utils, gw_plotting, plotting
-
+from cogwheel import gw_plotting, plotting
+from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, mkdirs
 from tbd import config, evidence_calculator, posterior
 from tbd.sampler_free_utils import (
     setup_logger,
@@ -230,7 +230,7 @@ class Loggable:
             self.logger.log(level, msg)
 
 
-class BaseSamplerFreeSampler(ABC, utils.JSONMixin):
+class BaseSamplerFreeSampler(ABC, JSONMixin):
     """
     See https://en.wiktionary.org/wiki/soapless_soap
 
@@ -274,8 +274,8 @@ class BaseSamplerFreeSampler(ABC, utils.JSONMixin):
         likelihood,
         prior,
         seed=None,
-        dir_permissions=utils.DIR_PERMISSIONS,
-        file_permissions=utils.FILE_PERMISSIONS,
+        dir_permissions=DIR_PERMISSIONS,
+        file_permissions=FILE_PERMISSIONS,
     ):
         self.dir_permissions = dir_permissions
         self.file_permissions = file_permissions
@@ -456,7 +456,7 @@ class BaseSamplerFreeSampler(ABC, utils.JSONMixin):
         rundir = Path(rundir)
         self.cur_rundir = rundir
         tempdir = rundir / "temp"
-        utils.mkdirs(tempdir, self.dir_permissions)
+        mkdirs(tempdir, self.dir_permissions)
         self.to_json(
             rundir,
             dir_permissions=self.dir_permissions,

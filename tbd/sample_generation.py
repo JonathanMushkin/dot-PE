@@ -3,21 +3,21 @@ Generate intrinsic samples and waveforms for a bank.
 # TDOD: Add m_arr to the `bank_config.json` file.
 """
 
-from pathlib import Path
+import argparse
 import json
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.stats import qmc
 from lal import MSUN_SI
 from lalsimulation import SimInspiralTransformPrecessingNewInitialConditions
-
-from cogwheel import gw_utils, gw_prior, utils
+from cogwheel.gw_prior.mass import UniformDetectorFrameMassesPrior
 from cogwheel.gw_prior import UniformDiskInplaneSpinsIsotropicInclinationPrior
 from cogwheel.gw_prior import UniformEffectiveSpinPrior
-from cogwheel.data import DATADIR
+from cogwheel.utils import NumpyEncoder
+from cogwheel.gw_utils import m1m2_to_mchirp
 
-from cogwheel.sampler_free import waveform_creation
-import argparse
+from tbd import waveform_creation
 
 
 class IntrinsicSamplesGenerator:
@@ -52,7 +52,7 @@ class IntrinsicSamplesGenerator:
                 )
             u = qmc.Halton(d=2).random(n).T
 
-        mass_prior = gw_prior.mass.UniformDetectorFrameMassesPrior(
+        mass_prior = UniformDetectorFrameMassesPrior(
             mchirp_range=(mchirp_min, mchirp_max), q_min=q_min
         )
 
@@ -115,12 +115,12 @@ class IntrinsicSamplesGenerator:
         logm2 = logm1 + (1 - u[1]) * np.log(q_min)
         m1, m2 = np.exp(logm1), np.exp(logm2)
 
-        mchirp = gw_utils.m1m2_to_mchirp(m1, m2)
+        mchirp = m1m2_to_mchirp(m1, m2)
         lnq = np.log(m2 / m1)
         # the
-        mchirp_min = gw_utils.m1m2_to_mchirp(m_min, m_min * q_min)
-        mchirp_max = gw_utils.m1m2_to_mchirp(m_max, m_max)
-        mass_prior = gw_prior.mass.UniformDetectorFrameMassesPrior(
+        mchirp_min = m1m2_to_mchirp(m_min, m_min * q_min)
+        mchirp_max = m1m2_to_mchirp(m_max, m_max)
+        mass_prior = UniformDetectorFrameMassesPrior(
             mchirp_range=(mchirp_min, mchirp_max), q_min=q_min
         )
 
@@ -539,7 +539,7 @@ def create_physical_prior_bank(
                 "approximant": approximant,
             },
             fp=fp,
-            cls=utils.NumpyEncoder,
+            cls=NumpyEncoder,
             indent=4,
         )
     intrinsic_samples.to_feather(bank_file_path)
@@ -619,7 +619,7 @@ def main(
                 "approximant": approximant,
             },
             fp=fp,
-            cls=utils.NumpyEncoder,
+            cls=NumpyEncoder,
             indent=4,
         )
     intrinsic_samples.to_feather(bank_file_path)

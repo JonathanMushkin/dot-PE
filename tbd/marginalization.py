@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import sparse
 from scipy.special import logsumexp
-from cogwheel import utils
+
+from cogwheel.utils import exp_normalize, n_effective
 from cogwheel.likelihood.marginalization import CoherentScoreHM
 from cogwheel.likelihood.marginalization.base import MarginalizationInfoHM
 from cogwheel.likelihood import MarginalizedExtrinsicLikelihood
@@ -42,11 +43,9 @@ class CoherentScoreSamplerFree(CoherentScoreHM):
             d_h_timeseries, times, axis=-2
         )
 
-        t_arrival_lnprob = self._incoherent_t_arrival_lnprob(
-            d_h_timeseries, h_h
-        )  # dt
+        t_arrival_lnprob = self._incoherent_t_arrival_lnprob(d_h_timeseries, h_h)  # dt
         self.sky_dict.apply_tdet_prior(t_arrival_lnprob)
-        t_arrival_prob = utils.exp_normalize(t_arrival_lnprob, axis=1)
+        t_arrival_prob = exp_normalize(t_arrival_lnprob, axis=1)
 
         i_chunk = 0
         marginalization_info = self._get_marginalization_info_chunk(
@@ -66,15 +65,13 @@ class CoherentScoreSamplerFree(CoherentScoreHM):
                 break
 
             if marginalization_info.n_effective > 2 and (
-                marginalization_info.lnl_marginalized
-                < lnl_marginalized_threshold
+                marginalization_info.lnl_marginalized < lnl_marginalized_threshold
             ):  # Worthless point
                 break
 
             # Hybridize with KDE of the weighted samples as next proposal:
             t_arrival_prob = 0.5 * (
-                self._kde_t_arrival_prob(marginalization_info, times)
-                + t_arrival_prob
+                self._kde_t_arrival_prob(marginalization_info, times) + t_arrival_prob
             )
 
             marginalization_info.update(
@@ -127,8 +124,8 @@ class CoherentScoreSamplerFree(CoherentScoreHM):
         n_qmc = len(q_inds)
         tdet_inds = self._get_tdet_inds(t_arrival_prob, q_inds)
 
-        sky_inds, sky_prior, physical_mask = (
-            self.sky_dict.get_sky_inds_and_prior(tdet_inds[1:] - tdet_inds[0])
+        sky_inds, sky_prior, physical_mask = self.sky_dict.get_sky_inds_and_prior(
+            tdet_inds[1:] - tdet_inds[0]
         )  # q, q, q
 
         # Apply physical mask (sensible time delays):
@@ -153,9 +150,7 @@ class CoherentScoreSamplerFree(CoherentScoreHM):
                 flip_psi=np.array([], bool),
             )
 
-        t_first_det = (
-            times[tdet_inds[0]] + self._qmc_sequence["t_fine"][q_inds]
-        )
+        t_first_det = times[tdet_inds[0]] + self._qmc_sequence["t_fine"][q_inds]
 
         dh_qo, hh_qo = self._get_dh_hh_qo(
             sky_inds, q_inds, t_first_det, times, d_h_timeseries, h_h
@@ -224,15 +219,11 @@ class CoherentScoreSamplerFree(CoherentScoreHM):
         threshold = np.max(max_over_distance_lnl) - self.DLNL_THRESHOLD
         important = np.where(max_over_distance_lnl > threshold)
 
-        ln_numerators_prior = +np.log(sky_prior)[important[0]] - np.log(
-            self._nphi
-        )  # i
+        ln_numerators_prior = +np.log(sky_prior)[important[0]] - np.log(self._nphi)  # i
 
         ln_numerators_posterior = (
             ln_numerators_prior
-            + self.lookup_table.lnlike_marginalized(
-                dh_qo[important], hh_qo[important]
-            )
+            + self.lookup_table.lnlike_marginalized(dh_qo[important], hh_qo[important])
         )  # i
 
         return (
@@ -348,7 +339,7 @@ class MarginalizationInfoSamplerFree(MarginalizationInfoHM):
             )  # q
 
         ln_weights = self.ln_numerators - np.log(denominators)
-        self.weights = utils.exp_normalize(ln_weights)
+        self.weights = exp_normalize(ln_weights)
 
         weights_q = sparse.coo_array(
             (self.weights, (np.zeros_like(self.q_inds), self.q_inds))
@@ -356,7 +347,7 @@ class MarginalizationInfoSamplerFree(MarginalizationInfoHM):
 
         self.weights_q = weights_q[weights_q > 0]
 
-        self.n_effective = utils.n_effective(self.weights_q)
+        self.n_effective = n_effective(self.weights_q)
         self.lnl_marginalized = logsumexp(ln_weights) - np.log(total_n_qmc)
 
         ln_prior_weights = self.ln_numerators_prior - np.log(denominators)
@@ -368,7 +359,7 @@ class MarginalizationInfoSamplerFree(MarginalizationInfoHM):
         ).toarray()[0]
 
         self.prior_weights_q = prior_weights_q[prior_weights_q > 0]
-        self.n_effective_prior = utils.n_effective(self.prior_weights_q)
+        self.n_effective_prior = n_effective(self.prior_weights_q)
 
     def update(self, other):
         """
@@ -453,9 +444,7 @@ class MarginalizationInfoSamplerFree(MarginalizationInfoHM):
         self.__post_init__()  # Update derived attributes
 
 
-class MarginalizationExtrinsicSamplerFreeLikelihood(
-    MarginalizedExtrinsicLikelihood
-):
+class MarginalizationExtrinsicSamplerFreeLikelihood(MarginalizedExtrinsicLikelihood):
     """
     MarginalizedExtrinsicLikelihood for sampler-free methods.
     """
@@ -521,9 +510,7 @@ class MarginalizationExtrinsicSamplerFreeLikelihood(
         for i_m, i_p in np.ndindex(n_m, n_p):
             dh_mptdi[i_m, i_p] = d_h_weights[i_m] @ h_mpbi[i_m, i_p].conj()
 
-        dh_imptd = np.moveaxis(dh_mptdi, -1, 0).reshape(
-            n_i, n_m, n_p, n_t, n_d
-        )
+        dh_imptd = np.moveaxis(dh_mptdi, -1, 0).reshape(n_i, n_m, n_p, n_t, n_d)
 
         m_inds = list(m_inds)
         mprime_inds = list(mprime_inds)
@@ -559,9 +546,9 @@ class MarginalizationExtrinsicSamplerFreeLikelihood(
         hh_mpdiagonal = h_h[:, np.equal(self.m_inds, self.mprime_inds)][
             :, (0, 1), (0, 1)
         ].real  # mpd
-        chi_squared = np.einsum(
-            "imptd->tid", np.abs(d_h_timeseries)
-        ) ** 2 / np.einsum("impd->id", hh_mpdiagonal)  # tid
+        chi_squared = np.einsum("imptd->tid", np.abs(d_h_timeseries)) ** 2 / np.einsum(
+            "impd->id", hh_mpdiagonal
+        )  # tid
 
         return np.moveaxis(
             self.beta_temperature / 2 * chi_squared, (0, 1, 2), (2, 0, 1)

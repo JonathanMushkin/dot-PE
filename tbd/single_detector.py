@@ -12,22 +12,21 @@ import itertools
 import numpy as np
 import pandas as pd
 from lal import GreenwichMeanSiderealTime
-from scipy.stats import chi2
-import matplotlib.pyplot as plt
+from typing import Dict, List, Optional, Tuple, Union
 
 # add cogwheel path
 
 from cogwheel import skyloc_angles
-from cogwheel import utils
-from cogwheel import gw_utils
-from cogwheel.sampler_free.base_sampler_free_sampling import (
+from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS
+from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delays
+from tbd.base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
 )
-from cogwheel.sampler_free import evidence_calculator
+from tbd import evidence_calculator
 
 
-class BlockLikelihood(utils.JSONMixin, Loggable):
+class BlockLikelihood(JSONMixin, Loggable):
     """
     A class with the ability to combine intrinsic and extrinsic samples
     into likelihood evaluations, with optimization over distance and
@@ -69,8 +68,8 @@ class BlockLikelihood(utils.JSONMixin, Loggable):
         int_block_size=512,
         ext_block_size=512,
         min_bestfit_lnlike_to_keep=None,
-        dir_permissions=utils.DIR_PERMISSIONS,
-        file_permissions=utils.FILE_PERMISSIONS,
+        dir_permissions=DIR_PERMISSIONS,
+        file_permissions=FILE_PERMISSIONS,
         full_intrinsic_indices=None,
     ):
         """
@@ -681,17 +680,15 @@ class BlockLikelihood(utils.JSONMixin, Loggable):
         tgps = self.likelihood.event_data.tgps
 
         lat, lon = skyloc_angles.cart3d_to_latlon(
-            skyloc_angles.normalize(gw_utils.DETECTORS[det_name].location)
+            skyloc_angles.normalize(DETECTORS[det_name].location)
         )
-        # r0 = gw_utils.get_fplus_fcross_0(det_name, lat, lon).squeeze()
+        # r0 = get_fplus_fcross_0(det_name, lat, lon).squeeze()
 
         par_dic = self.transform_par_dic_by_sky_poisition(
             det_name, par_dic_0, lon, lat, tgps
         )
 
-        delay = gw_utils.get_geocenter_delays(det_name, par_dic["lat"], par_dic["lon"])[
-            0
-        ]
+        delay = get_geocenter_delays(det_name, par_dic["lat"], par_dic["lon"])[0]
         tcoarse = self.likelihood.event_data.tcoarse
         t_grid = (np.arange(n_t) - n_t // 2) * (
             self.likelihood.event_data.times[1] * dt_fraction
@@ -731,10 +728,10 @@ class BlockLikelihood(utils.JSONMixin, Loggable):
         """
         # use lat, lon of maximal response:
         lat, lon = skyloc_angles.cart3d_to_latlon(
-            skyloc_angles.normalize(gw_utils.DETECTORS[det_name].location)
+            skyloc_angles.normalize(DETECTORS[det_name].location)
         )
 
-        fpfc0 = gw_utils.get_fplus_fcross_0(det_name, lat, lon).squeeze()
+        fpfc0 = get_fplus_fcross_0(det_name, lat, lon).squeeze()
         arg_r0 = np.arctan2(fpfc0[1], fpfc0[0])
         # psi0 satisfy fplus = 1, fcross = 0
 
@@ -775,8 +772,8 @@ class BlockLikelihood(utils.JSONMixin, Loggable):
                 skyloc_angles.ra_to_lon(par_dic["ra"], gmst),
             )
 
-        timedelay = gw_utils.get_geocenter_delays(det_name, *old_skyloc)[0]
-        new_timedelay = gw_utils.get_geocenter_delays(
+        timedelay = get_geocenter_delays(det_name, *old_skyloc)[0]
+        new_timedelay = get_geocenter_delays(
             det_name, new_par_dic["lat"], new_par_dic["lon"]
         )[0]
 
@@ -785,8 +782,8 @@ class BlockLikelihood(utils.JSONMixin, Loggable):
         new_par_dic["t_geocenter"] = par_dic["t_geocenter"] + timedelay - new_timedelay
 
         # polarization response must agree
-        response = gw_utils.get_fplus_fcross_0(det_name, *old_skyloc).squeeze()
-        new_response = gw_utils.get_fplus_fcross_0(
+        response = get_fplus_fcross_0(det_name, *old_skyloc).squeeze()
+        new_response = get_fplus_fcross_0(
             det_name, new_par_dic["lat"], new_par_dic["lon"]
         ).squeeze()
         new_par_dic["d_luminosity"] = par_dic["d_luminosity"] * np.sqrt(

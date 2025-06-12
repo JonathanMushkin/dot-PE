@@ -1,5 +1,5 @@
 """
-Classes and methods to perform single-detector vetoing.
+Veto module for sampler free inference.
 """
 
 import argparse
@@ -9,18 +9,16 @@ from typing import List, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
-from lal import GreenwichMeanSiderealTime
 from numpy.typing import NDArray
-from scipy.stats import chi2
 
-
-from cogwheel import skyloc_angles
-from cogwheel import utils
-from cogwheel import gw_utils
 from cogwheel.data import EventData
-from cogwheel.likelihood import RelativeBinningLikelihood, CBCLikelihood
 from cogwheel.posterior import Posterior
 from cogwheel.waveform import WaveformGenerator
+from cogwheel.utils import mkdirs, get_rundir, NumpyEncoder
+from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delays
+from cogwheel import skyloc_angles
+from cogwheel.likelihood import RelativeBinningLikelihood, CBCLikelihood
+
 from tbd.single_detector import BlockLikelihood
 from tbd.evidence_calculator import LinearFree
 from tbd.sampler_free_utils import get_event_data
@@ -232,20 +230,21 @@ def find_bestfit_parameters(
     det_name = event_data.detector_names[0]
     tempdir = rundir / "temp"
     if not tempdir.exists():
-        utils.mkdirs(tempdir)
+        mkdirs(tempdir)
     print("Starting run....")
 
-    # fix sky position to abovbe detector
+    # fix sky position to above detector
     lat, lon = skyloc_angles.cart3d_to_latlon(
-        skyloc_angles.normalize(gw_utils.DETECTORS[det_name[0]].location)
+        skyloc_angles.normalize(DETECTORS[det_name[0]].location)
     )
-    r0 = gw_utils.get_fplus_fcross_0(det_name, lat, lon).squeeze()
+    r0 = get_fplus_fcross_0(det_name, lat, lon).squeeze()
 
     par_dic = block_likelihood.transform_par_dic_by_sky_poisition(
         det_name, par_dic_0, lon, lat, tgps
     )
 
-    delay = gw_utils.get_geocenter_delays(det_name, par_dic["lat"], par_dic["lon"])[0]
+    # fix time to be at the geocenter
+    delay = get_geocenter_delays(det_name, par_dic["lat"], par_dic["lon"])[0]
     tcoarse = block_likelihood.likelihood.event_data.tcoarse
     t_grid = (np.arange(n_t) - n_t // 2) * (
         block_likelihood.likelihood.event_data.times[1] * dt_fraction
@@ -554,8 +553,8 @@ def main(
 
     rundir_home = Path(rundir_home)
     if not rundir_home.exists():
-        utils.mkdirs(rundir_home)
-    rundir = utils.get_rundir(rundir_home)
+        mkdirs(rundir_home)
+    rundir = get_rundir(rundir_home)
 
     if par_dic_0 is None:
         par_dic_0 = get_par_dic_0(event_data, bank_folder)
@@ -584,7 +583,7 @@ def main(
         blocksize,
     )
     with open(rundir / "bestfit_metadata.json", "w", encoding="utf-8") as fp:
-        json.dump(metadata, fp, cls=utils.NumpyEncoder, indent=4)
+        json.dump(metadata, fp, cls=NumpyEncoder, indent=4)
     with open(rundir / "bestfit_parameters.json", "w", encoding="utf-8") as fp:
         json.dump(bestfit_par_dic, fp, indent=4)
 
@@ -613,7 +612,7 @@ def main(
             sf=sf,
             complex_overlaps=complex_overlaps,
         )
-        json.dump(results, f, cls=utils.NumpyEncoder, indent=4)
+        json.dump(results, f, cls=NumpyEncoder, indent=4)
 
     return rundir
 

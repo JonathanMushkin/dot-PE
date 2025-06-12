@@ -7,26 +7,26 @@ TODO: results are not stable. get nan overlaps. Need to fix JM 2025-02-11
 """
 
 import argparse
-from pathlib import Path
+import cProfile
+from datetime import datetime
 import json
 import time
-import cProfile
+from pathlib import Path
 import pstats
-from typing import Union, List, Tuple
-from datetime import datetime
+from typing import Dict, List, Tuple, Union
+
 from tqdm import tqdm
 from scipy.sparse import coo_matrix, lil_matrix
-
-import numpy as np
-import pandas as pd
 import torch
 from torch.types import Device
+import numpy as np
+import pandas as pd
 
-from cogwheel import utils
-from cogwheel import gw_utils
-from cogwheel import data
-from cogwheel import waveform
+from cogwheel import data, waveform
+from cogwheel.utils import mkdirs
+from cogwheel.gw_utils import q_to_eta, chieff as chieff_func, m1m2_to_mchirp
 from cogwheel.likelihood import RelativeBinningLikelihood
+
 from tbd.evidence_calculator import (
     IntrinsicSampleProcessor,
     LinearFree,
@@ -37,6 +37,7 @@ from tbd.sampler_free_utils import (
     torch_dtype,
     safe_move_and_cast,
 )
+
 
 PRECOMPUTE_BLOCKSIZE = 128
 EVENT_DATA_KWARGS = {
@@ -66,11 +67,11 @@ def bin_bank_by_mchirp_chieff_hat(
     if not inplace:
         df = df.copy()
     if "eta" not in df.columns:
-        eta = gw_utils.q_to_eta(df["m2"] / df["m1"])
+        eta = q_to_eta(df["m2"] / df["m1"])
     else:
         eta = df["eta"]
     if "chieff" not in df.columns:
-        chieff = gw_utils.chieff(
+        chieff = chieff_func(
             df["m1"],
             df["m2"],
             df["s1z"],
@@ -80,7 +81,7 @@ def bin_bank_by_mchirp_chieff_hat(
         chieff = df["chieff"]
 
     if "mchirp" not in df.columns:
-        df["mchirp"] = gw_utils.m1m2_to_mchirp(df["m1"], df["m2"])
+        df["mchirp"] = m1m2_to_mchirp(df["m1"], df["m2"])
     if "mchirp_hat" not in df.columns:
         df["chieff_hat"] = -1 / 4 + eta + chieff / 4
     mchirp_grid = np.linspace(
@@ -408,7 +409,7 @@ def compute_and_save_hh(
     # save results
 
     if not target_folder.exists():
-        utils.mkdirs(target_folder)
+        mkdirs(target_folder)
     np.save(hh_ipp_filepath, hh_ipp)
     np.save(norm_i_filepath, norm_i)
 
@@ -728,7 +729,7 @@ def _calculate_overlap_matrix_by_subbanks(
     intrinsic_sample_bank = pd.read_feather(
         bank_folder / "intrinsic_sample_bank.feather"
     )
-    i_end = i_end if i_end else intrinsic_sample_bank.shape[0]
+    i_end = i_end if i_end else bank_size
     intrinsic_sample_bank = intrinsic_sample_bank.iloc[i_start:i_end]
 
     bin_bank_by_mchirp_chieff_hat(
@@ -935,7 +936,7 @@ def calculate_overlap_matrix(
 
     i_end = i_end if i_end else bank_size
     if not target_folder.exists():
-        utils.mkdirs(target_folder)
+        mkdirs(target_folder)
 
     overlap_config_filename = target_folder / "overlaps_config.json"
     with open(overlap_config_filename, "w", encoding="utf-8") as fp:

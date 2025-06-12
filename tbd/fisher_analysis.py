@@ -65,10 +65,8 @@ from gwfast import gwfastUtils
 from gwfast import gwfastGlobals
 from gwfast import fisherTools
 
-
-from cogwheel import utils as utils
-from cogwheel import gw_utils
 from cogwheel import data
+from cogwheel.gw_utils import m1m2_to_mchirp, q_to_eta
 
 
 def get_detectors(det_names=["H", "L", "V"]):
@@ -96,8 +94,8 @@ def cogwheel_to_gwfast_params(cogwheel_params: dict) -> dict:
     "fmax": np.array([2048.0]),
     """
     m1, m2 = cogwheel_params["m1"], cogwheel_params["m2"]
-    mchirp = gw_utils.m1m2_to_mchirp(m1, m2)
-    eta = gw_utils.q_to_eta(m2 / m1)
+    mchirp = m1m2_to_mchirp(m1, m2)
+    eta = q_to_eta(m2 / m1)
     s1z, s2z, s1x_n, s1y_n, s2x_n, s2y_n = [
         cogwheel_params.get(k)
         for k in ["s1z", "s2z", "s1x_n", "s1y_n", "s2x_n", "s2y_n"]

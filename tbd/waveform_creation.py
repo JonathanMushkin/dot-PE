@@ -4,7 +4,6 @@ Create linear free waveforms.
 
 import argparse
 import logging
-import os
 import subprocess
 import numpy as np
 import pandas as pd
@@ -12,10 +11,23 @@ import json
 import time
 from multiprocessing.pool import Pool
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
 
-from cogwheel import data, waveform, utils
-from cogwheel.sampler_free import config
-from cogwheel.sampler_free.sampler_free_utils import setup_logger
+from cogwheel import data, waveform
+from cogwheel.utils import mkdirs
+from tbd import config
+from tbd.sampler_free_utils import setup_logger
+
+
+from tbd.sampler_free_utils import (
+    flex_reshape,
+    get_device_per_dtype,
+    torch_dtype,
+    safe_move_and_cast,
+)
+
+import torch
+from torch.types import Device
 
 
 def get_waveform(wfg, int_dic, fbin, override_dic=None):
@@ -247,7 +259,7 @@ def create_waveform_bank_from_samples(
 
     start_time = time.time()
     if not waveform_dir.exists():
-        utils.mkdirs(waveform_dir)
+        mkdirs(waveform_dir)
     logger = setup_logger(waveform_dir)
     logger.info("%s started at %s", __name__, time.ctime(start_time))
 
@@ -367,7 +379,7 @@ def submit_to_lsf(
 if __name__ == "__main__":
     args = parse_arguments()
     if not args.waveform_dir.exists():
-        utils.mkdirs(args.waveform_dir)
+        mkdirs(args.waveform_dir)
 
     create_waveform_bank_from_samples(
         samples_path=args.samples_path,

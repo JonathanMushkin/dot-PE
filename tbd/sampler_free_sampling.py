@@ -1,13 +1,14 @@
+"""
+Sampler free sampling implementation.
+"""
+
 from pathlib import Path
 import numpy as np
 import pickle
-from collections import defaultdict
 import pandas as pd
 from copy import deepcopy
-import random
 
-
-from cogwheel import utils
+from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, exp_normalize
 from tbd.base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
@@ -19,7 +20,7 @@ from tbd import config
 from tbd import evidence_calculator
 
 
-class BlockLikelihoodEvaluator(utils.JSONMixin, Loggable):
+class BlockLikelihoodEvaluator(JSONMixin, Loggable):
     """
     A class with the ability to take intrinsic and extrinsic samples,
     perform block likelihood evaluations, and combine them into
@@ -41,17 +42,7 @@ class BlockLikelihoodEvaluator(utils.JSONMixin, Loggable):
         "weights",
     ]
 
-    PROB_SAMPLES_COLS_DTYPES = [
-        int,
-        int,
-        int,
-        float,
-        float,
-        float,
-        float,
-        float,
-        float,
-    ]
+    PROB_SAMPLES_COLS_DTYPES = [int, int, int, float, float, float, float, float, float]
 
     def __init__(
         self,
@@ -66,8 +57,8 @@ class BlockLikelihoodEvaluator(utils.JSONMixin, Loggable):
         int_block_size=512,
         ext_block_size=512,
         min_bestfit_lnlike_to_keep=None,
-        dir_permissions=utils.DIR_PERMISSIONS,
-        file_permissions=utils.FILE_PERMISSIONS,
+        dir_permissions=DIR_PERMISSIONS,
+        file_permissions=FILE_PERMISSIONS,
         full_intrinsic_indices=None,
         n_samples_discarded: int = 0,
         logsumexp_discarded_ln_posterior: float = -np.inf,
@@ -753,7 +744,7 @@ class BlockLikelihoodEvaluator(utils.JSONMixin, Loggable):
             combined_samples["o"].values
         ]
 
-        combined_samples["weights"] = utils.exp_normalize(
+        combined_samples["weights"] = exp_normalize(
             combined_samples["ln_posterior"].values
         )
 
@@ -790,7 +781,7 @@ class BlockLikelihoodEvaluator(utils.JSONMixin, Loggable):
         return combined_samples
 
 
-class CoherentExtrinsicSamplesGenerator(utils.JSONMixin, Loggable):
+class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
     """
     A class capable of using Extrinsic Marginalization classes and
     methods to draw extrinsic samples from the data.

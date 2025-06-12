@@ -35,11 +35,11 @@ warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
 # COGWHEEL imports
 from cogwheel.data import EventData
-from cogwheel import gw_utils
-from cogwheel import posterior
+from cogwheel.utils import exp_normalize, get_rundir, mkdirs, read_json
+from cogwheel.gw_utils import DETECTORS, get_geocenter_delays
+from cogwheel.posterior import Posterior
 from cogwheel import skyloc_angles
-from cogwheel import utils
-from cogwheel import waveform
+from cogwheel.waveform import WaveformGenerator
 from cogwheel.likelihood import RelativeBinningLikelihood, LookupTable
 
 # TBD imports
@@ -165,7 +165,7 @@ def run_for_single_detector(
         event_data_1d.injection["d_h"] = np.take(
             event_data_1d.injection["d_h"], indices
         ).tolist()
-    wfg = waveform.WaveformGenerator.from_event_data(event_data_1d, approximant)
+    wfg = WaveformGenerator.from_event_data(event_data_1d, approximant)
 
     likelihood_linfree = LinearFree(event_data_1d, wfg, par_dic_0, fbin)
     bank_file_path = Path(bank_folder) / "intrinsic_sample_bank.feather"
@@ -199,12 +199,12 @@ def run_for_single_detector(
     tgps = bl.likelihood.event_data.tgps
     dt_fraction = 1
     lat, lon = skyloc_angles.cart3d_to_latlon(
-        skyloc_angles.normalize(gw_utils.DETECTORS[det_name].location)
+        skyloc_angles.normalize(DETECTORS[det_name].location)
     )
 
     par_dic = bl.transform_par_dic_by_sky_poisition(det_name, par_dic_0, lon, lat, tgps)
 
-    delay = gw_utils.get_geocenter_delays(det_name, par_dic["lat"], par_dic["lon"])[0]
+    delay = get_geocenter_delays(det_name, par_dic["lat"], par_dic["lon"])[0]
     tcoarse = bl.likelihood.event_data.tcoarse
     t_grid = (np.arange(n_t) - n_t // 2) * (
         bl.likelihood.event_data.times[1] * dt_fraction
@@ -384,7 +384,7 @@ def run_coherent_inference(
         fbin = np.array(bank_config["fbin"])
         approximant = bank_config["approximant"]
 
-    wfg = waveform.WaveformGenerator.from_event_data(event_data, approximant)
+    wfg = WaveformGenerator.from_event_data(event_data, approximant)
     marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
         event_data, wfg, par_dic_0, fbin, coherent_score=coherent_score_kwargs
     )
@@ -625,9 +625,7 @@ def standardize_samples(
         combined_samples["d_h_1Mpc"] / combined_samples["d_luminosity"]
         - 0.5 * combined_samples["h_h_1Mpc"] / combined_samples["d_luminosity"] ** 2
     )
-    combined_samples["weights"] = utils.exp_normalize(
-        combined_samples["ln_posterior"].values
-    )
+    combined_samples["weights"] = exp_normalize(combined_samples["ln_posterior"].values)
 
     pr.inverse_transform_samples(combined_samples)
 
@@ -681,10 +679,10 @@ def run(
             "Both 'event_dir' and 'rundir' are provided. 'event_dir' will be ignored."
         )
     if rundir is None:
-        rundir = utils.get_rundir(event_dir)
+        rundir = get_rundir(event_dir)
 
     if not Path(rundir).exists():
-        utils.mkdirs(rundir)
+        mkdirs(rundir)
     with open(rundir / "run_kwargs.json", "w", encoding="utf-8") as fp:
         json.dump(
             {
@@ -735,7 +733,7 @@ def run(
     likelihood_kwargs = {"fbin": fbin, "pn_phase_tol": None}
     ref_wf_finder_kwargs = {"time_range": (-1e-1, +1e-1), "f_ref": f_ref}
 
-    coherent_posterior = posterior.Posterior.from_event(
+    coherent_posterior = Posterior.from_event(
         event=event_data,
         mchirp_guess=None,
         likelihood_kwargs=likelihood_kwargs,
@@ -818,7 +816,7 @@ def run(
 
     # for injections, add the likelihood to the summary dict
     if hasattr(event_data, "injection"):
-        ble = utils.read_json(rundir / "BlockLikelihoodEvaluator.json")
+        ble = read_json(rundir / "BlockLikelihoodEvaluator.json")
         inj_par_dic = event_data.injection["par_dic"]
         bestfit_lnlike, lnl_marginalized = ble.get_bestfit_and_marginalized_lnlike(
             inj_par_dic

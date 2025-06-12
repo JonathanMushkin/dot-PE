@@ -4,24 +4,21 @@ Waveform overlap calculations for sampler free inference.
 
 import argparse
 import json
-import logging
-import os
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from scipy.stats import qmc
-from lal import MSUN_SI
-from lalsimulation import SimInspiralTransformPrecessingNewInitialConditions
+
 
 # COGWHEEL imports
-from cogwheel import data, gw_utils, posterior, utils, waveform
+from cogwheel import data, waveform
+from cogwheel.utils import mkdirs
+from cogwheel.gw_utils import q_to_eta, chieff as chieff_func, m1m2_to_mchirp
 from cogwheel.likelihood import RelativeBinningLikelihood
 
 # TBD imports
-from tbd import config
 from tbd.evidence_calculator import (
     IntrinsicSampleProcessor,
     LinearFree,
@@ -71,11 +68,11 @@ def bin_bank_by_mchirp_chieff_hat(
     if not inplace:
         df = df.copy()
     if "eta" not in df.columns:
-        eta = gw_utils.q_to_eta(df["m2"] / df["m1"])
+        eta = q_to_eta(df["m2"] / df["m1"])
     else:
         eta = df["eta"]
     if "chieff" not in df.columns:
-        chieff = gw_utils.chieff(
+        chieff = chieff_func(
             df["m1"],
             df["m2"],
             df["s1z"],
@@ -85,7 +82,7 @@ def bin_bank_by_mchirp_chieff_hat(
         chieff = df["chieff"]
 
     if "mchirp" not in df.columns:
-        df["mchirp"] = gw_utils.m1m2_to_mchirp(df["m1"], df["m2"])
+        df["mchirp"] = m1m2_to_mchirp(df["m1"], df["m2"])
     if "mchirp_hat" not in df.columns:
         df["chieff_hat"] = -1 / 4 + eta + chieff / 4
     mchirp_grid = np.linspace(
@@ -415,7 +412,7 @@ def compute_and_save_hh(
     # save results
 
     if not target_folder.exists():
-        utils.mkdirs(target_folder)
+        mkdirs(target_folder)
     np.save(hh_ipp_filepath, hh_ipp)
     np.save(hh_iopp_filepath, hh_iopp)
     np.save(norm_i_filepath, norm_i)
@@ -1016,7 +1013,7 @@ def calculate_overlap_matrix(
 
     i_end = i_end if i_end else bank_size
     if not target_folder.exists():
-        utils.mkdirs(target_folder)
+        mkdirs(target_folder)
 
     overlap_config_filename = target_folder / "overlaps_config.json"
     with open(overlap_config_filename, "w", encoding="utf-8") as fp:
