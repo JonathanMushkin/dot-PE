@@ -1,5 +1,5 @@
 [project]
-name = "tbd"
+name = "dot-PE"
 version = "0.1.0"
 authors = [
     { name = "Jonathan Mushkin", email = "yonatanmushkin@gmail.com" },
