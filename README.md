@@ -1,4 +1,6 @@
 # dot-PE
+![Logo](dot-pe-logo.png)
+
 
 ## License
 
