@@ -9,20 +9,21 @@ from typing import List, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+from lal import GreenwichMeanSiderealTime
 from numpy.typing import NDArray
 from scipy.stats import chi2
-from lal import GreenwichMeanSiderealTime
-from cogwheel.data import EventData
-from cogwheel.posterior import Posterior
-from cogwheel.waveform import WaveformGenerator
-from cogwheel.utils import mkdirs, get_rundir, NumpyEncoder
-from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delays
-from cogwheel import skyloc_angles
-from cogwheel.likelihood import RelativeBinningLikelihood, CBCLikelihood
 
-from .single_detector import BlockLikelihood
+from cogwheel import skyloc_angles
+from cogwheel.data import EventData
+from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delays
+from cogwheel.likelihood import CBCLikelihood, RelativeBinningLikelihood
+from cogwheel.posterior import Posterior
+from cogwheel.utils import get_rundir, mkdirs, NumpyEncoder
+from cogwheel.waveform import WaveformGenerator
+
 from .evidence_calculator import LinearFree
 from .sampler_free_utils import get_event_data
+from .single_detector import BlockLikelihood
 
 
 class Vetoer:

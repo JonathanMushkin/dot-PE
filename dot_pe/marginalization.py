@@ -5,15 +5,16 @@ for sampler-free integration.
 
 import logging
 from dataclasses import dataclass, field
+
 import numpy as np
 from scipy import sparse
 from scipy.special import logsumexp
 
-from cogwheel.utils import exp_normalize, n_effective
+from cogwheel.likelihood import MarginalizedExtrinsicLikelihood
 from cogwheel.likelihood.marginalization import CoherentScoreHM
 from cogwheel.likelihood.marginalization.base import MarginalizationInfoHM
-from cogwheel.likelihood import MarginalizedExtrinsicLikelihood
 from cogwheel.likelihood.marginalization.coherent_score_hm import _flip_psi
+from cogwheel.utils import exp_normalize, n_effective
 
 
 class CoherentScoreSamplerFree(CoherentScoreHM):

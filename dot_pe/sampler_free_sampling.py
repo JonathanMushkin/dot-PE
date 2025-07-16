@@ -2,13 +2,16 @@
 Sampler free sampling implementation.
 """
 
-from pathlib import Path
-import numpy as np
 import pickle
-import pandas as pd
 from copy import deepcopy
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, exp_normalize
+
+from . import config, evidence_calculator
 from .base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
@@ -16,8 +19,6 @@ from .base_sampler_free_sampling import (
 from .sampler_free_utils import (
     safe_logsumexp,
 )
-from . import config
-from . import evidence_calculator
 
 
 class BlockLikelihoodEvaluator(JSONMixin, Loggable):

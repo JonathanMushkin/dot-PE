@@ -13,54 +13,49 @@ bank folder. It is performed in two steps:
    at the end of the run.
 """
 
-# Standard imports
 import argparse
-import cProfile
 import copy
+import cProfile
 import json
 import os
-from pathlib import Path
-import warnings
-import time
 import pstats
-from typing import Union, Tuple, List, Dict
-from numpy.typing import NDArray
+import time
+import warnings
+from pathlib import Path
+from typing import Dict, List, Tuple, Union
 
-# Third-party imports
-from tqdm import tqdm
 import numpy as np
 import pandas as pd
+from lal import GreenwichMeanSiderealTime
+from numpy.typing import NDArray
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
-# COGWHEEL imports
-from cogwheel.data import EventData
-from cogwheel.utils import exp_normalize, get_rundir, mkdirs, read_json
-from cogwheel.gw_utils import DETECTORS, get_geocenter_delays
-from cogwheel.posterior import Posterior
 from cogwheel import skyloc_angles
+from cogwheel.data import EventData
+from cogwheel.gw_utils import DETECTORS, get_geocenter_delays
+from cogwheel.likelihood import RelativeBinningLikelihood
+from cogwheel.posterior import Posterior
+from cogwheel.utils import exp_normalize, get_rundir, mkdirs, read_json
 from cogwheel.waveform import WaveformGenerator
-from cogwheel.likelihood import RelativeBinningLikelihood, LookupTable
 
-# dot_pe imports
 from .base_sampler_free_sampling import (
     get_n_effective_total_i_e,
 )
 from .evidence_calculator import LinearFree
-from .single_detector import BlockLikelihood
+from .marginalization import (
+    MarginalizationExtrinsicSamplerFreeLikelihood,
+)
 from .sampler_free_sampling import (
-    CoherentExtrinsicSamplesGenerator,
     BlockLikelihoodEvaluator,
+    CoherentExtrinsicSamplesGenerator,
 )
 from .sampler_free_utils import (
     get_event_data,
     safe_logsumexp,
 )
-from .marginalization import (
-    MarginalizationExtrinsicSamplerFreeLikelihood,
-)
-
-from lal import GreenwichMeanSiderealTime
+from .single_detector import BlockLikelihood
 
 
 def load_representatives(

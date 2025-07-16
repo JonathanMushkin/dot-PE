@@ -4,9 +4,11 @@ Default configurations for sampler-free inference.
 
 from collections import defaultdict
 from pathlib import Path
+
 import numpy as np
-from cogwheel.waveform_models.xode import waveform
+
 from cogwheel.data import EventData
+from cogwheel.waveform_models.xode import waveform
 
 DEFAULT_FBIN_PATH = Path(__file__).parent / "fbin.npy"
 APPROXIMANT = "IMRPhenomXODE"
@@ -35,9 +37,7 @@ def fbin_from_event_data(event_data, pn_phase_tol=0.05):
     pn_coeff_rng = (
         2
         * np.pi
-        / np.abs(
-            np.subtract(*event_data.fbounds[:, np.newaxis] ** pn_exponents)
-        )
+        / np.abs(np.subtract(*event_data.fbounds[:, np.newaxis] ** pn_exponents))
     )
 
     f_arr = np.linspace(*event_data.fbounds, 10000)

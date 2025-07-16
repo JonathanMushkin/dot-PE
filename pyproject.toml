@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "dot-PE"
 version = "0.1.0"
@@ -7,9 +11,9 @@ authors = [
 description = "A short description of your project"
 readme = "README.md"
 requires-python = ">=3.9"
+license = {text = "GPL-3.0"}
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
 ]
 dependencies = [
     "cogwheel-pe>=1.2.0",
@@ -21,4 +25,8 @@ dependencies = [
     "tqdm",
     "lal",
     "lalsimulation"
-] 
+]
+
+[tool.setuptools.packages.find]
+include = ["dot_pe*"]
+exclude = ["notebooks*", "tests*", "scripts*"] 

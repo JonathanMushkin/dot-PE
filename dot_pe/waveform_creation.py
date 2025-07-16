@@ -3,31 +3,21 @@ Create linear free waveforms.
 """
 
 import argparse
+import json
 import logging
 import subprocess
-import numpy as np
-import pandas as pd
-import json
 import time
 from multiprocessing.pool import Pool
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+
+import numpy as np
+import pandas as pd
 
 from cogwheel import data, waveform
 from cogwheel.utils import mkdirs
+
 from . import config
 from .sampler_free_utils import setup_logger
-
-
-from .sampler_free_utils import (
-    flex_reshape,
-    get_device_per_dtype,
-    torch_dtype,
-    safe_move_and_cast,
-)
-
-import torch
-from torch.types import Device
 
 
 def get_waveform(wfg, int_dic, fbin, override_dic=None):

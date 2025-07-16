@@ -6,23 +6,20 @@ Classes and methods for single detector usecases:
    before performing multi-detector integration.
 """
 
-from pathlib import Path
-from collections import defaultdict
 import itertools
+from collections import defaultdict
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from lal import GreenwichMeanSiderealTime
 
-# add cogwheel path
-
 from cogwheel import skyloc_angles
-from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS
 from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delays
-from .base_sampler_free_sampling import (
-    get_top_n_indices_two_pointer,
-    Loggable,
-)
+from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS
+
 from . import evidence_calculator
+from .base_sampler_free_sampling import get_top_n_indices_two_pointer, Loggable
 
 
 class BlockLikelihood(JSONMixin, Loggable):

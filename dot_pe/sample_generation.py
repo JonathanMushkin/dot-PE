@@ -6,16 +6,18 @@ Generate intrinsic samples and waveforms for a bank.
 import argparse
 import json
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from scipy.stats import qmc
 from lal import MSUN_SI
 from lalsimulation import SimInspiralTransformPrecessingNewInitialConditions
-from cogwheel.gw_prior.mass import UniformDetectorFrameMassesPrior
+from scipy.stats import qmc
+
 from cogwheel.gw_prior import UniformDiskInplaneSpinsIsotropicInclinationPrior
 from cogwheel.gw_prior import UniformEffectiveSpinPrior
-from cogwheel.utils import NumpyEncoder
+from cogwheel.gw_prior.mass import UniformDetectorFrameMassesPrior
 from cogwheel.gw_utils import m1m2_to_mchirp
+from cogwheel.utils import NumpyEncoder
 
 from . import waveform_creation
 
@@ -444,7 +446,7 @@ class IntrinsicSamplesGenerator:
         u=None,
         draw_method="mc",
     ):
-        mass_prior = gw_prior.mass.UniformDetectorFrameMassesPrior(
+        mass_prior = UniformDetectorFrameMassesPrior(
             mchirp_range=(mchirp_min, mchirp_max), q_min=q_min
         )
 

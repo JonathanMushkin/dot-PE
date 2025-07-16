@@ -2,15 +2,17 @@
 Utility functions for the sampler_free module.
 """
 
-import torch
-from torch.types import Device
-from typing import List, Union
 import gc
 import logging
 from pathlib import Path
-from scipy.special import logsumexp
+from typing import List, Union
+
 import numpy as np
+import torch
 from numba import njit
+from scipy.special import logsumexp
+from torch.types import Device
+
 from cogwheel.data import EventData
 
 
@@ -22,14 +24,10 @@ def is_dtype_supported(device: Device, dtype: torch.dtype) -> bool:
         return False
 
 
-def get_device_for_dtype(
-    preferred_device: Device, dtype: torch.dtype
-) -> Device:
+def get_device_for_dtype(preferred_device: Device, dtype: torch.dtype) -> Device:
     fallback = "cpu"
     return torch.device(
-        preferred_device
-        if is_dtype_supported(preferred_device, dtype)
-        else fallback
+        preferred_device if is_dtype_supported(preferred_device, dtype) else fallback
     )
 
 

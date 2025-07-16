@@ -7,21 +7,24 @@ likelihood calculations.
 JM 29.5.24
 """
 
-import json
 import itertools
+import json
 from pathlib import Path
-import pandas as pd
-import numpy as np
-from scipy.special import logsumexp
-from scipy.integrate import trapezoid, cumulative_trapezoid
-from scipy.stats.qmc import Halton
-from lal import CreateDict
+
 import lalsimulation as lalsim
+import numpy as np
+import pandas as pd
+from lal import CreateDict
+from scipy.integrate import cumulative_trapezoid, trapezoid
+from scipy.special import logsumexp
+from scipy.stats.qmc import Halton
+
 from cogwheel import likelihood
 from cogwheel.gw_utils import get_fplus_fcross_0, get_geocenter_delays
+from cogwheel.likelihood.relative_binning import BaseLinearFree
 from cogwheel.waveform import FORCE_NNLO_ANGLES, compute_hplus_hcross_by_mode
 from cogwheel.waveform_models.xode import compute_hplus_hcross_by_mode_xode
-from cogwheel.likelihood.relative_binning import BaseLinearFree
+
 from . import config
 from .sampler_free_utils import safe_logsumexp
 
