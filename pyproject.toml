@@ -18,7 +18,6 @@ dependencies = [
     "numpy",
     "torch",
     "matplotlib",
-    "gwfast",
     "tqdm",
     "lal",
     "lalsimulation"
