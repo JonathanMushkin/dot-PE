@@ -1,1 +1,1 @@
-"""Tests for the TBD package."""
+"""Tests for the dot_pe package."""
