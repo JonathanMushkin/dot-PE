@@ -19,7 +19,7 @@ from cogwheel.gw_prior.mass import UniformDetectorFrameMassesPrior
 from cogwheel.gw_utils import m1m2_to_mchirp
 from cogwheel.utils import NumpyEncoder
 
-from . import waveform_creation
+from . import waveform_banks
 
 
 class IntrinsicSamplesGenerator:
@@ -550,7 +550,7 @@ def create_physical_prior_bank(
     # create waveforms
     waveform_dir = bank_dir / "waveforms"
     print("Creating waveforms")
-    waveform_creation.create_waveform_bank_from_samples(
+    waveform_banks.create_waveform_bank_from_samples(
         samples_path=bank_file_path,
         bank_config_path=bank_config_path,
         waveform_dir=waveform_dir,
@@ -630,7 +630,7 @@ def main(
     # create waveforms
     waveform_dir = bank_dir / "waveforms"
     print("Creating waveforms")
-    waveform_creation.create_waveform_bank_from_samples(
+    waveform_banks.create_waveform_bank_from_samples(
         samples_path=bank_file_path,
         bank_config_path=bank_config_path,
         waveform_dir=waveform_dir,
