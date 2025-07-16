@@ -22,8 +22,8 @@ from cogwheel.gw_utils import get_fplus_fcross_0, get_geocenter_delays
 from cogwheel.waveform import FORCE_NNLO_ANGLES, compute_hplus_hcross_by_mode
 from cogwheel.waveform_models.xode import compute_hplus_hcross_by_mode_xode
 from cogwheel.likelihood.relative_binning import BaseLinearFree
-from tbd import config
-from tbd.sampler_free_utils import safe_logsumexp
+from . import config
+from .sampler_free_utils import safe_logsumexp
 
 lalsimulation_commands = FORCE_NNLO_ANGLES
 

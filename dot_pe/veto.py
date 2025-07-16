@@ -20,9 +20,9 @@ from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delay
 from cogwheel import skyloc_angles
 from cogwheel.likelihood import RelativeBinningLikelihood, CBCLikelihood
 
-from tbd.single_detector import BlockLikelihood
-from tbd.evidence_calculator import LinearFree
-from tbd.sampler_free_utils import get_event_data
+from .single_detector import BlockLikelihood
+from .evidence_calculator import LinearFree
+from .sampler_free_utils import get_event_data
 
 
 class Vetoer:

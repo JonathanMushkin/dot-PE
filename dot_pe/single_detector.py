@@ -18,11 +18,11 @@ from lal import GreenwichMeanSiderealTime
 from cogwheel import skyloc_angles
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS
 from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delays
-from tbd.base_sampler_free_sampling import (
+from .base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
 )
-from tbd import evidence_calculator
+from . import evidence_calculator
 
 
 class BlockLikelihood(JSONMixin, Loggable):

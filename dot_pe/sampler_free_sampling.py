@@ -9,15 +9,15 @@ import pandas as pd
 from copy import deepcopy
 
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, exp_normalize
-from tbd.base_sampler_free_sampling import (
+from .base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
 )
-from tbd.sampler_free_utils import (
+from .sampler_free_utils import (
     safe_logsumexp,
 )
-from tbd import config
-from tbd import evidence_calculator
+from . import config
+from . import evidence_calculator
 
 
 class BlockLikelihoodEvaluator(JSONMixin, Loggable):

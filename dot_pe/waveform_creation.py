@@ -15,11 +15,11 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from cogwheel import data, waveform
 from cogwheel.utils import mkdirs
-from tbd import config
-from tbd.sampler_free_utils import setup_logger
+from . import config
+from .sampler_free_utils import setup_logger
 
 
-from tbd.sampler_free_utils import (
+from .sampler_free_utils import (
     flex_reshape,
     get_device_per_dtype,
     torch_dtype,

@@ -17,7 +17,7 @@ from cogwheel.gw_prior import UniformEffectiveSpinPrior
 from cogwheel.utils import NumpyEncoder
 from cogwheel.gw_utils import m1m2_to_mchirp
 
-from tbd import waveform_creation
+from . import waveform_creation
 
 
 class IntrinsicSamplesGenerator:

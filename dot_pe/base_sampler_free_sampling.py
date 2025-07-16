@@ -20,9 +20,9 @@ import numpy as np
 
 from cogwheel import gw_plotting, plotting
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, mkdirs
-from tbd import config, evidence_calculator, posterior
-from tbd.sampler_free_utils import setup_logger
-from tbd.marginalization import (
+from . import config, evidence_calculator, posterior
+from .sampler_free_utils import setup_logger
+from .marginalization import (
     MarginalizationExtrinsicSamplerFreeLikelihood,
 )
 

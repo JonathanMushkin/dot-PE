@@ -5,10 +5,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from tbd import waveform_overlap
-from tbd import evidence_calculator
-from tbd import sample_generation
-from tbd.sampler_free_utils import clear_cache
+from . import waveform_overlap
+from . import evidence_calculator
+from . import sample_generation
+from .sampler_free_utils import clear_cache
 
 
 def calculate_effectualness(
