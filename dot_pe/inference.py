@@ -44,62 +44,13 @@ from .base_sampler_free_sampling import (
     get_n_effective_total_i_e,
 )
 from .evidence_calculator import LinearFree
-from .marginalization import (
-    MarginalizationExtrinsicSamplerFreeLikelihood,
-)
+from .marginalization import MarginalizationExtrinsicSamplerFreeLikelihood
 from .sampler_free_sampling import (
     BlockLikelihoodEvaluator,
     CoherentExtrinsicSamplesGenerator,
 )
-from .sampler_free_utils import (
-    get_event_data,
-    safe_logsumexp,
-)
+from .sampler_free_utils import get_event_data, safe_logsumexp
 from .single_detector import BlockLikelihood
-
-
-def load_representatives(
-    path: Union[str, Path], n_int: int, i_start: int = 0
-) -> Tuple[NDArray[np.int_], List[NDArray[np.int_]]]:
-    """
-    Load the representatives and mapping from the bank folder.
-
-    Parameters
-    ----------
-    path : Path
-        Path to the folder containing the bank / to the reps json file.
-
-    Returns
-    -------
-    representatives : np.ndarray
-        Array of representatives.
-    mapping : list
-        A list of lists of indices per representative.
-    """
-    path = Path(path)
-    if path.is_dir():
-        reps_file = path / "reps.json"
-    else:
-        reps_file = path
-
-    if reps_file.exists():
-        with open(reps_file, "r", encoding="utf-8") as f:
-            d = json.load(f)
-            temp_reps = d["selected_set"]
-            temp_mapping = d["mapping"]
-            reps, reps_mapping = [], []
-            for r, m in zip(temp_reps, temp_mapping):
-                m = np.array(m)
-                m = m[(m < i_start + n_int) * (m >= i_start)]
-                if len(m) > 0:
-                    reps.append(r)
-                    reps_mapping.append(m)
-            reps = np.array(reps)
-    else:
-        reps = np.arange(i_start, i_start + n_int)
-        reps_mapping = [[r] for r in reps]
-
-    return reps, reps_mapping
 
 
 def inds_to_blocks(
@@ -237,7 +188,6 @@ def collect_int_samples_from_single_detectors(
     bank_folder: Union[str, Path],
     i_int_start: int = 0,
     max_incoherent_lnlike_drop: float = 20,
-    use_reps=True,
 ) -> NDArray[np.int_]:
     """
     Perform n_det independent single-detector likelihood evaluations and
@@ -250,20 +200,16 @@ def collect_int_samples_from_single_detectors(
         approximant = bank_config["approximant"]
         m_arr = np.array(bank_config["m_arr"])
     # do single detector pe for each detector
-    if use_reps:
-        reps, reps_mapping = load_representatives(bank_folder, n_int, i_int_start)
-    else:
-        reps = np.arange(i_int_start, i_int_start + n_int)
-        reps_mapping = [[r] for r in reps]
+    intrinsic_indices = np.arange(i_int_start, i_int_start + n_int)
 
-    lnlike_di = np.zeros((len(event_data.detector_names), len(reps)))
+    lnlike_di = np.zeros((len(event_data.detector_names), len(intrinsic_indices)))
     for batch_start in tqdm(
-        range(0, len(reps), single_detector_blocksize),
+        range(0, len(intrinsic_indices), single_detector_blocksize),
         desc="Processing intrinsic batches",
-        total=-(len(reps) // -single_detector_blocksize),
+        total=-(len(intrinsic_indices) // -single_detector_blocksize),
     ):
-        batch_end = min(batch_start + single_detector_blocksize, len(reps))
-        batch_reps = reps[batch_start:batch_end]
+        batch_end = min(batch_start + single_detector_blocksize, len(intrinsic_indices))
+        batch_intrinsic_indices = intrinsic_indices[batch_start:batch_end]
         h_impb = None  # Reset h_impb for each new batch
         for d, det_name in enumerate(event_data.detector_names):
             temp = run_for_single_detector(
@@ -271,7 +217,7 @@ def collect_int_samples_from_single_detectors(
                 det_name,
                 par_dic_0,
                 bank_folder,
-                batch_reps,
+                batch_intrinsic_indices,
                 fbin,
                 h_impb,
                 approximant,
@@ -295,9 +241,7 @@ def collect_int_samples_from_single_detectors(
 
     selected = optimistic_lnlikes >= optimistic_threshold
 
-    inds = np.unique(
-        np.concatenate([reps_mapping[i] for i, s in enumerate(selected) if s])
-    )
+    inds = intrinsic_indices[selected]
     return inds
 
 
@@ -663,7 +607,6 @@ def run(
     event_dir: Union[str, Path] = None,
     rundir: Union[str, Path] = None,
     coherent_score_min_n_effective_prior: int = 100,
-    use_reps: bool = True,
     max_incoherent_lnlike_drop: float = 20,
 ) -> Path:
     """Run the magic integral for a given event and bank folder."""
@@ -701,7 +644,6 @@ def run(
                 "coherent_score_min_n_effective_prior": int(
                     coherent_score_min_n_effective_prior
                 ),
-                "use_reps": bool(use_reps),
                 "max_incoherent_lnlike_drop": float(max_incoherent_lnlike_drop),
             },
             fp,
@@ -754,7 +696,6 @@ def run(
             n_t=n_t,
             bank_folder=bank_folder,
             i_int_start=i_int_start,
-            use_reps=use_reps,
             max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
         )
         np.save(rundir / "intrinsic_inds.npy", inds)
@@ -949,17 +890,6 @@ def parse_arguments() -> Dict:
         ),
     )
 
-    parser.add_argument(
-        "--no-use-reps",
-        action="store_false",
-        dest="use_reps",
-        default=True,
-        help=(
-            "By default, use the representative set and mapping from the bank "
-            "folder. Use this flag to treat each waveform as its own "
-            "representative"
-        ),
-    )
     return vars(parser.parse_args())
 
 

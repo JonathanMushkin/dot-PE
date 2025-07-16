@@ -12,7 +12,6 @@ from cogwheel import gw_plotting, plotting
 
 _LABELS = gw_plotting._LABELS
 _UNITS = gw_plotting._UNITS
-# add labels and units here if needed
 _LABELS["ln_posterior"] = r"$\ln \mathcal{P}$"
 GB = 2**30
 
