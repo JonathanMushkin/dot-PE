@@ -43,14 +43,14 @@ from cogwheel.waveform import WaveformGenerator
 from .base_sampler_free_sampling import (
     get_n_effective_total_i_e,
 )
-from .evidence_calculator import LinearFree
+from .likelihood_calculator import LinearFree
 from .marginalization import MarginalizationExtrinsicSamplerFreeLikelihood
 from .sampler_free_sampling import (
-    BlockLikelihoodEvaluator,
+    CoherentLikelihoodProcessor,
     CoherentExtrinsicSamplesGenerator,
 )
 from .sampler_free_utils import get_event_data, safe_logsumexp
-from .single_detector import BlockLikelihood
+from .single_detector import SingleDetectorProcessor
 
 
 def inds_to_blocks(
@@ -117,7 +117,7 @@ def run_for_single_detector(
     bank_file_path = Path(bank_folder) / "intrinsic_sample_bank.feather"
     waveform_dir = Path(bank_folder) / "waveforms"
 
-    bl = BlockLikelihood(
+    bl = SingleDetectorProcessor(
         bank_file_path,
         waveform_dir,
         n_phi,
@@ -358,7 +358,7 @@ def run_coherent_inference(
 
     likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
 
-    ble = BlockLikelihoodEvaluator(
+    ble = CoherentLikelihoodProcessor(
         bank_file_path,
         waveform_dir,
         n_phi,
@@ -752,7 +752,7 @@ def run(
 
     # for injections, add the likelihood to the summary dict
     if hasattr(event_data, "injection"):
-        ble = read_json(rundir / "BlockLikelihoodEvaluator.json")
+        ble = read_json(rundir / "CoherentLikelihoodProcessor.json")
         inj_par_dic = event_data.injection["par_dic"]
         bestfit_lnlike, lnl_marginalized = ble.get_bestfit_and_marginalized_lnlike(
             inj_par_dic
@@ -876,7 +876,7 @@ def parse_arguments() -> Dict:
         help=(
             "Minimum Effective Sample Size (using prior weights) for the "
             + "coherent score. Too low ESS can bias the weights and "
-            + "the Evidence."
+            + "the evidence calculation."
             + "Too ESS will require many MarginalizationInfo iterations."
         ),
     )

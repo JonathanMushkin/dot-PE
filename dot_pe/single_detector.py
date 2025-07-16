@@ -18,18 +18,18 @@ from cogwheel import skyloc_angles
 from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delays
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS
 
-from . import evidence_calculator
+from . import likelihood_calculator, sample_processing
 from .base_sampler_free_sampling import get_top_n_indices_two_pointer, Loggable
 
 
-class BlockLikelihood(JSONMixin, Loggable):
+class SingleDetectorProcessor(JSONMixin, Loggable):
     """
     A class with the ability to combine intrinsic and extrinsic samples
     into likelihood evaluations, with optimization over distance and
     a grid of orbital phases.
 
-    This method is made for runtime optimization in the single detector
-    case in mind.
+    This method is specialized for runtime optimization in single detector
+    use cases including vetoing and sample selection.
     """
 
     DEFAULT_SIZE_LIMIT = 10**6
@@ -69,7 +69,7 @@ class BlockLikelihood(JSONMixin, Loggable):
         full_intrinsic_indices=None,
     ):
         """
-        Initialization of the BlockLikelihood.
+        Initialization of the SingleDetectorProcessor.
 
         Parameters
         ----------
@@ -111,15 +111,17 @@ class BlockLikelihood(JSONMixin, Loggable):
         self.intrinsic_bank_file = Path(intrinsic_bank_file)
         self.waveform_dir = Path(waveform_dir)
         self.likelihood = likelihood
-        self.intrinsic_sample_processor = evidence_calculator.IntrinsicSampleProcessor(
+        self.intrinsic_sample_processor = sample_processing.IntrinsicSampleProcessor(
             self.likelihood, self.waveform_dir
         )
         self.gmst = GreenwichMeanSiderealTime(self.likelihood.event_data.tgps)
-        self.extrinsic_sample_processor = evidence_calculator.ExtrinsicSampleProcessor(
+        self.extrinsic_sample_processor = sample_processing.ExtrinsicSampleProcessor(
             self.likelihood.event_data.detector_names
         )
 
-        self.evidence = evidence_calculator.Evidence(n_phi=n_phi, m_arr=np.array(m_arr))
+        self.evidence = likelihood_calculator.LikelihoodCalculator(
+            n_phi=n_phi, m_arr=np.array(m_arr)
+        )
 
         self.dh_weights_dmpb, self.hh_weights_dmppb = (
             self.intrinsic_sample_processor.get_summary()

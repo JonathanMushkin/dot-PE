@@ -1,0 +1,21 @@
+{
+    "event_dir": "example_eventdata",
+    "event": "EventData(example_eventdata)",
+    "bank_folder": "/Users/jonatahm/Work/GW/magic_integral/banks/bank_mchirp_50",
+    "n_int": 16384,
+    "n_ext": 128,
+    "n_phi": 32,
+    "n_t": 64,
+    "blocksize": 1024,
+    "single_detector_blocksize": 1024,
+    "i_int_start": 0,
+    "seed": 42,
+    "load_inds": false,
+    "inds_path": null,
+    "size_limit": 1000000,
+    "draw_subset": true,
+    "n_draws": null,
+    "rundir": "example_eventdata/run_0",
+    "coherent_score_min_n_effective_prior": 100,
+    "max_incoherent_lnlike_drop": 20.0
+}

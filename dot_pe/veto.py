@@ -21,9 +21,9 @@ from cogwheel.posterior import Posterior
 from cogwheel.utils import get_rundir, mkdirs, NumpyEncoder
 from cogwheel.waveform import WaveformGenerator
 
-from .evidence_calculator import LinearFree
+from .likelihood_calculator import LinearFree
 from .sampler_free_utils import get_event_data
-from .single_detector import BlockLikelihood
+from .single_detector import SingleDetectorProcessor
 
 
 class Vetoer:
@@ -169,7 +169,7 @@ class Vetoer:
 
 
 def find_max_lnlike_and_argmax(
-    block_likelihood: BlockLikelihood,
+    block_likelihood: SingleDetectorProcessor,
     timeshifts_dbt: NDArray[np.complex128],
     blocksize: Union[None, int] = 512,
 ) -> Tuple[np.ndarray, float, int, int, int]:
@@ -213,7 +213,7 @@ def find_max_lnlike_and_argmax(
 def find_bestfit_parameters(
     rundir: Union[str, Path],
     event: Union[str, Path, EventData],
-    block_likelihood: BlockLikelihood,
+    block_likelihood: SingleDetectorProcessor,
     par_dic_0: dict,
     n_t: int,
     n_phi: int,
@@ -221,7 +221,7 @@ def find_bestfit_parameters(
     blocksize: int = 512,
 ) -> Tuple[dict, dict]:
     """
-    Perform sampling run using BlockLikelihood object and configuration
+    Perform sampling run using SingleDetectorProcessor object and configuration
     parameters. Create rundir in event_dir to store the run results.
     """
 
@@ -342,7 +342,7 @@ def get_block_likelihood(
     n_phi: int = 32,
     size_limit: int = 10,
     int_samples=Union[int, NDArray],
-) -> BlockLikelihood:
+) -> SingleDetectorProcessor:
     """
     Create a "slim" block likelihood evaluator.
     """
@@ -357,7 +357,7 @@ def get_block_likelihood(
     wfg = WaveformGenerator.from_event_data(event_data, approximant=approximant)
 
     likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
-    block_likelihood = BlockLikelihood(
+    block_likelihood = SingleDetectorProcessor(
         intrinsic_bank_file=bank_folder / "intrinsic_sample_bank.feather",
         waveform_dir=bank_folder / "waveforms",
         n_phi=n_phi,

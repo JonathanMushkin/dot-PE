@@ -11,7 +11,7 @@ import pandas as pd
 
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, exp_normalize
 
-from . import config, evidence_calculator
+from . import config, likelihood_calculator, sample_processing
 from .base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
@@ -21,12 +21,14 @@ from .sampler_free_utils import (
 )
 
 
-class BlockLikelihoodEvaluator(JSONMixin, Loggable):
+class CoherentLikelihoodProcessor(JSONMixin, Loggable):
     """
-    A class with the ability to take intrinsic and extrinsic samples,
-    perform block likelihood evaluations, and combine them into
-    `prob_samples` (which contain only indices and probabilistic
-    information).
+    A class that orchestrates the main multi-detector coherent likelihood
+    evaluation workflow. Takes intrinsic and extrinsic samples, performs
+    block likelihood evaluations, and combines them into `prob_samples`
+    (which contain only indices and probabilistic information).
+
+    This is the primary workflow coordinator for coherent analysis.
     """
 
     DEFAULT_SIZE_LIMIT = 10**6
@@ -112,15 +114,17 @@ class BlockLikelihoodEvaluator(JSONMixin, Loggable):
         self.intrinsic_bank_file = Path(intrinsic_bank_file)
         self.waveform_dir = Path(waveform_dir)
         self.likelihood = likelihood
-        self.intrinsic_sample_processor = evidence_calculator.IntrinsicSampleProcessor(
+        self.intrinsic_sample_processor = sample_processing.IntrinsicSampleProcessor(
             self.likelihood, self.waveform_dir
         )
 
-        self.extrinsic_sample_processor = evidence_calculator.ExtrinsicSampleProcessor(
+        self.extrinsic_sample_processor = sample_processing.ExtrinsicSampleProcessor(
             self.likelihood.event_data.detector_names
         )
 
-        self.evidence = evidence_calculator.Evidence(n_phi=n_phi, m_arr=np.array(m_arr))
+        self.evidence = likelihood_calculator.LikelihoodCalculator(
+            n_phi=n_phi, m_arr=np.array(m_arr)
+        )
 
         self.dh_weights_dmpb, self.hh_weights_dmppb = (
             self.intrinsic_sample_processor.get_summary()
@@ -819,10 +823,10 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         self.waveform_dir = waveform_dir
         self.intrinsic_bank_file = intrinsic_bank_file
 
-        self.extrinsic_sample_processor = evidence_calculator.ExtrinsicSampleProcessor(
+        self.extrinsic_sample_processor = sample_processing.ExtrinsicSampleProcessor(
             self.likelihood.event_data.detector_names
         )
-        self.intrinsic_sample_processor = evidence_calculator.IntrinsicSampleProcessor(
+        self.intrinsic_sample_processor = sample_processing.IntrinsicSampleProcessor(
             self.likelihood, self.waveform_dir
         )
 
@@ -837,7 +841,7 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         )
 
         if evidence is None:
-            self.evidence = evidence_calculator.Evidence(
+            self.evidence = likelihood_calculator.LikelihoodCalculator(
                 n_phi=n_phi, m_arr=np.array(m_arr)
             )
 

@@ -1,0 +1,15 @@
+{
+    "n_effective": 2075.271875735988,
+    "n_effective_i": 134.68600398720469,
+    "n_effective_e": 24.999127594836974,
+    "bestfit_lnlike_max": 49.76324200912256,
+    "lnl_marginalized_max": 48.53446814095,
+    "n_i_inds_used": 8599,
+    "ln_evidence": 24.509009497835713,
+    "ln_evidence_discarded": 13.497764722625327,
+    "n_distance_marginalizations": 1124849,
+    "injection": {
+        "bestfit_lnlike": 47.8116781193231,
+        "lnl_marginalized": 43.22156367493642
+    }
+}
