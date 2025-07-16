@@ -17,7 +17,7 @@ from cogwheel import data, waveform
 from cogwheel.utils import mkdirs
 
 from . import config
-from .sampler_free_utils import setup_logger
+from .utils import setup_logger
 
 
 def get_waveform(wfg, int_dic, fbin, override_dic=None):

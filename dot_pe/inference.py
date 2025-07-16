@@ -45,11 +45,11 @@ from .base_sampler_free_sampling import (
 )
 from .likelihood_calculator import LinearFree
 from .marginalization import MarginalizationExtrinsicSamplerFreeLikelihood
-from .sampler_free_sampling import (
+from .coherent_processing import (
     CoherentLikelihoodProcessor,
     CoherentExtrinsicSamplesGenerator,
 )
-from .sampler_free_utils import get_event_data, safe_logsumexp
+from .utils import get_event_data, safe_logsumexp
 from .single_detector import SingleDetectorProcessor
 
 

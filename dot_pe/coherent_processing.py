@@ -16,7 +16,7 @@ from .base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
 )
-from .sampler_free_utils import (
+from .utils import (
     safe_logsumexp,
 )
 

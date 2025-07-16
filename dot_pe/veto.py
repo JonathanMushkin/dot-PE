@@ -22,7 +22,7 @@ from cogwheel.utils import get_rundir, mkdirs, NumpyEncoder
 from cogwheel.waveform import WaveformGenerator
 
 from .likelihood_calculator import LinearFree
-from .sampler_free_utils import get_event_data
+from .utils import get_event_data
 from .single_detector import SingleDetectorProcessor
 
 

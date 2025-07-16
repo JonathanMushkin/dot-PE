@@ -19,7 +19,7 @@ from cogwheel.gw_utils import get_fplus_fcross_0, get_geocenter_delays
 
 from . import config
 from .likelihood_calculator import create_lal_dict, compute_hplus_hcross_safe, get_shift
-from .sampler_free_utils import safe_logsumexp
+from .utils import safe_logsumexp
 
 
 class ExtrinsicSampleProcessor:

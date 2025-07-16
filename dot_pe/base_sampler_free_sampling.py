@@ -154,7 +154,7 @@ class Loggable:
     ):
         """
         Create a logger object.
-        TODO: make a wrapper around sampler_free_utils.setup_logger
+        TODO: make a wrapper around utils.setup_logger
 
         This function creates a logger object that can be used for logging
         messages.
