@@ -3,7 +3,7 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dot-PE"
+name = "dot-pe"
 version = "0.1.0"
 authors = [
     { name = "Jonathan Mushkin", email = "yonatanmushkin@gmail.com" },
@@ -14,18 +14,27 @@ requires-python = ">=3.9"
 license = {text = "GPL-3.0"}
 classifiers = [
     "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
 ]
+
 dependencies = [
-    "cogwheel-pe>=1.2.0",
-    "pandas",
-    "scipy",
-    "numpy",
+    "cogwheel-pe>=1.4.0",
     "torch",
-    "matplotlib",
     "tqdm",
-    "lal",
-    "lalsimulation"
+    "numpy<=2.2",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "jupyter",
+    "ipython",
+    "pytest",
+]
+
+[project.urls]
+Homepage = "https://github.com/jonatahm/dot-pe"
+Repository = "https://github.com/jonatahm/dot-pe"
 
 [tool.setuptools.packages.find]
 include = ["dot_pe*"]
