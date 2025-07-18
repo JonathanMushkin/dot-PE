@@ -104,7 +104,7 @@ def run_for_single_detector(
     for attr in tuple_attributes:
         temp = tuple(np.take(getattr(event_data_1d, attr), indices))
         setattr(event_data_1d, attr, temp)
-    if hasattr(event_data_1d, "injection"):
+    if getattr(event_data_1d, "injection", None) is not None:
         event_data_1d.injection["h_h"] = np.take(
             event_data_1d.injection["h_h"], indices
         ).tolist()
@@ -608,6 +608,7 @@ def run(
     rundir: Union[str, Path] = None,
     coherent_score_min_n_effective_prior: int = 100,
     max_incoherent_lnlike_drop: float = 20,
+    mchirp_guess: float = None,
 ) -> Path:
     """Run the magic integral for a given event and bank folder."""
 
@@ -645,6 +646,9 @@ def run(
                     coherent_score_min_n_effective_prior
                 ),
                 "max_incoherent_lnlike_drop": float(max_incoherent_lnlike_drop),
+                "mchirp_guess": float(mchirp_guess)
+                if mchirp_guess is not None
+                else None,
             },
             fp,
             indent=4,
@@ -672,7 +676,7 @@ def run(
 
     coherent_posterior = Posterior.from_event(
         event=event_data,
-        mchirp_guess=None,
+        mchirp_guess=mchirp_guess,
         likelihood_kwargs=likelihood_kwargs,
         ref_wf_finder_kwargs=ref_wf_finder_kwargs,
         **posterior_kwargs,
@@ -751,7 +755,7 @@ def run(
     }
 
     # for injections, add the likelihood to the summary dict
-    if hasattr(event_data, "injection"):
+    if getattr(event_data, "injection", None) is not None:
         ble = read_json(rundir / "CoherentLikelihoodProcessor.json")
         inj_par_dic = event_data.injection["par_dic"]
         bestfit_lnlike, lnl_marginalized = ble.get_bestfit_and_marginalized_lnlike(
@@ -888,6 +892,12 @@ def parse_arguments() -> Dict:
             "Maximum log-likelihood drop from the best fit for the incoherent "
             "sum of single-detector likelihoods."
         ),
+    )
+    parser.add_argument(
+        "--mchirp_guess",
+        type=float,
+        default=None,
+        help="Optional: Initial guess for the chirp mass (mchirp).",
     )
 
     return vars(parser.parse_args())
