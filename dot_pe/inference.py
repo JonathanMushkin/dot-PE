@@ -404,7 +404,7 @@ def run_coherent_inference(
     )
 
     if draw_subset:
-        n_draws = n_draws if n_draws else int(min(n_effective // 2, 1))
+        n_draws = n_draws if n_draws else int(max(n_effective // 2, 1))
         if max_n_draws is not None:
             n_draws = min(n_draws, max_n_draws)
         if n_draws > n_effective:
