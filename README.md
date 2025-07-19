@@ -1,6 +1,4 @@
-# DOT-PE
-
-![dot-pe logo](dot-pe-logo.png)
+![dot-pe logo](dot-pe-logo-white-bg.png)
 
 ## Purpose
 
