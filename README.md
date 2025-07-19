@@ -8,7 +8,7 @@ DOT-PE is a Python package for parameter estimation and evidence integration usi
 
 Clone the repository:
 ```bash
-git clone https://github.com/jonatahm/dot-pe.git
+git clone https://github.com/jonatahm/dot-PE.git
 cd dot-pe
 ```
 
