@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, exp_normalize
 
@@ -463,47 +464,54 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         tempdir = Path(tempdir)
         blocknames = []
 
-        # Iterate over all intrinsic and extrinsic block pairs
-        for i_block_idx, i_block in enumerate(i_blocks):
-            # Validate i_block as an array of intrinsic indices
-            if not isinstance(i_block, np.ndarray) or i_block.dtype != int:
-                raise ValueError(
-                    f"Intrinsic block {i_block_idx} must be an integer array."
-                )
+        # Calculate total number of blocks for progress bar
+        total_blocks = len(i_blocks) * len(e_blocks)
 
-            # Load amplitude and phase for the current intrinsic block
-            amp_impb, phase_impb = self.intrinsic_sample_processor.load_amp_and_phase(
-                self.waveform_dir, i_block
-            )
-            h_impb = amp_impb * np.exp(1j * phase_impb)
-
-            for e_block_idx, e_block in enumerate(e_blocks):
-                # Validate e_block as an array of extrinsic indices
-                if not isinstance(e_block, np.ndarray) or e_block.dtype != int:
+        # Iterate over all intrinsic and extrinsic block pairs with progress bar
+        with tqdm(total=total_blocks, desc="Coherent likelihood blocks") as pbar:
+            for i_block_idx, i_block in enumerate(i_blocks):
+                # Validate i_block as an array of intrinsic indices
+                if not isinstance(i_block, np.ndarray) or i_block.dtype != int:
                     raise ValueError(
-                        f"Extrinsic block {e_block_idx} must be an integer array."
+                        f"Intrinsic block {i_block_idx} must be an integer array."
                     )
 
-                # Create a filename for the current block pair
-                blockname = f"block_{i_block_idx}_{e_block_idx}.npz"
-                blocknames.append(blockname)
-                self.log(f"Starting block creation: {blockname}")
-
-                response_subset = response_dpe[..., e_block]
-                timeshift_subset = timeshift_dbe[..., e_block]
-
-                # Create the likelihood block
-                self.create_a_likelihood_block(
-                    h_impb,
-                    response_subset,
-                    timeshift_subset,
-                    i_block,
-                    e_block,
+                # Load amplitude and phase for the current intrinsic block
+                amp_impb, phase_impb = (
+                    self.intrinsic_sample_processor.load_amp_and_phase(
+                        self.waveform_dir, i_block
+                    )
                 )
+                h_impb = amp_impb * np.exp(1j * phase_impb)
 
-                # Combine with global probability samples if block file exists
+                for e_block_idx, e_block in enumerate(e_blocks):
+                    # Validate e_block as an array of extrinsic indices
+                    if not isinstance(e_block, np.ndarray) or e_block.dtype != int:
+                        raise ValueError(
+                            f"Extrinsic block {e_block_idx} must be an integer array."
+                        )
 
-                self.combine_prob_samples_with_next_block()
+                    # Create a filename for the current block pair
+                    blockname = f"block_{i_block_idx}_{e_block_idx}.npz"
+                    blocknames.append(blockname)
+
+                    response_subset = response_dpe[..., e_block]
+                    timeshift_subset = timeshift_dbe[..., e_block]
+
+                    # Create the likelihood block
+                    self.create_a_likelihood_block(
+                        h_impb,
+                        response_subset,
+                        timeshift_subset,
+                        i_block,
+                        e_block,
+                    )
+
+                    # Combine with global probability samples if block file exists
+                    self.combine_prob_samples_with_next_block()
+
+                    # Update progress bar
+                    pbar.update(1)
 
         return blocknames
 
@@ -947,22 +955,35 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         batches = np.array_split(indices, np.ceil(len(indices) / batch_size))
         marg_info_i = []
         used_indices = []
-        # First pass: Collect enough MarginalizationInfo objects
-        for batch in batches:
-            marg_info_batch, used_indices_batch = self.get_marg_info_batch(
-                batch,
-                bank,
-                min_marg_lnlike_for_sampling,
-                single_marg_info_min_n_effective_prior,
-            )
-            for mi, idx in zip(marg_info_batch, used_indices_batch):
-                self.log(f"MarginalizationInfo: Sample {idx} added.")
-                marg_info_i.append(mi)
-                used_indices.append(idx)
+        total_batches = len(batches)
+
+        # Progress bar for marginalization object collection with batch info
+        with tqdm(total=n_combine, desc="Marginalization objects", unit="obj") as pbar:
+            # Collect enough MarginalizationInfo objects
+            for batch_idx, batch in enumerate(batches):
+                marg_info_batch, used_indices_batch = self.get_marg_info_batch(
+                    batch,
+                    bank,
+                    min_marg_lnlike_for_sampling,
+                    single_marg_info_min_n_effective_prior,
+                )
+                for mi, idx in zip(marg_info_batch, used_indices_batch):
+                    marg_info_i.append(mi)
+                    used_indices.append(idx)
+                    pbar.update(1)
+                    if len(marg_info_i) >= n_combine:
+                        break
+
+                # Update postfix to show batches processed
+                pbar.set_postfix(
+                    {
+                        "batches": f"{batch_idx + 1}/{total_batches}",
+                        "accepted": f"{len(marg_info_i)}/{n_combine}",
+                    }
+                )
+
                 if len(marg_info_i) >= n_combine:
                     break
-            if len(marg_info_i) >= n_combine:
-                break
 
         if not marg_info_i:
             raise ValueError(
@@ -973,6 +994,7 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         marg_info = deepcopy(marg_info_i[0])
         if len(marg_info_i) > 1:
             marg_info.update_with_list([mi for mi in marg_info_i[1:]])
+        self.log("MarginalizationInfo object created!")
 
         # Optionally save the resulting MarginalizationInfo object and indices
         if save_marg_info:
@@ -985,7 +1007,6 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
             )
             self.log(f"Saving MarginalizationInfo object to {save_marg_info_dir}.")
 
-        self.log("MarginalizationInfo object created!")
         return marg_info
 
     def draw_extrinsic_samples_from_indices(

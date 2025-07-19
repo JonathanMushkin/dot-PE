@@ -726,7 +726,6 @@ def run(
     cohernt_score_kwargs = {
         "min_n_effective_prior": coherent_score_min_n_effective_prior
     }
-    print("Running magic integral...")
     (
         samples,
         ln_evidence,

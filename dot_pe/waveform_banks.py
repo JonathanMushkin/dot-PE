@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
+from tqdm import tqdm
 from cogwheel import data, waveform
 from cogwheel.utils import mkdirs
 
@@ -112,16 +112,11 @@ def _gen_waveforms_from_index(
     logger = logger or logging.getLogger(__name__)
     t0 = t0 or time.time()
 
-    logger.info(f"block {i} started")
     # define the block
     r = range(i * blocksize, (i + 1) * blocksize)
     samples = samples.iloc[r].copy()
     first = samples.index[0]
     last = samples.index[-1]
-    logger.info(
-        f"{i}:{first}->{last} started. "
-        + f"Time passed {time.time() - t0:.3g} seconds."
-    )
 
     # generate waveforms
     samples.index = range(samples.shape[0])
@@ -134,10 +129,6 @@ def _gen_waveforms_from_index(
         filename = waveform_dir / (name + block_str + ".npy")
         np.save(file=filename, arr=arr)
 
-    logger.info(
-        f"Block {i}: indices {first}->{last} ended. Time passed "
-        + f"{time.time() - t0:.3g} seconds."
-    )
     return (i, first, last)
 
 
@@ -300,7 +291,7 @@ def create_waveform_bank_from_samples(
                 ],
             )
     else:
-        for i in range(i_start, i_end):
+        for i in tqdm(range(i_start, i_end), desc="Generating waveforms"):
             _gen_waveforms_from_index(
                 wfg,
                 intrinsic_samples,
