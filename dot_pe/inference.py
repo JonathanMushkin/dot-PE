@@ -264,6 +264,7 @@ def run_coherent_inference(
     max_n_draws: int = 10**4,
     draw_subset: bool = False,
     single_marg_info_min_n_effective_prior: int = 32,
+    max_bestfit_lnlike_diff: float = 20,
     coherent_score_kwargs: Dict = None,
 ) -> Tuple[pd.DataFrame, float, float, float, float, float, int]:
     """
@@ -365,6 +366,7 @@ def run_coherent_inference(
         m_arr,
         likelihood_linfree,
         size_limit=size_limit,
+        max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
     )
 
     i_blocks = inds_to_blocks(inds, blocksize)
@@ -608,6 +610,7 @@ def run(
     rundir: Union[str, Path] = None,
     coherent_score_min_n_effective_prior: int = 100,
     max_incoherent_lnlike_drop: float = 20,
+    max_bestfit_lnlike_diff: float = 20,
     mchirp_guess: float = None,
 ) -> Path:
     """Run the magic integral for a given event and bank folder."""
@@ -736,6 +739,7 @@ def run(
         draw_subset=draw_subset,
         n_draws=n_draws,
         coherent_score_kwargs=cohernt_score_kwargs,
+        max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
     )
     print("Saving samples to file...")
     samples_path = Path(rundir) / "samples.feather"
@@ -891,6 +895,15 @@ def parse_arguments() -> Dict:
         help=(
             "Maximum log-likelihood drop from the best fit for the incoherent "
             "sum of single-detector likelihoods."
+        ),
+    )
+    parser.add_argument(
+        "--max_bestfit_lnlike_diff",
+        type=float,
+        default=20,
+        help=(
+            "Maximum log-likelihood difference from the best fit for the "
+            "coherent likelihood evaluation."
         ),
     )
     parser.add_argument(
