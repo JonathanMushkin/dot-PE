@@ -385,10 +385,7 @@ def run_coherent_inference(
         timeshift_dbe=timeshift_dbe,
     )
 
-    clp.prob_samples["weights"] = np.exp(
-        clp.prob_samples["ln_posterior"].to_numpy(dtype=np.float64)
-    )
-    clp.prob_samples["weights"] /= clp.prob_samples["weights"].sum()
+    clp.prob_samples["weights"] = exp_normalize(clp.prob_samples["ln_posterior"].values)
     clp.prob_samples.to_feather(rundir / "prob_samples.feather")
 
     # Process the results

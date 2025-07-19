@@ -94,7 +94,7 @@ def get_top_n_indices_two_pointer(x, y, N):
     return ix[:cx], iy[:cy]
 
 
-def get_n_effective_total_i_e(samples, assume_noramlized=False):
+def get_n_effective_total_i_e(samples, assume_normalized=False):
     """
     Calculate the effective number of samples for the total,
     intrinsic, and extrinsic samples.
@@ -119,7 +119,7 @@ def get_n_effective_total_i_e(samples, assume_noramlized=False):
 
     if samples is None or len(samples) == 0:
         return 0, 0, 0
-    if not assume_noramlized:
+    if not assume_normalized:
         samples = samples.copy()
         samples["weights"] /= samples["weights"].sum()
 
