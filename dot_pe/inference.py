@@ -133,7 +133,6 @@ def run_for_single_detector(
         amp, phase = sdp.intrinsic_sample_processor.load_amp_and_phase(
             waveform_dir, inds
         )
-        # sdp.logger = None
         h_impb = amp * np.exp(1j * phase)
     else:
         return_h_impb = False
@@ -190,10 +189,11 @@ def collect_int_samples_from_single_detectors(
     bank_folder: Union[str, Path],
     i_int_start: int = 0,
     max_incoherent_lnlike_drop: float = 20,
-) -> NDArray[np.int_]:
+) -> Tuple[NDArray[np.int_], NDArray[np.float64]]:
     """
     Perform n_det independent single-detector likelihood evaluations and
-    return the indices of the samples that passed a threshold.
+    return the indices of the samples that passed a threshold and their
+    corresponding incoherent log-likelihood values.
     """
 
     with open(bank_folder / "bank_config.json", "r", encoding="utf-8") as f:
