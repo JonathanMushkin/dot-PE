@@ -400,7 +400,7 @@ def run_coherent_inference(
     )
 
     n_effective, n_effective_i, n_effective_e = get_n_effective_total_i_e(
-        clp.prob_samples, assume_noramlized=False
+        clp.prob_samples, assume_normalized=False
     )
 
     if draw_subset:
