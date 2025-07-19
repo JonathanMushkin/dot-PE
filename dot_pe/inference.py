@@ -117,7 +117,7 @@ def run_for_single_detector(
     bank_file_path = Path(bank_folder) / "intrinsic_sample_bank.feather"
     waveform_dir = Path(bank_folder) / "waveforms"
 
-    bl = SingleDetectorProcessor(
+    sdp = SingleDetectorProcessor(
         bank_file_path,
         waveform_dir,
         n_phi,
@@ -130,45 +130,47 @@ def run_for_single_detector(
 
     if h_impb is None:
         return_h_impb = True
-        amp, phase = bl.intrinsic_sample_processor.load_amp_and_phase(
+        amp, phase = sdp.intrinsic_sample_processor.load_amp_and_phase(
             waveform_dir, inds
         )
-        # bl.logger = None
+        # sdp.logger = None
         h_impb = amp * np.exp(1j * phase)
     else:
         return_h_impb = False
 
-    bl.h_impb = h_impb
+    sdp.h_impb = h_impb
 
     # fix sky position to above detector
-    det_name = bl.likelihood.event_data.detector_names[0]
-    tgps = bl.likelihood.event_data.tgps
+    det_name = sdp.likelihood.event_data.detector_names[0]
+    tgps = sdp.likelihood.event_data.tgps
     dt_fraction = 1
     lat, lon = skyloc_angles.cart3d_to_latlon(
         skyloc_angles.normalize(DETECTORS[det_name].location)
     )
 
-    par_dic = bl.transform_par_dic_by_sky_poisition(det_name, par_dic_0, lon, lat, tgps)
+    par_dic = sdp.transform_par_dic_by_sky_poisition(
+        det_name, par_dic_0, lon, lat, tgps
+    )
 
     delay = get_geocenter_delays(det_name, par_dic["lat"], par_dic["lon"])[0]
-    tcoarse = bl.likelihood.event_data.tcoarse
+    tcoarse = sdp.likelihood.event_data.tcoarse
     t_grid = (np.arange(n_t) - n_t // 2) * (
-        bl.likelihood.event_data.times[1] * dt_fraction
+        sdp.likelihood.event_data.times[1] * dt_fraction
     )
     t_grid += par_dic["t_geocenter"] + tcoarse + delay
 
     timeshifts_dbt = np.exp(
-        -2j * np.pi * t_grid[None, None, :] * bl.likelihood.fbin[None, :, None]
+        -2j * np.pi * t_grid[None, None, :] * sdp.likelihood.fbin[None, :, None]
     )
 
-    lnlike_iot = bl.get_response_over_distance_and_lnlike(
-        bl.dh_weights_dmpb,
-        bl.hh_weights_dmppb,
-        bl.h_impb,
+    lnlike_iot = sdp.get_response_over_distance_and_lnlike(
+        sdp.dh_weights_dmpb,
+        sdp.hh_weights_dmppb,
+        sdp.h_impb,
         timeshifts_dbt,
-        bl.likelihood.asd_drift,
-        bl.evidence.n_phi,
-        bl.evidence.m_arr,
+        sdp.likelihood.asd_drift,
+        sdp.evidence.n_phi,
+        sdp.evidence.m_arr,
     )[1]
 
     lnlike_i = lnlike_iot.max(axis=(1, 2))
@@ -233,16 +235,15 @@ def collect_int_samples_from_single_detectors(
             else:
                 lnlike_di[d, batch_start:batch_end] = temp
 
-    # optimistic = incoherent sum of best-fit likelihoods from each
-    # detector
-    optimistic_lnlikes = np.sum(lnlike_di, axis=0)
+    incoherent_lnlikes = np.sum(lnlike_di, axis=0)
 
-    optimistic_threshold = optimistic_lnlikes.max() - max_incoherent_lnlike_drop
+    incoherent_threshold = incoherent_lnlikes.max() - max_incoherent_lnlike_drop
 
-    selected = optimistic_lnlikes >= optimistic_threshold
+    selected = incoherent_lnlikes >= incoherent_threshold
 
     inds = intrinsic_indices[selected]
-    return inds
+    incoherent_lnlikes = incoherent_lnlikes[inds]
+    return inds, incoherent_lnlikes
 
 
 def run_coherent_inference(
@@ -359,7 +360,7 @@ def run_coherent_inference(
 
     likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
 
-    ble = CoherentLikelihoodProcessor(
+    clp = CoherentLikelihoodProcessor(
         bank_file_path,
         waveform_dir,
         n_phi,
@@ -371,12 +372,12 @@ def run_coherent_inference(
 
     i_blocks = inds_to_blocks(inds, blocksize)
     e_blocks = inds_to_blocks(np.arange(n_ext), blocksize)
-    ble.load_extrinsic_samples_data(rundir)
-    ble.to_json(rundir, overwrite=True)
+    clp.load_extrinsic_samples_data(rundir)
+    clp.to_json(rundir, overwrite=True)
     # perform the run
     print(f"Creating {len(i_blocks)} x {len(e_blocks)} likelihood blocks...")
 
-    _ = ble.create_likelihood_blocks(
+    _ = clp.create_likelihood_blocks(
         tempdir=rundir,
         i_blocks=i_blocks,
         e_blocks=e_blocks,
@@ -384,25 +385,25 @@ def run_coherent_inference(
         timeshift_dbe=timeshift_dbe,
     )
 
-    ble.prob_samples["weights"] = np.exp(
-        ble.prob_samples["ln_posterior"].to_numpy(dtype=np.float64)
+    clp.prob_samples["weights"] = np.exp(
+        clp.prob_samples["ln_posterior"].to_numpy(dtype=np.float64)
     )
-    ble.prob_samples["weights"] /= ble.prob_samples["weights"].sum()
-    ble.prob_samples.to_feather(rundir / "prob_samples.feather")
+    clp.prob_samples["weights"] /= clp.prob_samples["weights"].sum()
+    clp.prob_samples.to_feather(rundir / "prob_samples.feather")
 
     # Process the results
-    ln_evidence = safe_logsumexp(ble.prob_samples["ln_posterior"].values) - np.log(
+    ln_evidence = safe_logsumexp(clp.prob_samples["ln_posterior"].values) - np.log(
         n_phi * n_ext * n_int
     )
-    ln_evidence_discarded = ble.logsumexp_discarded_ln_posterior - np.log(
+    ln_evidence_discarded = clp.logsumexp_discarded_ln_posterior - np.log(
         n_phi * n_ext * n_int
     )
-    intrinsic_samples = ble.intrinsic_sample_processor.load_bank(
+    intrinsic_samples = clp.intrinsic_sample_processor.load_bank(
         bank_file_path,
     )
 
     n_effective, n_effective_i, n_effective_e = get_n_effective_total_i_e(
-        ble.prob_samples, assume_noramlized=False
+        clp.prob_samples, assume_noramlized=False
     )
 
     if draw_subset:
@@ -414,17 +415,17 @@ def run_coherent_inference(
                 f"n_draws ({n_draws}) is bigger than n_effective ({n_effective})."
             )
 
-        prob_samples = ble.prob_samples.sample(
+        prob_samples = clp.prob_samples.sample(
             n=n_draws, weights="weights", replace=True
         ).reset_index(drop=True)
         prob_samples["weights"] = 1.0
     else:
-        prob_samples = ble.prob_samples
+        prob_samples = clp.prob_samples
 
     print("Standardizing samples...")
     stnd_start_time = time.time()
     samples = standardize_samples(
-        ble.intrinsic_sample_processor,
+        clp.intrinsic_sample_processor,
         ext_sample_generator.likelihood.coherent_score.lookup_table,
         pr,
         waveform_dir,
@@ -442,7 +443,7 @@ def run_coherent_inference(
         + f"{(time.time() - stnd_start_time):.3g} seconds."
     )
 
-    ble.to_json(dirname=rundir, overwrite=True)
+    clp.to_json(dirname=rundir, overwrite=True)
 
     return (
         samples,
@@ -451,7 +452,7 @@ def run_coherent_inference(
         n_effective,
         n_effective_i,
         n_effective_e,
-        ble.n_distance_marginalizations,
+        clp.n_distance_marginalizations,
     )
 
 
@@ -690,11 +691,22 @@ def run(
 
     if load_inds and inds_path is not None and Path(inds_path).exists():
         print("Loading intrinsic samples indices")
-        inds = np.load(inds_path)
-        np.save(rundir / "intrinsic_inds.npy", inds)
+        if inds_path.suffix == ".npz":
+            data = np.load(inds_path)
+            inds = data["inds"]
+            incoherent_lnlikes = data["incoherent_lnlikes"]
+        else:
+            # Backward compatibility for old .npy format
+            inds = np.load(inds_path)
+            incoherent_lnlikes = None
+        np.savez(
+            rundir / "intrinsic_samples.npz",
+            inds=inds,
+            incoherent_lnlikes=incoherent_lnlikes,
+        )
     else:
         print("Collecting intrinsic samples from individual detectors...")
-        inds = collect_int_samples_from_single_detectors(
+        inds, incoherent_lnlikes = collect_int_samples_from_single_detectors(
             event_data=event_data,
             par_dic_0=par_dic_0,
             single_detector_blocksize=single_detector_blocksize,
@@ -705,7 +717,11 @@ def run(
             i_int_start=i_int_start,
             max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
         )
-        np.save(rundir / "intrinsic_inds.npy", inds)
+        np.savez(
+            rundir / "intrinsic_samples.npz",
+            inds=inds,
+            incoherent_lnlikes=incoherent_lnlikes,
+        )
     print(f"{len(inds)} intrinsic samples selected.")
 
     pr = coherent_posterior.prior
@@ -760,9 +776,9 @@ def run(
 
     # for injections, add the likelihood to the summary dict
     if getattr(event_data, "injection", None) is not None:
-        ble = read_json(rundir / "CoherentLikelihoodProcessor.json")
+        clp = read_json(rundir / "CoherentLikelihoodProcessor.json")
         inj_par_dic = event_data.injection["par_dic"]
-        bestfit_lnlike, lnl_marginalized = ble.get_bestfit_and_marginalized_lnlike(
+        bestfit_lnlike, lnl_marginalized = clp.get_bestfit_and_marginalized_lnlike(
             inj_par_dic
         )
         summary_dict["injection"] = {
