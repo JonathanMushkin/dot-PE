@@ -35,7 +35,7 @@ warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 from cogwheel import skyloc_angles
 from cogwheel.data import EventData
 from cogwheel.gw_utils import DETECTORS, get_geocenter_delays
-from cogwheel.likelihood import RelativeBinningLikelihood
+from cogwheel.likelihood import RelativeBinningLikelihood, LookupTable
 from cogwheel.posterior import Posterior
 from cogwheel.utils import exp_normalize, get_rundir, mkdirs, read_json
 from cogwheel.waveform import WaveformGenerator
@@ -51,6 +51,7 @@ from .coherent_processing import (
 )
 from .utils import get_event_data, safe_logsumexp
 from .single_detector import SingleDetectorProcessor
+from .sample_processing import IntrinsicSampleProcessor
 
 
 def inds_to_blocks(
@@ -257,54 +258,19 @@ def run_coherent_inference(
     n_phi: int,
     m_arr: NDArray[np.int_],
     blocksize: int,
-    pr,
     n_combine: int = 16,
     seed: int = None,
     size_limit: int = 10**7,
-    n_draws: int = None,
-    max_n_draws: int = 10**4,
-    draw_subset: bool = False,
     single_marg_info_min_n_effective_prior: int = 32,
     max_bestfit_lnlike_diff: float = 20,
     coherent_score_kwargs: Dict = None,
-) -> Tuple[pd.DataFrame, float, float, float, float, float, int]:
+) -> Tuple[float, float, float, float, float, int]:
     """
-    TODO: consider split this into a function that prepares and runs the loop,
-    and one that produces the samples & integrates
-    Perform a full coherent multi-detector likelihood evaluation,
-    and get samples with probabilistic weights.
-
-    Parameters
-    ----------
-    event_data : EventData
-        Event data.
-    rundir : Path
-        Directory to save / load the results.
-    par_dic_0 : dict
-        Dictionary of reference-waveform parameters.
-    bank_folder : Path
-        Path to the bank folder.
-    n_int : int
-        Number of intrinsic samples.
-    inds : array
-        Indices of the intrinsic samples to include.
-    n_ext : int
-        Number of extrinsic samples.
-    n_phi : int
-        Number of phi_ref samples.
-    m_arr : array
-        Array of harmonic m-modes to include. Default is [2,1,3,4]
-    blocksize : int
-        Block size for likelihood evaluation.
-    pr : Prior
-        Prior object. Used to (inverse-) transform the samples.
-    seed : int
-        Random seed.
+    Perform the heavy computation phase of coherent inference.
+    This function stops after saving prob_samples.feather.
 
     Returns
     -------
-    samples : pd.DataFrame
-        The standardized samples.
     ln_evidence : float
         The log evidence.
     ln_evidence_discarded : float
@@ -388,6 +354,15 @@ def run_coherent_inference(
     clp.prob_samples["weights"] = exp_normalize(clp.prob_samples["ln_posterior"].values)
     clp.prob_samples.to_feather(rundir / "prob_samples.feather")
 
+    # Save the IntrinsicSampleProcessor cache for post-processing
+    cache_path = rundir / "intrinsic_sample_processor_cache.npz"
+    np.savez(
+        cache_path,
+        cached_dt_linfree_relative=dict(
+            clp.intrinsic_sample_processor.cached_dt_linfree_relative
+        ),
+    )
+
     # Process the results
     ln_evidence = safe_logsumexp(clp.prob_samples["ln_posterior"].values) - np.log(
         n_phi * n_ext * n_int
@@ -395,55 +370,12 @@ def run_coherent_inference(
     ln_evidence_discarded = clp.logsumexp_discarded_ln_posterior - np.log(
         n_phi * n_ext * n_int
     )
-    intrinsic_samples = clp.intrinsic_sample_processor.load_bank(
-        bank_file_path,
-    )
 
     n_effective, n_effective_i, n_effective_e = get_n_effective_total_i_e(
         clp.prob_samples, assume_normalized=False
     )
 
-    if draw_subset:
-        n_draws = n_draws if n_draws else int(max(n_effective // 2, 1))
-        if max_n_draws is not None:
-            n_draws = min(n_draws, max_n_draws)
-        if n_draws > n_effective:
-            warnings.warn(
-                f"n_draws ({n_draws}) is bigger than n_effective ({n_effective})."
-            )
-
-        prob_samples = clp.prob_samples.sample(
-            n=n_draws, weights="weights", replace=True
-        ).reset_index(drop=True)
-        prob_samples["weights"] = 1.0
-    else:
-        prob_samples = clp.prob_samples
-
-    print("Standardizing samples...")
-    stnd_start_time = time.time()
-    samples = standardize_samples(
-        clp.intrinsic_sample_processor,
-        ext_sample_generator.likelihood.coherent_score.lookup_table,
-        pr,
-        waveform_dir,
-        prob_samples,
-        intrinsic_samples,
-        extrinsic_samples,
-        n_phi,
-        event_data.tgps,
-    )
-
-    if draw_subset:  # could be more elegant. But it is not. JM 10/3/2025
-        samples["weights"] = 1.0
-    print(
-        "Standardizing samples done in "
-        + f"{(time.time() - stnd_start_time):.3g} seconds."
-    )
-
-    clp.to_json(dirname=rundir, overwrite=True)
-
     return (
-        samples,
         ln_evidence,
         ln_evidence_discarded,
         n_effective,
@@ -454,10 +386,10 @@ def run_coherent_inference(
 
 
 def standardize_samples(
-    intrinsic_sample_processor,
-    lookup_table,
-    pr,
     waveform_dir: Path,
+    cached_dt_linfree_relative: dict,
+    lookup_table: LookupTable,
+    pr,
     prob_samples: pd.DataFrame,
     intrinsic_samples: pd.DataFrame,
     extrinsic_samples: pd.DataFrame,
@@ -469,16 +401,16 @@ def standardize_samples(
 
     Parameters
     ----------
-    intrinsic_sample_processor : IntrinsicSampleProcessor
-        IntrinsicSampleProcessor object.
+    waveform_dir : Path
+        Path to the waveform directory.
+    cached_dt_linfree_relative : dict
+        Cached relative timeshifts from the compute phase.
     lookup_table : LookupTable
         LookupTable object, for distance marginalization.
     pr : Prior
         Prior object.
-    waveform_dir : Path
-        Path to the waveform directory.
     prob_samples : DataFrame
-        Samples with indices columns `i`, `e` and `o` and probablistic
+        Samples with indices columns `i`, `e` and `o` and probabilistic
         information.
     intrinsic_samples : DataFrame
         Intrinsic samples.
@@ -501,6 +433,7 @@ def standardize_samples(
     combined_samples.drop(
         columns=["weights", "log_prior_weights", "original_index"],
         inplace=True,
+        errors="ignore",  # Only drop columns that exist
     )
 
     combined_samples = pd.concat([combined_samples, prob_samples], axis=1)
@@ -524,9 +457,10 @@ def standardize_samples(
     unique_i = np.unique(prob_samples["i"].values)
     u_i = np.searchsorted(unique_i, prob_samples["i"].values)
 
-    dt_linfree_u, dphi_linfree_u = intrinsic_sample_processor.load_linfree_dt_and_dphi(
-        waveform_dir, unique_i
-    )
+    # Use cached timeshifts directly instead of going through IntrinsicSampleProcessor
+    dt_linfree_u = np.array([cached_dt_linfree_relative[i] for i in unique_i])
+    # Since banks no longer store dphi_linfree, we use zeros
+    dphi_linfree_u = np.zeros_like(dt_linfree_u)
 
     combined_samples["t_geocenter"] = (
         combined_samples["t_geocenter_linfree"] + dt_linfree_u[u_i]
@@ -586,6 +520,132 @@ def sample_distance_multiprocess(num_cores, lookup_table, dh, hh):
     with multiprocessing.Pool(processes=num_cores) as pool:
         results = pool.map(_draw_distance, args)
     return np.array(results)
+
+
+def postprocess(
+    event_data: EventData,
+    rundir: Path,
+    bank_folder: Path,
+    n_int: int,
+    inds: NDArray[np.int_],
+    n_ext: int,
+    n_phi: int,
+    pr,
+    prob_samples: Union[pd.DataFrame, Path, str] = None,
+    n_draws: int = None,
+    max_n_draws: int = 10**4,
+    draw_subset: bool = False,
+    lookup_table=None,
+) -> pd.DataFrame:
+    """
+    Perform the post-processing phase of coherent inference.
+    This function starts after prob_samples.feather has been saved.
+
+    Parameters
+    ----------
+    event_data : EventData
+        Event data.
+    rundir : Path
+        Directory containing the results from the compute phase.
+    bank_folder : Path
+        Path to the bank folder.
+    n_int : int
+        Number of intrinsic samples.
+    inds : NDArray[np.int_]
+        Indices of the intrinsic samples to include.
+    n_ext : int
+        Number of extrinsic samples.
+    n_phi : int
+        Number of phi_ref samples.
+    pr : Prior
+        Prior object.
+    prob_samples : Union[pd.DataFrame, Path, str], optional
+        Probabilistic samples. If None, loads from rundir / "prob_samples.feather".
+        If Path or str, loads from that path. If DataFrame, uses directly.
+    n_draws : int, optional
+        Number of samples to draw if draw_subset is True.
+    max_n_draws : int, optional
+        Maximum number of samples to draw.
+    draw_subset : bool, optional
+        Whether to draw a subset of samples.
+    lookup_table : optional
+        Lookup table for distance marginalization. If None, creates new object.
+        Otherwise uses the provided table.
+
+    Returns
+    -------
+    samples : pd.DataFrame
+        The standardized samples.
+    """
+    waveform_dir = bank_folder / "waveforms"
+    bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
+
+    # Load prob_samples
+    if prob_samples is None:
+        prob_samples = pd.read_feather(rundir / "prob_samples.feather")
+    elif isinstance(prob_samples, (str, Path)):
+        prob_samples = pd.read_feather(prob_samples)
+    # If prob_samples is already a DataFrame, use it directly
+
+    # Load extrinsic samples
+    extrinsic_samples = pd.read_feather(rundir / "extrinsic_samples.feather")
+
+    # Load intrinsic samples using the proper method
+    intrinsic_samples = IntrinsicSampleProcessor.load_bank(bank_file_path)
+
+    if draw_subset:
+        # Calculate effective sample size for subsetting
+        n_effective, _, _ = get_n_effective_total_i_e(
+            prob_samples, assume_normalized=False
+        )
+
+        n_draws = n_draws if n_draws else int(max(n_effective // 2, 1))
+        if max_n_draws is not None:
+            n_draws = min(n_draws, max_n_draws)
+        if n_draws > n_effective:
+            warnings.warn(
+                f"n_draws ({n_draws}) is bigger than n_effective ({n_effective})."
+            )
+
+        prob_samples = prob_samples.sample(
+            n=n_draws, weights="weights", replace=True
+        ).reset_index(drop=True)
+        prob_samples["weights"] = 1.0
+
+    print("Standardizing samples...")
+    stnd_start_time = time.time()
+
+    # Handle lookup table
+    if lookup_table is None:
+        # Create new lookup table like IntrinsicSampleProcessor does
+        lookup_table = LookupTable()
+    # Otherwise, use the provided lookup_table directly
+
+    # Load the cached timeshifts
+    cache_path = rundir / "intrinsic_sample_processor_cache.npz"
+    cache_data = np.load(cache_path, allow_pickle=True)
+    cached_dt_linfree_relative = cache_data["cached_dt_linfree_relative"].item()
+
+    samples = standardize_samples(
+        waveform_dir,
+        cached_dt_linfree_relative,
+        lookup_table,
+        pr,
+        prob_samples,
+        intrinsic_samples,
+        extrinsic_samples,
+        n_phi,
+        event_data.tgps,
+    )
+
+    if draw_subset:  # could be more elegant. But it is not. JM 10/3/2025
+        samples["weights"] = 1.0
+    print(
+        "Standardizing samples done in "
+        + f"{(time.time() - stnd_start_time):.3g} seconds."
+    )
+
+    return samples
 
 
 def run(
@@ -727,7 +787,6 @@ def run(
         "min_n_effective_prior": coherent_score_min_n_effective_prior
     }
     (
-        samples,
         ln_evidence,
         ln_evidence_discarded,
         n_effective,
@@ -745,14 +804,27 @@ def run(
         n_phi=n_phi,
         m_arr=m_arr,
         blocksize=blocksize,
-        pr=pr,
         seed=seed,
         size_limit=size_limit,
-        draw_subset=draw_subset,
-        n_draws=n_draws,
         coherent_score_kwargs=cohernt_score_kwargs,
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
     )
+    print("Saving samples to file...")
+    # Run the post-processing phase
+    samples = postprocess(
+        event_data=event_data,
+        rundir=rundir,
+        bank_folder=bank_folder,
+        n_int=n_int,
+        inds=inds,
+        n_ext=n_ext,
+        n_phi=n_phi,
+        pr=pr,
+        n_draws=n_draws,
+        max_n_draws=10**4,
+        draw_subset=draw_subset,
+    )
+
     print("Saving samples to file...")
     samples_path = Path(rundir) / "samples.feather"
     samples.to_feather(samples_path)

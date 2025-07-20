@@ -376,11 +376,8 @@ class IntrinsicSampleProcessor:
         amplitudes, phases = IntrinsicSampleProcessor._load_amp_and_phase(
             waveform_dir, indices
         )
-        dt_linfree, dphi_linfree = IntrinsicSampleProcessor._load_linfree_dt_and_dphi(
-            waveform_dir, indices
-        )
 
-        return amplitudes, phases, dt_linfree, dphi_linfree
+        return amplitudes, phases
 
     @staticmethod
     def _load_amp_and_phase(waveform_dir, indices):
@@ -429,68 +426,6 @@ class IntrinsicSampleProcessor:
             phases[w] = p[indices_in_file[w]]
 
         return amplitudes, phases
-
-    @staticmethod
-    def _load_linfree_dt_and_dphi(waveform_dir, indices):
-        """
-        load amplitude and phases from directory
-        file name format is
-        {x}_block_{y}_samples_{low}_{high}.npy
-        with x being 'amplitudes', 'phase'.
-        Phases are in the linear-free convention.
-        Per mode, the linear-free nad standard phases are related by:
-        Phase(m,f) [linear free] = (Phase(m,f) [standard]
-                                  -2*pi*dt_linear_free*f
-                                  - m*dphi_linear_free)
-        t (standard) = t (linear free) - dt_linear_free
-        phi (standard) = phi (linear free) + dphi_linear_free
-
-        If waveform_dir holds no linear_free files, return zeros.
-        """
-        # define file names
-        waveform_dir = Path(waveform_dir)
-        bank_config_path = waveform_dir.parent / "bank_config.json"
-        with open(bank_config_path, "r", encoding="utf-8") as f:
-            bank_config = json.load(f)
-            block_size = bank_config["blocksize"]
-
-        indices = np.array(indices)
-
-        def get_sorted_files(prefix):
-            return sorted(
-                waveform_dir.glob(f"{prefix}_block_*.npy"),
-                key=lambda file: int(
-                    file.stem.removeprefix(prefix + "_block").split("_")[1]
-                ),
-            )
-
-        dt_files = get_sorted_files("dt_linfree")
-        dphi_files = get_sorted_files("dphi_linfree")
-        # if the bank does not hold linear-free waveform, return empty arrays
-        if len(dt_files) == 0:
-            dt_linfree = np.zeros(len(indices), dtype=float)
-            dphi_linfree = np.zeros(len(indices), dtype=float)
-            return dt_linfree, dphi_linfree
-
-        # define dimnesions of arrays
-        n_inds = len(indices)
-        dt_linfree = np.zeros(n_inds)
-        dphi_linfree = np.zeros(n_inds)
-
-        # Calculate the file index for each requested index
-        file_indices = indices // block_size
-        indices_in_file = indices % block_size
-        unique_file_indices = np.unique(file_indices)
-
-        # load waveform & supplementary linfree data
-        for i in unique_file_indices:
-            w = np.where(file_indices == i)[0]
-            dt = np.load(dt_files[i])
-            dphi = np.load(dphi_files[i])
-            dt_linfree[w] = dt[indices_in_file[w]]
-            dphi_linfree[w] = dphi[indices_in_file[w]]
-
-        return dt_linfree, dphi_linfree
 
     def load_amp_and_phase(self, waveform_dir, indices):
         """
@@ -555,12 +490,9 @@ class IntrinsicSampleProcessor:
 
     def load_linfree_dt_and_dphi(self, waveform_dir, indices):
         """
-        # dt_linfree is the projection of linear term, subtracted form
-        # the LAL-convention phase. To correct (from linear free to
-        LAL convention), we add it.
-        # dt_linfree_relative minus the projection of linear term, added
-        # to the LAL-convention phase. To correct, we subtract it.
-
+        Load linear-free dt and dphi values.
+        Since banks no longer store these values, we return zeros.
+        The relative timeshifts are computed on-the-fly when needed.
         """
         if isinstance(indices, int):
             indices = [
@@ -569,8 +501,9 @@ class IntrinsicSampleProcessor:
         if isinstance(indices, list):
             indices = np.array(indices)
 
-        # load from files
-        dt_linfree, dphi_linfree = self._load_linfree_dt_and_dphi(waveform_dir, indices)
+        # Return zeros since banks no longer store dt/dphi linfree
+        dt_linfree = np.zeros(len(indices), dtype=float)
+        dphi_linfree = np.zeros(len(indices), dtype=float)
 
         # add the relative timeshifts
         dt_linfree_relative = np.zeros_like(dt_linfree)
@@ -582,7 +515,7 @@ class IntrinsicSampleProcessor:
         )
 
         if is_not_cached.any():
-            # by loading the amplitude and phase, we fill the cahced
+            # by loading the amplitude and phase, we fill the cached
             # linear free dt dictionary.
             _ = self.load_amp_and_phase(waveform_dir, indices[is_not_cached])
 
