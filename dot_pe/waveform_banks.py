@@ -48,7 +48,6 @@ def get_waveform(wfg, int_dic, fbin, override_dic=None):
     amp_mpb = np.abs(h_mpb)
     # unwrap in fine grid, then take sparser fbin points
     phase_mpb = np.unwrap(np.angle(h_mpb), axis=-1)
-    # shift forward in time by dt_linfree
 
     return amp_mpb, phase_mpb
 

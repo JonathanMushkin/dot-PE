@@ -355,13 +355,13 @@ def run_coherent_inference(
     clp.prob_samples.to_feather(rundir / "prob_samples.feather")
 
     # Save the IntrinsicSampleProcessor cache for post-processing
-    cache_path = rundir / "intrinsic_sample_processor_cache.npz"
-    np.savez(
-        cache_path,
-        cached_dt_linfree_relative=dict(
-            clp.intrinsic_sample_processor.cached_dt_linfree_relative
-        ),
-    )
+    cache_path = rundir / "intrinsic_sample_processor_cache.json"
+    cache_dict = {
+        int(k): float(v)
+        for k, v in clp.intrinsic_sample_processor.cached_dt_linfree_relative.items()
+    }
+    with open(cache_path, "w") as f:
+        json.dump(cache_dict, f)
 
     # Process the results
     ln_evidence = safe_logsumexp(clp.prob_samples["ln_posterior"].values) - np.log(
@@ -463,7 +463,7 @@ def standardize_samples(
     dphi_linfree_u = np.zeros_like(dt_linfree_u)
 
     combined_samples["t_geocenter"] = (
-        combined_samples["t_geocenter_linfree"] + dt_linfree_u[u_i]
+        combined_samples["t_geocenter_linfree"] - dt_linfree_u[u_i]
     )
 
     combined_samples["phi_ref"] = (
@@ -622,9 +622,12 @@ def postprocess(
     # Otherwise, use the provided lookup_table directly
 
     # Load the cached timeshifts
-    cache_path = rundir / "intrinsic_sample_processor_cache.npz"
-    cache_data = np.load(cache_path, allow_pickle=True)
-    cached_dt_linfree_relative = cache_data["cached_dt_linfree_relative"].item()
+    cache_path = rundir / "intrinsic_sample_processor_cache.json"
+    with open(cache_path, "r") as f:
+        cached_dt_linfree_relative_json = json.load(f)
+    cached_dt_linfree_relative = {
+        int(k): v for k, v in cached_dt_linfree_relative_json.items()
+    }
 
     samples = standardize_samples(
         waveform_dir,
@@ -783,7 +786,7 @@ def run(
 
     pr = coherent_posterior.prior
 
-    cohernt_score_kwargs = {
+    coherent_score_kwargs = {
         "min_n_effective_prior": coherent_score_min_n_effective_prior
     }
     (
@@ -806,7 +809,7 @@ def run(
         blocksize=blocksize,
         seed=seed,
         size_limit=size_limit,
-        coherent_score_kwargs=cohernt_score_kwargs,
+        coherent_score_kwargs=coherent_score_kwargs,
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
     )
     print("Saving samples to file...")

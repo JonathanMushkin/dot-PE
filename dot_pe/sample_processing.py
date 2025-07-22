@@ -311,7 +311,7 @@ class IntrinsicSampleProcessor:
         )
 
         for i, dt in zip(inds[is_not_cached], dts[is_not_cached]):
-            self.cached_dt_linfree_relative[i] = dt
+            self.cached_dt_linfree_relative[int(i)] = float(dt)
 
     @staticmethod
     def load_bank(sample_bank_path, indices=None):
@@ -360,10 +360,7 @@ class IntrinsicSampleProcessor:
     @staticmethod
     def _load_waveforms(waveform_dir, indices):
         """
-        load amplitude and phases from directory
-        file name format is
-        {x}_block_{y}_samples_{low}_{high}.npy
-        with x being 'amplitudes', 'phase'.
+        load amplitude and phases from directory.
         Phases are in the linear-free convention.
         Per mode, the linear-free nad standard phases are related by:
         Phase(m,f) [linear free] = (Phase(m,f) [standard]
