@@ -262,7 +262,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
             self.full_timeshift_dbe = np.load(timeshift_path)
         else:
             (self.full_response_dpe, self.full_timeshift_dbe) = (
-                self.full_response_dpe.get_components(
+                self.extrinsic_sample_processor.get_components(
                     self.full_extrinsic_samples,
                     self.likelihood.fbin,
                     self.likelihood.event_data.tcoarse,
@@ -1034,7 +1034,6 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
             if isinstance(marg_info, Path):
                 with open(marg_info, "rb") as f:
                     marg_info = pickle.load(f)
-        # TODO: AFTER TESTING, DRAW EXACTLY HOW MANY SAMPLES ARE NEEDED.
         extrinsic_samples = pd.DataFrame(
             self.likelihood.coherent_score.gen_samples_from_marg_info(
                 marg_info, num=n_ext

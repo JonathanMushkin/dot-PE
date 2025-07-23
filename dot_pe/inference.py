@@ -51,7 +51,7 @@ from .coherent_processing import (
 )
 from .utils import get_event_data, safe_logsumexp
 from .single_detector import SingleDetectorProcessor
-from .sample_processing import IntrinsicSampleProcessor
+from .sample_processing import IntrinsicSampleProcessor, ExtrinsicSampleProcessor
 
 
 def inds_to_blocks(
@@ -258,12 +258,8 @@ def run_coherent_inference(
     n_phi: int,
     m_arr: NDArray[np.int_],
     blocksize: int,
-    n_combine: int = 16,
-    seed: int = None,
     size_limit: int = 10**7,
-    single_marg_info_min_n_effective_prior: int = 32,
     max_bestfit_lnlike_diff: float = 20,
-    coherent_score_kwargs: Dict = None,
 ) -> Tuple[float, float, float, float, float, int]:
     """
     Perform the heavy computation phase of coherent inference.
@@ -292,37 +288,6 @@ def run_coherent_inference(
         approximant = bank_config["approximant"]
 
     wfg = WaveformGenerator.from_event_data(event_data, approximant)
-    marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
-        event_data, wfg, par_dic_0, fbin, coherent_score=coherent_score_kwargs
-    )
-
-    ext_sample_generator = CoherentExtrinsicSamplesGenerator(
-        likelihood=marg_ext_like,
-        intrinsic_bank_file=bank_file_path,
-        waveform_dir=waveform_dir,
-        seed=seed,
-        n_phi=n_phi,
-        m_arr=m_arr,
-    )
-
-    get_marg_info_kwargs = {
-        "save_marg_info": True,
-        "save_marg_info_dir": rundir,
-        "n_combine": n_combine,
-        "indices": inds,
-        "single_marg_info_min_n_effective_prior": single_marg_info_min_n_effective_prior,
-    }
-
-    (extrinsic_samples, response_dpe, timeshift_dbe) = (
-        ext_sample_generator.draw_extrinsic_samples_from_indices(
-            n_ext, get_marg_info_kwargs=get_marg_info_kwargs
-        )
-    )
-
-    # save results to disk
-    extrinsic_samples.to_feather(rundir / "extrinsic_samples.feather")
-    np.save(arr=response_dpe, file=rundir / "response_dpe.npy")
-    np.save(arr=timeshift_dbe, file=rundir / "timeshift_dbe.npy")
 
     likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
 
@@ -336,6 +301,9 @@ def run_coherent_inference(
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
     )
 
+    # Load extrinsic samples to get the actual number
+    extrinsic_samples = pd.read_feather(rundir / "extrinsic_samples.feather")
+
     i_blocks = inds_to_blocks(inds, blocksize)
     e_blocks = inds_to_blocks(np.arange(n_ext), blocksize)
     clp.load_extrinsic_samples_data(rundir)
@@ -347,8 +315,8 @@ def run_coherent_inference(
         tempdir=rundir,
         i_blocks=i_blocks,
         e_blocks=e_blocks,
-        response_dpe=response_dpe,
-        timeshift_dbe=timeshift_dbe,
+        response_dpe=clp.full_response_dpe,
+        timeshift_dbe=clp.full_timeshift_dbe,
     )
 
     clp.prob_samples["weights"] = exp_normalize(clp.prob_samples["ln_posterior"].values)
@@ -386,7 +354,6 @@ def run_coherent_inference(
 
 
 def standardize_samples(
-    waveform_dir: Path,
     cached_dt_linfree_relative: dict,
     lookup_table: LookupTable,
     pr,
@@ -630,7 +597,6 @@ def postprocess(
     }
 
     samples = standardize_samples(
-        waveform_dir,
         cached_dt_linfree_relative,
         lookup_table,
         pr,
@@ -663,7 +629,7 @@ def run(
     i_int_start: int = 0,
     seed: int = None,
     load_inds: bool = False,
-    inds_path: Path = None,
+    inds_path: Union[Path, str] = None,
     size_limit: int = 10**7,
     draw_subset: bool = True,
     n_draws: int = None,
@@ -673,9 +639,10 @@ def run(
     max_incoherent_lnlike_drop: float = 20,
     max_bestfit_lnlike_diff: float = 20,
     mchirp_guess: float = None,
+    extrinsic_samples: Union[str, Path] = None,
 ) -> Path:
     """Run the magic integral for a given event and bank folder."""
-
+    bank_folder = Path(bank_folder)
     print("Setting paths & loading configurations...")
     if event_dir is not None and rundir is not None:
         warnings.warn(
@@ -713,6 +680,9 @@ def run(
                 "mchirp_guess": float(mchirp_guess)
                 if mchirp_guess is not None
                 else None,
+                "extrinsic_samples": str(extrinsic_samples)
+                if extrinsic_samples is not None
+                else None,
             },
             fp,
             indent=4,
@@ -720,7 +690,8 @@ def run(
     # set paths and basic configs
     event_data = get_event_data(event)
     bank_config_path = Path(bank_folder) / "bank_config.json"
-
+    if isinstance(inds_path, str):
+        inds_path = Path(inds_path)
     with open(bank_config_path, "r", encoding="utf-8") as fp:
         bank_config = json.load(fp)
         fbin = np.array(bank_config["fbin"])
@@ -789,6 +760,59 @@ def run(
     coherent_score_kwargs = {
         "min_n_effective_prior": coherent_score_min_n_effective_prior
     }
+
+    if extrinsic_samples is not None:
+        print("Loading extrinsic samples from file...")
+        # Load extrinsic samples from file
+        if isinstance(extrinsic_samples, (str, Path)):
+            extrinsic_samples = pd.read_feather(extrinsic_samples)
+            if "log_prior_weights" not in extrinsic_samples.columns:
+                if "weights" in extrinsic_samples.columns:
+                    extrinsic_samples["log_prior_weights"] = np.log(
+                        extrinsic_samples["weights"]
+                    )
+                else:
+                    extrinsic_samples["log_prior_weights"] = 0.0  #
+
+            extrinsic_samples.to_feather(rundir / "extrinsic_samples.feather")
+    else:
+        # Generate extrinsic samples as usual
+        print("Generating extrinsic samples...")
+        waveform_dir = bank_folder / "waveforms"
+        bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
+        wfg = WaveformGenerator.from_event_data(event_data, approximant)
+        marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
+            event_data, wfg, par_dic_0, fbin, coherent_score=coherent_score_kwargs
+        )
+
+        ext_sample_generator = CoherentExtrinsicSamplesGenerator(
+            likelihood=marg_ext_like,
+            intrinsic_bank_file=bank_file_path,
+            waveform_dir=waveform_dir,
+            seed=seed,
+            n_phi=n_phi,
+            m_arr=m_arr,
+        )
+
+        get_marg_info_kwargs = {
+            "save_marg_info": True,
+            "save_marg_info_dir": rundir,
+            "n_combine": 16,  # default value
+            "indices": inds,
+            "single_marg_info_min_n_effective_prior": 32,  # default value
+        }
+
+        (extrinsic_samples, response_dpe, timeshift_dbe) = (
+            ext_sample_generator.draw_extrinsic_samples_from_indices(
+                n_ext, get_marg_info_kwargs=get_marg_info_kwargs
+            )
+        )
+
+        # save results to disk
+        extrinsic_samples.to_feather(rundir / "extrinsic_samples.feather")
+        np.save(arr=response_dpe, file=rundir / "response_dpe.npy")
+        np.save(arr=timeshift_dbe, file=rundir / "timeshift_dbe.npy")
+
     (
         ln_evidence,
         ln_evidence_discarded,
@@ -807,9 +831,7 @@ def run(
         n_phi=n_phi,
         m_arr=m_arr,
         blocksize=blocksize,
-        seed=seed,
         size_limit=size_limit,
-        coherent_score_kwargs=coherent_score_kwargs,
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
     )
     print("Saving samples to file...")
@@ -998,6 +1020,12 @@ def parse_arguments() -> Dict:
         type=float,
         default=None,
         help="Optional: Initial guess for the chirp mass (mchirp).",
+    )
+    parser.add_argument(
+        "--extrinsic_samples",
+        type=Path,
+        default=None,
+        help="Path to extrinsic samples file. If None, extrinsic samples will be drawn as usual.",
     )
 
     return vars(parser.parse_args())
