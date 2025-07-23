@@ -7,7 +7,4 @@ dependencies:
   - numpy<=2.2
   - pytorch
   - tqdm
-  - pip
-  - pip:
-    - cogwheel-pe>=1.4.0
-    - -e .
+  - cogwheel-pe>=1.4.0
