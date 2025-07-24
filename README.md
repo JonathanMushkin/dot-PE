@@ -24,7 +24,7 @@ See the notebooks in the `notebooks/` directory for examples.
 
 ## Reference
 
-- [https://arxiv.org/abs/2507.16022](https://arxiv.org/abs/2507.16022) dot-PE: Sampler-free gravitational wave inference using matrix multiplication.
+- dot-PE: Sampler-free gravitational wave inference using matrix multiplication. [https://arxiv.org/abs/2507.16022](https://arxiv.org/abs/2507.16022) 
 
 ## License
 
