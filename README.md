@@ -6,8 +6,6 @@ DOT-PE is a Python package for parameter estimation and evidence integration usi
 
 ## Installation
 
-### Basic Installation
-
 Clone the repository:
 ```bash
 git clone https://github.com/jonatahm/dot-PE.git
@@ -24,6 +22,11 @@ conda activate dot-pe
 
 See the notebooks in the `notebooks/` directory for examples.
 
+## References
+
+- [dot-PE: Sampler-free gravitational wave inference using matrix multiplication](https://arxiv.org/abs/2507.16022)
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0 – see the [LICENSE](LICENSE) file for details. 
+
