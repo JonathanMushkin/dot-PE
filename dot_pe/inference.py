@@ -790,8 +790,6 @@ def run(
             intrinsic_bank_file=bank_file_path,
             waveform_dir=waveform_dir,
             seed=seed,
-            n_phi=n_phi,
-            m_arr=m_arr,
         )
 
         get_marg_info_kwargs = {

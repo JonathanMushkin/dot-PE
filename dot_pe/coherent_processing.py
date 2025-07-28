@@ -810,9 +810,6 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         waveform_dir,
         seed=None,
         full_intrinsic_indices=None,
-        evidence=None,
-        n_phi=None,
-        m_arr=None,
     ):
         """
         Initialization of the CoherentExtrinsicSamplesGenerator.
@@ -821,6 +818,14 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         ----------
         likelihood : Likelihood
             The likelihood object. Must contain a CoherentScore object.
+        intrinsic_bank_file : str or Path
+            Path to the intrinsic sample bank file.
+        waveform_dir : str or Path
+            Directory containing waveform data.
+        seed : int, optional
+            Random seed for reproducibility.
+        full_intrinsic_indices : np.ndarray, optional
+            Indices of intrinsic samples to use. If None, all samples are used.
         """
 
         self.likelihood = likelihood
@@ -847,11 +852,6 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
             if full_intrinsic_indices
             else np.arange(len(self.intrinsic_sample_bank))
         )
-
-        if evidence is None:
-            self.evidence = likelihood_calculator.LikelihoodCalculator(
-                n_phi=n_phi, m_arr=np.array(m_arr)
-            )
 
     def get_marg_info_batch(
         self,
@@ -891,8 +891,8 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
             phase_impb,
             self.likelihood._d_h_weights,
             self.likelihood._h_h_weights,
-            self.evidence.m_inds,
-            self.evidence.mprime_inds,
+            self.intrinsic_sample_processor.m_inds,
+            self.intrinsic_sample_processor.mprime_inds,
             self.likelihood.asd_drift,
         )
 
