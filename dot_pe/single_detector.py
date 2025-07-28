@@ -18,7 +18,7 @@ from cogwheel import skyloc_angles
 from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delays
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS
 
-from . import likelihood_calculator, sample_processing
+from . import likelihood_calculating, sample_processing
 from .base_sampler_free_sampling import get_top_n_indices_two_pointer, Loggable
 
 
@@ -119,7 +119,7 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
             self.likelihood.event_data.detector_names
         )
 
-        self.evidence = likelihood_calculator.LikelihoodCalculator(
+        self.likelihood_calculator = likelihood_calculating.LikelihoodCalculator(
             n_phi=n_phi, m_arr=np.array(m_arr)
         )
 
@@ -212,7 +212,7 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         Create a single likelihood block, and save it to a file.
         """
 
-        dh_ieo, hh_ieo = self.evidence.get_dh_hh_ieo(
+        dh_ieo, hh_ieo = self.likelihood_calculator.get_dh_hh_ieo(
             self.dh_weights_dmpb,
             h_impb,
             response_dpe,
@@ -512,7 +512,7 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         self, extrinsic_samples, intrinsic_samples, response_scale=None
     ):
         light_samples = self.light_samples.copy()
-        n_phi = self.evidence.n_phi
+        n_phi = self.likelihood_calculator.n_phi
         dic = light_samples.iloc[light_samples.bestfit_lnlike.idxmax()].to_dict()
         i, e, o = [int(dic.get(x)) for x in ["i", "e", "o"]]
 

@@ -191,8 +191,8 @@ def find_max_lnlike_and_argmax(
             block_likelihood.h_impb[start_idx:end_idx],
             timeshifts_dbt,
             block_likelihood.likelihood.asd_drift,
-            block_likelihood.evidence.n_phi,
-            block_likelihood.evidence.m_arr,
+            block_likelihood.likelihood_calculator.n_phi,
+            block_likelihood.likelihood_calculator.m_arr,
         )
 
         i_block, o, t = np.unravel_index(np.argmax(lnlike_iot), lnlike_iot.shape)

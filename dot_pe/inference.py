@@ -166,8 +166,8 @@ def run_for_single_detector(
         sdp.h_impb,
         timeshifts_dbt,
         sdp.likelihood.asd_drift,
-        sdp.evidence.n_phi,
-        sdp.evidence.m_arr,
+        sdp.likelihood_calculator.n_phi,
+        sdp.likelihood_calculator.m_arr,
     )[1]
 
     lnlike_i = lnlike_iot.max(axis=(1, 2))

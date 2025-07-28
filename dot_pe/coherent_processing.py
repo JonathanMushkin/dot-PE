@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, exp_normalize
 
-from . import config, likelihood_calculator, sample_processing
+from . import config, likelihood_calculating, sample_processing
 from .base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
@@ -123,7 +123,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
             self.likelihood.event_data.detector_names
         )
 
-        self.evidence = likelihood_calculator.LikelihoodCalculator(
+        self.likelihood_calculator = likelihood_calculating.LikelihoodCalculator(
             n_phi=n_phi, m_arr=np.array(m_arr)
         )
 
@@ -221,8 +221,8 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         init_dict = dict(
             intrinsic_bank_file=self.intrinsic_bank_file.as_posix(),
             waveform_dir=self.waveform_dir.as_posix(),
-            n_phi=self.evidence.n_phi,
-            m_arr=self.evidence.m_arr,
+            n_phi=self.likelihood_calculator.n_phi,
+            m_arr=self.likelihood_calculator.m_arr,
             likelihood=self.likelihood,
             seed=self.seed,
             max_bestfit_lnlike_diff=self.max_bestfit_lnlike_diff,
@@ -320,7 +320,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         Create a single likelihood block, and save it to a file.
         """
 
-        dh_ieo, hh_ieo = self.evidence.get_dh_hh_ieo(
+        dh_ieo, hh_ieo = self.likelihood_calculator.get_dh_hh_ieo(
             self.dh_weights_dmpb,
             h_impb,
             response_dpe,
@@ -355,8 +355,8 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
                     bestfit_lnlike_max - self.max_bestfit_lnlike_diff
                 )
 
-            dist_marg_lnlike_k = self.evidence.lookup_table.lnlike_marginalized(
-                dh_k, hh_k
+            dist_marg_lnlike_k = (
+                self.likelihood_calculator.lookup_table.lnlike_marginalized(dh_k, hh_k)
             )
             # sort the samples by bestfit_lnlike_k
             sort_inds = np.argsort(bestfit_lnlike_k)
@@ -418,7 +418,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
             hh_k = hh_ieo[(i_k, e_k, o_k)]
             dist_marg_lnlike_k = np.zeros_like(dh_k)
             dist_marg_lnlike_k[dh_k > 0] = (
-                self.evidence.lookup_table.lnlike_marginalized(
+                self.likelihood_calculator.lookup_table.lnlike_marginalized(
                     dh_k[dh_k > 0], hh_k[dh_k > 0]
                 )
             )
@@ -717,14 +717,16 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         Get the distance marginalized likelihood for a given par_dic.
         """
         par_dic = par_dic | {
-            "d_luminosity": self.evidence.lookup_table.REFERENCE_DISTANCE
+            "d_luminosity": self.likelihood_calculator.lookup_table.REFERENCE_DISTANCE
         }
 
         h_f = self.likelihood._get_h_f(par_dic)
         d_h = np.sum(self.likelihood._compute_d_h(h_f).real)
         h_h = np.sum(self.likelihood._compute_h_h(h_f))
 
-        lnl_marginalized = self.evidence.lookup_table.lnlike_marginalized(d_h, h_h)
+        lnl_marginalized = self.likelihood_calculator.lookup_table.lnlike_marginalized(
+            d_h, h_h
+        )
         bestfit_lnlike = 0.5 * (d_h**2) / h_h * (d_h > 0)
 
         return bestfit_lnlike, lnl_marginalized
