@@ -143,7 +143,6 @@ def run_for_single_detector(
     # fix sky position to above detector
     det_name = sdp.likelihood.event_data.detector_names[0]
     tgps = sdp.likelihood.event_data.tgps
-    dt_fraction = 1
     lat, lon = skyloc_angles.cart3d_to_latlon(
         skyloc_angles.normalize(DETECTORS[det_name].location)
     )
@@ -154,9 +153,7 @@ def run_for_single_detector(
 
     delay = get_geocenter_delays(det_name, par_dic["lat"], par_dic["lon"])[0]
     tcoarse = sdp.likelihood.event_data.tcoarse
-    t_grid = (np.arange(n_t) - n_t // 2) * (
-        sdp.likelihood.event_data.times[1] * dt_fraction
-    )
+    t_grid = (np.arange(n_t) - n_t // 2) * (sdp.likelihood.event_data.times[1])
     t_grid += par_dic["t_geocenter"] + tcoarse + delay
 
     timeshifts_dbt = np.exp(
@@ -640,6 +637,7 @@ def run(
     max_bestfit_lnlike_diff: float = 20,
     mchirp_guess: float = None,
     extrinsic_samples: Union[str, Path] = None,
+    n_phi_incoherent: int = None,
 ) -> Path:
     """Run the magic integral for a given event and bank folder."""
     bank_folder = Path(bank_folder)
@@ -682,6 +680,9 @@ def run(
                 else None,
                 "extrinsic_samples": str(extrinsic_samples)
                 if extrinsic_samples is not None
+                else None,
+                "n_phi_incoherent": int(n_phi_incoherent)
+                if n_phi_incoherent is not None
                 else None,
             },
             fp,
@@ -737,12 +738,14 @@ def run(
         )
     else:
         print("Collecting intrinsic samples from individual detectors...")
+        # Use n_phi_incoherent for single detector evaluation (thresholding)
+        n_phi_incoherent = n_phi_incoherent if n_phi_incoherent is not None else n_phi
         inds, incoherent_lnlikes = collect_int_samples_from_single_detectors(
             event_data=event_data,
             par_dic_0=par_dic_0,
             single_detector_blocksize=single_detector_blocksize,
             n_int=n_int,
-            n_phi=n_phi,
+            n_phi=n_phi_incoherent,
             n_t=n_t,
             bank_folder=bank_folder,
             i_int_start=i_int_start,
@@ -934,7 +937,16 @@ def parse_arguments() -> Dict:
         "--n_ext", type=int, help="Number of extrinsic samples.", default=2**9
     )
     parser.add_argument(
-        "--n_phi", type=int, help="Number of phi_ref samples.", default=100
+        "--n_phi",
+        type=int,
+        help="Number of phi_ref samples for coherent evaluation.",
+        default=100,
+    )
+    parser.add_argument(
+        "--n_phi_incoherent",
+        type=int,
+        help="Number of phi_ref samples for single detector evaluation (thresholding). If None, uses n_phi.",
+        default=None,
     )
     parser.add_argument(
         "--n_t",
