@@ -61,6 +61,8 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+notebooks/test_bank/
+notebooks/test_event/
 
 # IDE specific files
 .idea/
