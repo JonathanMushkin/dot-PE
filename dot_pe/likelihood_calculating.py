@@ -11,8 +11,11 @@ import itertools
 import lalsimulation as lalsim
 import numpy as np
 import pandas as pd
+import torch
 from lal import CreateDict
 from scipy.special import logsumexp
+
+from .device_manager import get_device_manager
 
 from cogwheel import likelihood
 from cogwheel.likelihood.relative_binning import BaseLinearFree
@@ -215,32 +218,42 @@ class LikelihoodCalculator:
         dh_iem: array of inner products.
         """
 
+        # Convert inputs to tensors on the correct device
+        device_manager = get_device_manager()
+        dh_weights_dmpb = device_manager.to_tensor(dh_weights_dmpb)
+        h_impb = device_manager.to_tensor(h_impb)
+        response_dpe = device_manager.to_tensor(response_dpe)
+        timeshift_dbe = device_manager.to_tensor(timeshift_dbe)
+        asd_drift_d = device_manager.to_tensor(asd_drift_d)
+
         i, m, p, b = h_impb.shape
         d, *_, e = response_dpe.shape
         x = d * p * b  # size of summed dimensions
 
         # reshape & conjugate arrays
-        dh_weights_mx = np.moveaxis(dh_weights_dmpb, 0, 1).reshape(m, x)
+        dh_weights_mx = torch.moveaxis(dh_weights_dmpb, 0, 1).reshape(m, x)
 
-        h_conj_mix = np.repeat(
-            np.moveaxis(h_impb.conj(), 0, 1)[:, :, None, ...], d, axis=2
+        h_conj_mix = torch.repeat_interleave(
+            torch.moveaxis(h_impb.conj(), 0, 1)[:, :, None, ...], d, dim=2
         ).reshape(m, i, x)
 
         response_drift_dpe = response_dpe * asd_drift_d[:, None, None] ** -2
-        response_drift_xe = np.repeat(
-            response_drift_dpe[:, :, None, :], b, axis=2
+        response_drift_xe = torch.repeat_interleave(
+            response_drift_dpe[:, :, None, :], b, dim=2
         ).reshape(x, e)
 
-        timeshift_xe = np.reshape(
-            timeshift_dbe.conj()[:, None, :, :].repeat(p, axis=1), (x, e)
+        timeshift_xe = torch.reshape(
+            timeshift_dbe.conj()[:, None, :, :].repeat(1, p, 1, 1), (x, e)
         )
         ext_tensor = timeshift_xe * response_drift_xe
-        dh_mie = np.empty((m, i, e), dtype=h_impb.dtype)
+        dh_mie = torch.empty((m, i, e), dtype=h_impb.dtype, device=h_impb.device)
 
         for _m in range(m):
-            dh_mie[_m] = np.dot(dh_weights_mx[_m] * h_conj_mix[_m], ext_tensor)
+            dh_mie[_m] = torch.matmul(dh_weights_mx[_m] * h_conj_mix[_m], ext_tensor)
 
-        return np.moveaxis(dh_mie, (0, 1), (2, 0))
+        result = torch.moveaxis(dh_mie, (0, 1), (2, 0))
+
+        return result
 
     @staticmethod
     def get_hh_by_mode(
@@ -267,23 +280,29 @@ class LikelihoodCalculator:
         Output:
         hh_iem: array of inner products.
         """
-        hh_idmpP = np.einsum(
+        # Convert inputs to tensors on the correct device
+        device_manager = get_device_manager()
+        h_impb = device_manager.to_tensor(h_impb)
+        response_dpe = device_manager.to_tensor(response_dpe)
+        hh_weights_dmppb = device_manager.to_tensor(hh_weights_dmppb)
+        asd_drift_d = device_manager.to_tensor(asd_drift_d)
+        m_inds = device_manager.to_tensor(m_inds)
+        mprime_inds = device_manager.to_tensor(mprime_inds)
+
+        hh_idmpP = torch.einsum(
             "dmpPb, impb, imPb -> idmpP",
             hh_weights_dmppb,
             h_impb[:, m_inds, ...],
             h_impb.conj()[:, mprime_inds, ...],
-            optimize=True,
         )  # idmpp
-        ff_dppe = np.einsum(
+        ff_dppe = torch.einsum(
             "dpe, dPe, d -> dpPe",
             response_dpe,
             response_dpe,
             asd_drift_d**-2,
-            optimize=True,
-        )  # dppe
-        hh_iem = np.einsum(
-            "idmpP, dpPe -> iem", hh_idmpP, ff_dppe, optimize=True
-        )  # iem
+        ).to(dtype=hh_idmpP.dtype)  # dppe
+        hh_iem = torch.einsum("idmpP, dpPe -> iem", hh_idmpP, ff_dppe)  # iem
+
         return hh_iem
 
     def get_dh_hh_phi_grid(self, dh_iem, hh_iem):
@@ -310,26 +329,35 @@ class LikelihoodCalculator:
                 inner product of waveform with itself, per intrinsic
                 sample, extrinsic sample, orbital phase
         """
+        # Convert inputs to tensors on the correct device
+        device_manager = get_device_manager()
+        dh_iem = device_manager.to_tensor(dh_iem)
+        hh_iem = device_manager.to_tensor(hh_iem)
 
-        phi_grid = np.linspace(0, 2 * np.pi, self.n_phi, endpoint=False)  # o
+        # Convert m_arr to tensor if it isn't already
+        if not hasattr(self, "_m_arr_tensor"):
+            self._m_arr_tensor = device_manager.to_tensor(self.m_arr)
+            self._m_inds_tensor = device_manager.to_tensor(self.m_inds)
+            self._mprime_inds_tensor = device_manager.to_tensor(self.mprime_inds)
+
+        phi_grid = torch.linspace(
+            0, 2 * torch.pi, self.n_phi + 1, device=dh_iem.device, dtype=dh_iem.dtype
+        )[:-1]  # o
         # dh_phasor is the phase shift applied to h[m].conj, hence the
         # minus sign
-        dh_phasor = np.exp(-1j * np.outer(self.m_arr, phi_grid))  # mo
+        dh_phasor = torch.exp(-1j * torch.outer(self._m_arr_tensor, phi_grid))  # mo
         # hh_phasor is applied both to h[m] and h[mprime].conj, hence
         # the subtraction of the two modes
-        hh_phasor = np.exp(
+        hh_phasor = torch.exp(
             1j
-            * np.outer(
-                self.m_arr[self.m_inds,] - self.m_arr[self.mprime_inds,],
+            * torch.outer(
+                self._m_arr_tensor[self._m_inds_tensor]
+                - self._m_arr_tensor[self._mprime_inds_tensor],
                 phi_grid,
             )
         )  # mo
-        dh_ieo = np.einsum(
-            "iem, mo -> ieo", dh_iem, dh_phasor, optimize=True
-        ).real  # ieo
-        hh_ieo = np.einsum(
-            "iem, mo -> ieo", hh_iem, hh_phasor, optimize=True
-        ).real  # ieo
+        dh_ieo = torch.einsum("iem, mo -> ieo", dh_iem, dh_phasor).real  # ieo
+        hh_ieo = torch.einsum("iem, mo -> ieo", hh_iem, hh_phasor).real  # ieo
 
         return dh_ieo, hh_ieo
 

@@ -87,6 +87,9 @@ M_ARR = np.fromiter(_harmonic_modes_by_m.keys(), dtype=int)
 # Although we did not verify this, we used f_ref=50.0 for high-mass
 # injections
 
+# Device configuration for GPU acceleration
+DEFAULT_DEVICE = "auto"  # Options: "auto", "cpu", "cuda"
+
 DEFAULT_PARAMS_DICT = {
     "l1": 0.0,
     "l2": 0.0,

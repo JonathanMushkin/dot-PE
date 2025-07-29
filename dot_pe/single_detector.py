@@ -12,7 +12,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
 from lal import GreenwichMeanSiderealTime
+
+from .device_manager import get_device_manager
 
 from cogwheel import skyloc_angles
 from cogwheel.gw_utils import DETECTORS, get_fplus_fcross_0, get_geocenter_delays
@@ -577,6 +580,15 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
             Likelihood using specified intrinsic sample (i), orbital
             phase (o), timeshift (t).
         """
+        # Convert inputs to tensors on the correct device
+        device_manager = get_device_manager()
+        dh_weights_dmpb = device_manager.to_tensor(dh_weights_dmpb)
+        hh_weights_dmppb = device_manager.to_tensor(hh_weights_dmppb)
+        h_impb = device_manager.to_tensor(h_impb)
+        timeshift_dbt = device_manager.to_tensor(timeshift_dbt)
+        asd_drift_d = device_manager.to_tensor(asd_drift_d)
+        m_arr = device_manager.to_tensor(m_arr)
+
         # shapes
         i, m, p, b = h_impb.shape
         t = timeshift_dbt.shape[-1]
@@ -586,11 +598,15 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         y = i * t * p
         z = i * t * n_phi
 
-        phi_grid_o = np.linspace(0, 2 * np.pi, n_phi, endpoint=False)  # o
+        phi_grid_o = torch.linspace(
+            0, 2 * torch.pi, n_phi + 1, device=h_impb.device, dtype=h_impb.dtype
+        )[:-1]  # o
         m_inds, mprime_inds = zip(*itertools.combinations_with_replacement(range(m), 2))
-        dh_phasor_mo = np.exp(-1j * np.outer(m_arr, phi_grid_o))  # mo
-        hh_phasor_Mo = np.exp(
-            1j * np.outer(m_arr[m_inds,] - m_arr[mprime_inds,], phi_grid_o)
+        m_inds = device_manager.to_tensor(m_inds)
+        mprime_inds = device_manager.to_tensor(mprime_inds)
+        dh_phasor_mo = torch.exp(-1j * torch.outer(m_arr, phi_grid_o))  # mo
+        hh_phasor_Mo = torch.exp(
+            1j * torch.outer(m_arr[m_inds] - m_arr[mprime_inds], phi_grid_o)
         )  # mo
 
         #########
@@ -601,14 +617,14 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         dh_impb = dh_weights_dmpb[0] * asd_drift_d[0] ** -2 * h_impb_conj
         dh_xb = dh_impb.reshape(x, b)
         timeshift_conj_bt = timeshift_dbt[0].conj()
-        dh_xt = dh_xb @ timeshift_conj_bt
+        dh_xt = torch.matmul(dh_xb, timeshift_conj_bt)
         dh_impt = dh_xt.reshape(i, m, p, t)
         # apply orbital phase, sum over modes
-        dh_itpm = np.moveaxis(dh_impt, (1, 3), (3, 1))
+        dh_itpm = torch.moveaxis(dh_impt, (1, 3), (3, 1))
         dh_ym = dh_itpm.reshape(y, m)
-        dh_yo = dh_ym @ dh_phasor_mo
+        dh_yo = torch.matmul(dh_ym, dh_phasor_mo)
         dh_itpo = dh_yo.real.reshape(i, t, p, n_phi)
-        dh_iotp = np.moveaxis(dh_itpo, 3, 1)
+        dh_iotp = torch.moveaxis(dh_itpo, 3, 1)
 
         #########
         # <h|h>
@@ -617,18 +633,17 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         hh_weights_drift_Mppb = hh_weights_dmppb[0] * asd_drift_d[0] ** -2
         h_iMpb = h_impb[:, m_inds]
         h_iMpb_conj = h_impb_conj[:, mprime_inds]
-        hh_iMpp = np.einsum(
+        hh_iMpp = torch.einsum(
             "MpPb, iMpb, iMPb -> iMpP",
             hh_weights_drift_Mppb,
             h_iMpb,
             h_iMpb_conj,
-            optimize=True,
         )
 
         # apply orbital phase, and sum over modes
-        hh_ippM = np.moveaxis(hh_iMpp, (2, 3, 1), (1, 2, 3))
-        hh_ippo = hh_ippM @ hh_phasor_Mo
-        hh_iopp = np.moveaxis(hh_ippo.real, (1, 2, 3), (2, 3, 1))
+        hh_ippM = torch.moveaxis(hh_iMpp, (2, 3, 1), (1, 2, 3))
+        hh_ippo = torch.matmul(hh_ippM, hh_phasor_Mo)
+        hh_iopp = torch.moveaxis(hh_ippo.real, (1, 2, 3), (2, 3, 1))
 
         # inverse the matrix
         hh_det_iopp_reciptocal = 1 / (
@@ -636,7 +651,7 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
             - hh_iopp[..., 0, 1] * hh_iopp[..., 1, 0]
         )
 
-        hh_inv_iopp = np.empty_like(hh_iopp)
+        hh_inv_iopp = torch.empty_like(hh_iopp)
         hh_inv_iopp[..., 0, 0] = hh_iopp[..., 1, 1] * hh_det_iopp_reciptocal
         hh_inv_iopp[..., 0, 1] = -hh_iopp[..., 0, 1] * hh_det_iopp_reciptocal
         hh_inv_iopp[..., 1, 0] = -hh_iopp[..., 1, 0] * hh_det_iopp_reciptocal
@@ -650,12 +665,12 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         # tuple.
 
         dh_zp = dh_iotp.reshape(z, p)
-        hh_inv_zpp = np.reshape(
-            hh_inv_iopp[:, :, None, ...].repeat(repeats=t, axis=2), (z, p, p)
+        hh_inv_zpp = torch.reshape(
+            hh_inv_iopp[:, :, None, ...].repeat(1, 1, t, 1, 1), (z, p, p)
         )
 
-        r_zp = np.einsum("zpP, zP -> zp", hh_inv_zpp, dh_zp, optimize=True)
-        lnlike_z = 0.5 * np.einsum("zp, zp-> z", r_zp, dh_zp, optimize=True)
+        r_zp = torch.einsum("zpP, zP -> zp", hh_inv_zpp, dh_zp)
+        lnlike_z = 0.5 * torch.einsum("zp, zp-> z", r_zp, dh_zp)
 
         # reshape
         r_iotp = r_zp.reshape((i, n_phi, t, p))

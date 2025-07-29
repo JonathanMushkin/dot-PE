@@ -12,12 +12,14 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
 from scipy.integrate import cumulative_trapezoid, trapezoid
 from scipy.stats.qmc import Halton
 
 from cogwheel.gw_utils import get_fplus_fcross_0, get_geocenter_delays
 
 from . import config
+from .device_manager import get_device_manager
 from .likelihood_calculating import (
     create_lal_dict,
     compute_hplus_hcross_safe,
@@ -40,17 +42,18 @@ class ExtrinsicSampleProcessor:
     @staticmethod
     def compute_detector_responses(detector_names, lat, lon, psi):
         """Compute detector response at specific lat, lon and psi"""
-        lat, lon, psi = np.atleast_1d(lat, lon, psi)
-        fplus_fcross_0 = get_fplus_fcross_0(detector_names, lat, lon)  # edP
-        psi_rot = np.array(
+        device_manager = get_device_manager()
+        lat, lon, psi = device_manager.to_tensor(np.atleast_1d(lat, lon, psi))
+        fplus_fcross_0 = device_manager.to_tensor(
+            get_fplus_fcross_0(detector_names, lat, lon)
+        )  # edP
+        psi_rot = torch.stack(
             [
-                [np.cos(2 * psi), np.sin(2 * psi)],
-                [-np.sin(2 * psi), np.cos(2 * psi)],
+                torch.stack([torch.cos(2 * psi), torch.sin(2 * psi)]),
+                torch.stack([-torch.sin(2 * psi), torch.cos(2 * psi)]),
             ]
         )  # pPe
-        return np.einsum(
-            "edP, pPe-> edp", fplus_fcross_0, psi_rot, optimize=True
-        )  # edp
+        return torch.einsum("edP, pPe-> edp", fplus_fcross_0, psi_rot)  # edp
 
     def compute_extrinsic_timeshift(self, detector_names, extrinsic_samples, f):
         """
@@ -64,22 +67,26 @@ class ExtrinsicSampleProcessor:
         extrinsic_timeshift_exp: timeshift exponentials for each
                                  detector
         """
+        device_manager = get_device_manager()
+
         # time difference related to the relative positions of the source
         # and the detectors (shape ed)
-        geocentric_delays = get_geocenter_delays(
-            detector_names,
-            extrinsic_samples["lat"].values,
-            extrinsic_samples["lon"].values,
-        ).T
+        geocentric_delays = device_manager.to_tensor(
+            get_geocenter_delays(
+                detector_names,
+                extrinsic_samples["lat"].values,
+                extrinsic_samples["lon"].values,
+            ).T
+        )
 
         # add geocentric delays to the time delays from the source
-        total_delays = (
-            geocentric_delays + extrinsic_samples["t_geocenter"].values[:, np.newaxis]
-        )  # ed
+        t_geocenter = device_manager.to_tensor(extrinsic_samples["t_geocenter"].values)
+        total_delays = geocentric_delays + t_geocenter[:, None]  # ed
 
         # timeshift exponentials for each detector (shape edf)
-        extrinsic_timeshift_exp = np.exp(
-            -2j * np.pi * total_delays[..., np.newaxis] * f[np.newaxis, np.newaxis, :]
+        f = device_manager.to_tensor(f)
+        extrinsic_timeshift_exp = torch.exp(
+            -2j * torch.pi * total_delays[..., None] * f[None, None, :]
         )  # edb
         return extrinsic_timeshift_exp
 
@@ -88,7 +95,9 @@ class ExtrinsicSampleProcessor:
         Compute the detector responses and the extrinsic time shifts
         for the extrinsic samples.
         """
-        response_dpe = np.moveaxis(
+        device_manager = get_device_manager()
+
+        response_dpe = torch.moveaxis(
             self.compute_detector_responses(
                 self.detector_names,
                 *[extrinsic_samples[x] for x in ["lat", "lon", "psi"]],
@@ -105,8 +114,10 @@ class ExtrinsicSampleProcessor:
         # shift from the relative binning weights.
         # Equivalent to the timeshift applied in
         # waveform.WaveformGenerator.get_hplus_hcross_at_detectors
-        timeshifts_edb *= np.exp(-2j * np.pi * fbin * tcoarse)
-        timeshifts_dbe = np.moveaxis(timeshifts_edb, (0, 1, 2), (2, 0, 1))
+        fbin = device_manager.to_tensor(fbin)
+        tcoarse = device_manager.to_tensor(tcoarse)
+        timeshifts_edb *= torch.exp(-2j * torch.pi * fbin * tcoarse)
+        timeshifts_dbe = torch.moveaxis(timeshifts_edb, (0, 1, 2), (2, 0, 1))
         return response_dpe, timeshifts_dbe
 
     def get_lon_lat_grid_and_distributions(

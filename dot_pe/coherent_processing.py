@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
 from tqdm import tqdm
 
 from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS, exp_normalize
@@ -17,6 +18,7 @@ from .base_sampler_free_sampling import (
     get_top_n_indices_two_pointer,
     Loggable,
 )
+from .device_manager import get_device_manager
 from .utils import (
     safe_logsumexp,
 )
@@ -291,6 +293,12 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         than cut_threshold below the maximum.
         Return three arrays with intrinsic, extrinsic and phi sample.
         """
+        device_manager = get_device_manager()
+        dh_ieo = device_manager.to_tensor(dh_ieo)
+        hh_ieo = device_manager.to_tensor(hh_ieo)
+        min_bestfit_lnlike_to_keep = device_manager.to_tensor(
+            min_bestfit_lnlike_to_keep
+        )
 
         bestfit_lnlike = 0.5 * (dh_ieo**2) / hh_ieo * (dh_ieo > 0)
 
@@ -333,20 +341,24 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
             dh_ieo, hh_ieo, self.min_bestfit_lnlike_to_keep
         )
 
-        self.n_distance_marginalizations += np.sum(accepted)
+        device_manager = get_device_manager()
+        accepted = device_manager.to_tensor(accepted)
+
+        self.n_distance_marginalizations += torch.sum(accepted).item()
 
         # Accepted Samples:
         # Find their marginalized likelihood & store to file
-        if np.any(accepted):
+        if torch.any(accepted):
             # i_k, e_k are indices within the block, not the full bank
-            i_k, e_k, o_k = np.where(accepted)
+            accepted_indices = torch.where(accepted)
+            i_k, e_k, o_k = accepted_indices
 
             dh_k = dh_ieo[accepted]
             hh_k = hh_ieo[accepted]
             # indices to be used in the full banks / waveform loading
             bank_i_inds_k = bank_i_inds[i_k]
             bank_e_inds_k = bank_e_inds[e_k]
-            bestfit_lnlike_max = bestfit_lnlike_k.max()
+            bestfit_lnlike_max = bestfit_lnlike_k.max().item()
             # update minimal likelihood values to allow
             if self.min_bestfit_lnlike_to_keep < (
                 bestfit_lnlike_max - self.max_bestfit_lnlike_diff
@@ -359,7 +371,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
                 self.likelihood_calculator.lookup_table.lnlike_marginalized(dh_k, hh_k)
             )
             # sort the samples by bestfit_lnlike_k
-            sort_inds = np.argsort(bestfit_lnlike_k)
+            sort_inds = torch.argsort(bestfit_lnlike_k)
             i_k = i_k[sort_inds]
             e_k = e_k[sort_inds]
             o_k = o_k[sort_inds]
@@ -392,8 +404,9 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         # of discarded samples
         discarded = ~accepted
 
-        if np.any(discarded):
-            i_k, e_k, o_k = np.where(discarded)
+        if torch.any(discarded):
+            discarded_indices = torch.where(discarded)
+            i_k, e_k, o_k = discarded_indices
             bank_i_inds_k = bank_i_inds[i_k]
             bank_e_inds_k = bank_e_inds[e_k]
             # choose a subset
@@ -721,8 +734,16 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         }
 
         h_f = self.likelihood._get_h_f(par_dic)
-        d_h = np.sum(self.likelihood._compute_d_h(h_f).real)
-        h_h = np.sum(self.likelihood._compute_h_h(h_f))
+        d_h_complex = self.likelihood._compute_d_h(h_f)
+        h_h = self.likelihood._compute_h_h(h_f)
+
+        # Convert to tensors
+        device_manager = get_device_manager()
+        d_h_complex = device_manager.to_tensor(d_h_complex)
+        h_h = device_manager.to_tensor(h_h)
+
+        d_h = torch.sum(d_h_complex.real)
+        h_h = torch.sum(h_h)
 
         lnl_marginalized = self.likelihood_calculator.lookup_table.lnlike_marginalized(
             d_h, h_h
