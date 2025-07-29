@@ -21,7 +21,7 @@ from cogwheel.posterior import Posterior
 from cogwheel.utils import get_rundir, mkdirs, NumpyEncoder
 from cogwheel.waveform import WaveformGenerator
 
-from .likelihood_calculator import LinearFree
+from .likelihood_calculating import LinearFree
 from .utils import get_event_data
 from .single_detector import SingleDetectorProcessor
 

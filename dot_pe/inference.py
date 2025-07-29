@@ -43,7 +43,7 @@ from cogwheel.waveform import WaveformGenerator
 from .base_sampler_free_sampling import (
     get_n_effective_total_i_e,
 )
-from .likelihood_calculator import LinearFree
+from .likelihood_calculating import LinearFree
 from .marginalization import MarginalizationExtrinsicSamplerFreeLikelihood
 from .coherent_processing import (
     CoherentLikelihoodProcessor,
