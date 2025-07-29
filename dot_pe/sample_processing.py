@@ -18,7 +18,11 @@ from scipy.stats.qmc import Halton
 from cogwheel.gw_utils import get_fplus_fcross_0, get_geocenter_delays
 
 from . import config
-from .likelihood_calculator import create_lal_dict, compute_hplus_hcross_safe, get_shift
+from .likelihood_calculating import (
+    create_lal_dict,
+    compute_hplus_hcross_safe,
+    get_shift,
+)
 from .utils import safe_logsumexp
 
 
