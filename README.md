@@ -9,7 +9,7 @@ DOT-PE is a Python package for parameter estimation and evidence integration usi
 Clone the repository:
 ```bash
 git clone https://github.com/JonathanMushkin/dot-PE.git
-cd dot-pe
+cd dot-PE
 ```
 
 Create and activate the conda environment:
