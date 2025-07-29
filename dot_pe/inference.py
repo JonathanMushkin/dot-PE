@@ -151,7 +151,9 @@ def run_for_single_detector(
         det_name, par_dic_0, lon, lat, tgps
     )
 
-    delay = get_geocenter_delays(det_name, par_dic["lat"], par_dic["lon"])[0]
+    lat_np = par_dic["lat"].cpu().numpy() if hasattr(par_dic["lat"], 'cpu') else par_dic["lat"]
+    lon_np = par_dic["lon"].cpu().numpy() if hasattr(par_dic["lon"], 'cpu') else par_dic["lon"]
+    delay = get_geocenter_delays(det_name, lat_np, lon_np)[0]
     tcoarse = sdp.likelihood.event_data.tcoarse
     t_grid = (np.arange(n_t) - n_t // 2) * (sdp.likelihood.event_data.times[1])
     t_grid += par_dic["t_geocenter"] + tcoarse + delay
@@ -170,7 +172,7 @@ def run_for_single_detector(
         sdp.likelihood_calculator.m_arr,
     )[1]
 
-    lnlike_i = lnlike_iot.max(axis=(1, 2))
+    lnlike_i = lnlike_iot.max(dim=1)[0].max(dim=1)[0]
 
     if return_h_impb:
         return lnlike_i, h_impb
@@ -228,10 +230,12 @@ def collect_int_samples_from_single_detectors(
                 size_limit=10**7,
             )
             if h_impb is None:
-                lnlike_di[d, batch_start:batch_end] = temp[0]
+                temp_0 = temp[0].cpu().numpy() if hasattr(temp[0], 'cpu') else temp[0]
+                lnlike_di[d, batch_start:batch_end] = temp_0
                 h_impb = temp[1]
             else:
-                lnlike_di[d, batch_start:batch_end] = temp
+                temp_np = temp.cpu().numpy() if hasattr(temp, 'cpu') else temp
+                lnlike_di[d, batch_start:batch_end] = temp_np
 
     incoherent_lnlikes = np.sum(lnlike_di, axis=0)
 
@@ -809,10 +813,11 @@ def run(
             )
         )
 
-        # save results to disk
         extrinsic_samples.to_feather(rundir / "extrinsic_samples.feather")
-        np.save(arr=response_dpe, file=rundir / "response_dpe.npy")
-        np.save(arr=timeshift_dbe, file=rundir / "timeshift_dbe.npy")
+        response_dpe_np = response_dpe.cpu().numpy() if hasattr(response_dpe, 'cpu') else response_dpe
+        timeshift_dbe_np = timeshift_dbe.cpu().numpy() if hasattr(timeshift_dbe, 'cpu') else timeshift_dbe
+        np.save(arr=response_dpe_np, file=rundir / "response_dpe.npy")
+        np.save(arr=timeshift_dbe_np, file=rundir / "timeshift_dbe.npy")
 
     (
         ln_evidence,

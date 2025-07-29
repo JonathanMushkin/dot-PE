@@ -744,7 +744,9 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
             skyloc_angles.normalize(DETECTORS[det_name].location)
         )
 
-        fpfc0 = get_fplus_fcross_0(det_name, lat, lon).squeeze()
+        lat_np = lat.cpu().numpy() if hasattr(lat, 'cpu') else lat
+        lon_np = lon.cpu().numpy() if hasattr(lon, 'cpu') else lon
+        fpfc0 = get_fplus_fcross_0(det_name, lat_np, lon_np).squeeze()
         arg_r0 = np.arctan2(fpfc0[1], fpfc0[0])
         # psi0 satisfy fplus = 1, fcross = 0
 
@@ -785,20 +787,22 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
                 skyloc_angles.ra_to_lon(par_dic["ra"], gmst),
             )
 
-        timedelay = get_geocenter_delays(det_name, *old_skyloc)[0]
-        new_timedelay = get_geocenter_delays(
-            det_name, new_par_dic["lat"], new_par_dic["lon"]
-        )[0]
+        # Convert to numpy for cogwheel functions
+        old_lat_np = old_skyloc[0].cpu().numpy() if hasattr(old_skyloc[0], 'cpu') else old_skyloc[0]
+        old_lon_np = old_skyloc[1].cpu().numpy() if hasattr(old_skyloc[1], 'cpu') else old_skyloc[1]
+        new_lat_np = new_par_dic["lat"].cpu().numpy() if hasattr(new_par_dic["lat"], 'cpu') else new_par_dic["lat"]
+        new_lon_np = new_par_dic["lon"].cpu().numpy() if hasattr(new_par_dic["lon"], 'cpu') else new_par_dic["lon"]
+        
+        timedelay = get_geocenter_delays(det_name, old_lat_np, old_lon_np)[0]
+        new_timedelay = get_geocenter_delays(det_name, new_lat_np, new_lon_np)[0]
 
         # data must agree:
         # t_geocenter + timedealy = const between sky positions
         new_par_dic["t_geocenter"] = par_dic["t_geocenter"] + timedelay - new_timedelay
 
         # polarization response must agree
-        response = get_fplus_fcross_0(det_name, *old_skyloc).squeeze()
-        new_response = get_fplus_fcross_0(
-            det_name, new_par_dic["lat"], new_par_dic["lon"]
-        ).squeeze()
+        response = get_fplus_fcross_0(det_name, old_lat_np, old_lon_np).squeeze()
+        new_response = get_fplus_fcross_0(det_name, new_lat_np, new_lon_np).squeeze()
         new_par_dic["d_luminosity"] = par_dic["d_luminosity"] * np.sqrt(
             np.sum(new_response**2) / np.sum(response**2)
         )

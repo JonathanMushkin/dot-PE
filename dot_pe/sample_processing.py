@@ -44,9 +44,15 @@ class ExtrinsicSampleProcessor:
         """Compute detector response at specific lat, lon and psi"""
         device_manager = get_device_manager()
         lat, lon, psi = device_manager.to_tensor(np.atleast_1d(lat, lon, psi))
+        
+        # Convert to numpy for cogwheel function (required by external library)
+        lat_np = lat.cpu().numpy() if hasattr(lat, 'cpu') else lat
+        lon_np = lon.cpu().numpy() if hasattr(lon, 'cpu') else lon
         fplus_fcross_0 = device_manager.to_tensor(
-            get_fplus_fcross_0(detector_names, lat, lon)
+            get_fplus_fcross_0(detector_names, lat_np, lon_np)
         )  # edP
+        
+        # Use tensor operations for rotation matrix
         psi_rot = torch.stack(
             [
                 torch.stack([torch.cos(2 * psi), torch.sin(2 * psi)]),
@@ -97,10 +103,15 @@ class ExtrinsicSampleProcessor:
         """
         device_manager = get_device_manager()
 
+        # Convert list of arrays to single numpy array to avoid slow tensor creation
+        lat_lon_psi_arrays = [extrinsic_samples[x] for x in ["lat", "lon", "psi"]]
+        # Convert list of arrays to single numpy array
+        lat_lon_psi_array = np.array(lat_lon_psi_arrays)
+        
         response_dpe = torch.moveaxis(
             self.compute_detector_responses(
                 self.detector_names,
-                *[extrinsic_samples[x] for x in ["lat", "lon", "psi"]],
+                *lat_lon_psi_array,
             ),
             (0, 1, 2),
             (2, 0, 1),

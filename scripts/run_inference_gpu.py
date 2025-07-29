@@ -19,7 +19,7 @@ from dot_pe import inference
 from dot_pe.device_manager import initialize_device
 
 
-def main(device="cpu"):
+def main(device="cuda"):
     """Run GPU-enabled inference with fixed parameters.
     Parameters
     ----------
@@ -104,13 +104,13 @@ def main(device="cpu"):
         return
 
     # Fixed parameters for GPU testing
-    n_int = min(1024, bank_size)  # Use smaller subset for testing
-    n_ext = 256  # Fixed extrinsic sample size
+    n_int = min(2**16, bank_size)  # Use smaller subset for testing
+    n_ext = 1024  # Fixed extrinsic sample size
     n_phi = 64
     n_phi_incoherent = 32
     n_t = 64
-    blocksize = min(n_int, 512)  # Smaller blocks for testing
-    single_detector_blocksize = min(n_int, 512)
+    blocksize = min(n_int, 2048)  # Smaller blocks for testing
+    single_detector_blocksize = min(n_int, 2048)
 
     print(f"Running inference with:")
     print(f"  n_int: {n_int}")
@@ -121,7 +121,7 @@ def main(device="cpu"):
     # Run inference
     print("Starting inference...")
     try:
-        rundir = inference.run(
+        rundir = inference.run_and_profile(
             event_dir=event_dir,
             event=event_data,
             bank_folder=bank_folder,
@@ -134,9 +134,10 @@ def main(device="cpu"):
             blocksize=blocksize,
             single_detector_blocksize=single_detector_blocksize,
             seed=42,
-            size_limit=10**5,  # Smaller limit for testing
-            draw_subset=False,
+            size_limit=10**6,  # Smaller limit for testing
+            draw_subset=True,
             n_draws=None,
+            load_inds=False,
         )
 
         print(f"Inference completed! Results saved to: {rundir}")

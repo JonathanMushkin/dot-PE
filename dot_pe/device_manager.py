@@ -43,15 +43,15 @@ class DeviceManager:
 
     def to_tensor(
         self,
-        data: Union[np.ndarray, torch.Tensor, Any],
+        input_data: Union[np.ndarray, torch.Tensor, Any],
         dtype: Optional[torch.dtype] = None,
     ) -> torch.Tensor:
         """
-        Convert data to torch tensor on the managed device.
+        Convert input_data to torch tensor on the managed device.
 
         Parameters:
         -----------
-        data : Union[np.ndarray, torch.Tensor, Any]
+        input_data : Union[np.ndarray, torch.Tensor, Any]
             Data to convert to tensor
         dtype : Optional[torch.dtype]
             Desired data type. If None, preserves original type
@@ -61,35 +61,39 @@ class DeviceManager:
         torch.Tensor
             Tensor on the managed device
         """
-        if isinstance(data, torch.Tensor):
-            if data.device != self.device:
-                return data.to(self.device, dtype=dtype)
-            elif dtype is not None and data.dtype != dtype:
-                return data.to(dtype=dtype)
-            return data
-        elif isinstance(data, np.ndarray):
+        if isinstance(input_data, torch.Tensor):
+            if input_data.device != self.device:
+                return input_data.to(self.device, dtype=dtype)
+            elif dtype is not None and input_data.dtype != dtype:
+                return input_data.to(dtype=dtype)
+            return input_data
+        elif isinstance(input_data, np.ndarray):
             if dtype is None:
                 # Preserve numpy dtype when converting to torch
-                if data.dtype == np.complex128:
+                if input_data.dtype == np.complex128:
                     torch_dtype = torch.complex128
-                elif data.dtype == np.complex64:
+                elif input_data.dtype == np.complex64:
                     torch_dtype = torch.complex64
-                elif data.dtype == np.float64:
+                elif input_data.dtype == np.float64:
                     torch_dtype = torch.float64
-                elif data.dtype == np.float32:
+                elif input_data.dtype == np.float32:
                     torch_dtype = torch.float32
-                elif data.dtype == np.int64:
+                elif input_data.dtype == np.int64:
                     torch_dtype = torch.int64
-                elif data.dtype == np.int32:
+                elif input_data.dtype == np.int32:
                     torch_dtype = torch.int32
                 else:
                     torch_dtype = torch.float32  # default
             else:
                 torch_dtype = dtype
-            return torch.tensor(data, dtype=torch_dtype, device=self.device)
+            return torch.tensor(input_data, dtype=torch_dtype, device=self.device)
+        elif isinstance(input_data, list) and len(input_data) > 0 and isinstance(input_data[0], np.ndarray):
+            # Convert list of numpy arrays to single numpy array first to avoid warning
+            input_array = np.array(input_data)
+            return self.to_tensor(input_array, dtype=dtype)
         else:
             # Handle scalars and other types
-            return torch.tensor(data, dtype=dtype, device=self.device)
+            return torch.tensor(input_data, dtype=dtype, device=self.device)
 
     def to_numpy(self, tensor: torch.Tensor) -> np.ndarray:
         """

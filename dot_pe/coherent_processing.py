@@ -355,9 +355,25 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
 
             dh_k = dh_ieo[accepted]
             hh_k = hh_ieo[accepted]
-            # indices to be used in the full banks / waveform loading
-            bank_i_inds_k = bank_i_inds[i_k]
-            bank_e_inds_k = bank_e_inds[e_k]
+            
+            # Convert bank indices to tensors for tensor-native indexing
+            device = dh_ieo.device
+            # Convert list of numpy arrays to single numpy array to avoid slow tensor creation
+            if isinstance(bank_i_inds, list):
+                bank_i_inds_array = np.array(bank_i_inds)
+            else:
+                bank_i_inds_array = bank_i_inds
+            if isinstance(bank_e_inds, list):
+                bank_e_inds_array = np.array(bank_e_inds)
+            else:
+                bank_e_inds_array = bank_e_inds
+            bank_i_inds_tensor = torch.tensor(bank_i_inds_array, device=device, dtype=torch.long)
+            bank_e_inds_tensor = torch.tensor(bank_e_inds_array, device=device, dtype=torch.long)
+            
+            # Use tensor indexing instead of numpy conversion
+            bank_i_inds_k = bank_i_inds_tensor[i_k]
+            bank_e_inds_k = bank_e_inds_tensor[e_k]
+            
             bestfit_lnlike_max = bestfit_lnlike_k.max().item()
             # update minimal likelihood values to allow
             if self.min_bestfit_lnlike_to_keep < (
@@ -367,8 +383,11 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
                     bestfit_lnlike_max - self.max_bestfit_lnlike_diff
                 )
 
+            # Convert tensors to numpy arrays for cogwheel lookup table
+            dh_k_np = dh_k.cpu().numpy() if hasattr(dh_k, 'cpu') else dh_k
+            hh_k_np = hh_k.cpu().numpy() if hasattr(hh_k, 'cpu') else hh_k
             dist_marg_lnlike_k = (
-                self.likelihood_calculator.lookup_table.lnlike_marginalized(dh_k, hh_k)
+                self.likelihood_calculator.lookup_table.lnlike_marginalized(dh_k_np, hh_k_np)
             )
             # sort the samples by bestfit_lnlike_k
             sort_inds = torch.argsort(bestfit_lnlike_k)
@@ -377,9 +396,13 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
             o_k = o_k[sort_inds]
             dh_k = dh_k[sort_inds]
             hh_k = hh_k[sort_inds]
+            
+            # Use tensor indexing for bank indices
             bank_i_inds_k = bank_i_inds_k[sort_inds]
             bank_e_inds_k = bank_e_inds_k[sort_inds]
-            dist_marg_lnlike_k = dist_marg_lnlike_k[sort_inds]
+            
+            # Convert to numpy for final storage (lookup table requires numpy)
+            dist_marg_lnlike_k = dist_marg_lnlike_k[sort_inds.cpu().numpy()]
             bestfit_lnlike_k = bestfit_lnlike_k[sort_inds]
 
             # Saving & loading the block step by step could be
@@ -407,41 +430,66 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         if torch.any(discarded):
             discarded_indices = torch.where(discarded)
             i_k, e_k, o_k = discarded_indices
-            bank_i_inds_k = bank_i_inds[i_k]
-            bank_e_inds_k = bank_e_inds[e_k]
+            
+            # Use tensor indexing for bank indices
+            device = dh_ieo.device
+            # Convert list of numpy arrays to single numpy array to avoid slow tensor creation
+            if isinstance(bank_i_inds, list):
+                bank_i_inds_array = np.array(bank_i_inds)
+            else:
+                bank_i_inds_array = bank_i_inds
+            if isinstance(bank_e_inds, list):
+                bank_e_inds_array = np.array(bank_e_inds)
+            else:
+                bank_e_inds_array = bank_e_inds
+            print(f"DEBUG: Creating bank_i_inds_tensor (discarded) from type {type(bank_i_inds_array)}")
+            bank_i_inds_tensor = torch.tensor(bank_i_inds_array, device=device, dtype=torch.long)
+            print(f"DEBUG: Creating bank_e_inds_tensor (discarded) from type {type(bank_e_inds_array)}")
+            bank_e_inds_tensor = torch.tensor(bank_e_inds_array, device=device, dtype=torch.long)
+            
+            # Use tensor indexing instead of numpy conversion
+            bank_i_inds_k = bank_i_inds_tensor[i_k]
+            bank_e_inds_k = bank_e_inds_tensor[e_k]
+            
             # choose a subset
             n_discarded_samples = len(i_k)
             # subset_size = np.min((1000, len(i_k)))
             if n_discarded_samples < 1000:
                 subset_size = len(i_k)
             elif n_discarded_samples < 10**8:
-                subset_size = np.sqrt(n_discarded_samples).astype(int)
+                subset_size = int(np.sqrt(n_discarded_samples))
             else:
                 subset_size = 10**4  # maximal allowed size
 
-            subset = self.rng.choice(len(i_k), subset_size)
-
-            # create a block with the subset
+            # Use tensor random choice instead of numpy
+            subset = torch.randperm(len(i_k), device=device)[:subset_size]
+            
+            # Use tensor indexing for subset selection
             i_k = i_k[subset]
             e_k = e_k[subset]
             o_k = o_k[subset]
             bank_i_inds_k = bank_i_inds_k[subset]
             bank_e_inds_k = bank_e_inds_k[subset]
+            
             dh_k = dh_ieo[(i_k, e_k, o_k)]
             hh_k = hh_ieo[(i_k, e_k, o_k)]
-            dist_marg_lnlike_k = np.zeros_like(dh_k)
-            dist_marg_lnlike_k[dh_k > 0] = (
+            
+            # Convert tensor to numpy for zeros_like and lookup table
+            dh_k_np = dh_k.cpu().numpy() if hasattr(dh_k, 'cpu') else dh_k
+            dist_marg_lnlike_k = np.zeros_like(dh_k_np)
+            hh_k_np = hh_k.cpu().numpy() if hasattr(hh_k, 'cpu') else hh_k
+            dist_marg_lnlike_k[dh_k_np > 0] = (
                 self.likelihood_calculator.lookup_table.lnlike_marginalized(
-                    dh_k[dh_k > 0], hh_k[dh_k > 0]
+                    dh_k_np[dh_k_np > 0], hh_k_np[dh_k_np > 0]
                 )
             )
             discarded_block = {
-                "i_k": i_k,
-                "e_k": e_k,
-                "o_k": o_k,
+                "i_k": i_k.cpu().numpy(),
+                "e_k": e_k.cpu().numpy(),
+                "o_k": o_k.cpu().numpy(),
                 "dist_marg_lnlike_k": dist_marg_lnlike_k,
-                "bank_i_inds_k": bank_i_inds_k,
-                "bank_e_inds_k": bank_e_inds_k,
+                "bank_i_inds_k": bank_i_inds_k.cpu().numpy(),
+                "bank_e_inds_k": bank_e_inds_k.cpu().numpy(),
             }
 
             self.store_discarded_samples_n_ln_posterior_from_block(
@@ -601,6 +649,12 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         discarded_i = block["bank_i_inds_k"][discarded_inds]
         discarded_e = block["bank_e_inds_k"][discarded_inds]
 
+        # Convert tensor indices to numpy for indexing numpy arrays (no further operations)
+        if hasattr(discarded_i, 'cpu'):
+            discarded_i = discarded_i.cpu().numpy()
+        if hasattr(discarded_e, 'cpu'):
+            discarded_e = discarded_e.cpu().numpy()
+
         ln_posterior = (
             block["dist_marg_lnlike_k"][discarded_inds]
             + self.full_log_prior_weights_i[discarded_i]
@@ -640,13 +694,35 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         new_bestfit_lnlike_k = block["bestfit_lnlike_k"]
 
         # Assume prob_samples and the block are sorted by bestfit_lnlike.
-        prob_samples_accepted_inds, block_samples_accepted_inds = (
-            get_top_n_indices_two_pointer(
-                self.prob_samples.bestfit_lnlike.to_numpy(np.float64),
-                new_bestfit_lnlike_k,
-                self.size_limit,
+        # Use PyTorch version for tensors, NumPy version for arrays
+        if hasattr(new_bestfit_lnlike_k, 'cpu'):
+            # PyTorch tensor - use torch version
+            from dot_pe.base_sampler_free_sampling import get_top_n_indices_two_pointer_torch
+            prob_samples_bestfit = torch.tensor(
+                self.prob_samples.bestfit_lnlike.to_numpy(np.float64), 
+                dtype=torch.float64, 
+                device=new_bestfit_lnlike_k.device
             )
-        )
+            prob_samples_accepted_inds, block_samples_accepted_inds = (
+                get_top_n_indices_two_pointer_torch(
+                    prob_samples_bestfit,
+                    new_bestfit_lnlike_k,
+                    self.size_limit,
+                )
+            )
+            # Convert back to numpy for compatibility
+            prob_samples_accepted_inds = prob_samples_accepted_inds.cpu().numpy()
+            block_samples_accepted_inds = block_samples_accepted_inds.cpu().numpy()
+        else:
+            # NumPy array - use original function
+            from dot_pe.base_sampler_free_sampling import get_top_n_indices_two_pointer
+            prob_samples_accepted_inds, block_samples_accepted_inds = (
+                get_top_n_indices_two_pointer(
+                    self.prob_samples.bestfit_lnlike.to_numpy(np.float64),
+                    new_bestfit_lnlike_k,
+                    self.size_limit,
+                )
+            )
 
         # Compute discarded block indices without setdiff1d
         n_block = new_bestfit_lnlike_k.shape[0]
@@ -672,31 +748,68 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
 
         # if any new samples are accepted, concatenate them to self.prob_samples
         if block_samples_accepted_inds.size:
-            new_inds_o = block["o_k"][block_samples_accepted_inds]
-            new_dh_k = block["dh_k"][block_samples_accepted_inds]
-            new_hh_k = block["hh_k"][block_samples_accepted_inds]
+            # Use tensor indexing for block data when available
+            if hasattr(block["o_k"], 'cpu'):
+                new_inds_o = block["o_k"][block_samples_accepted_inds].cpu().numpy()
+                new_dh_k = block["dh_k"][block_samples_accepted_inds].cpu().numpy()
+                new_hh_k = block["hh_k"][block_samples_accepted_inds].cpu().numpy()
+                new_bestfit_lnlike = block["bestfit_lnlike_k"][block_samples_accepted_inds].cpu().numpy()
+            else:
+                new_inds_o = block["o_k"][block_samples_accepted_inds]
+                new_dh_k = block["dh_k"][block_samples_accepted_inds]
+                new_hh_k = block["hh_k"][block_samples_accepted_inds]
+                new_bestfit_lnlike = block["bestfit_lnlike_k"][block_samples_accepted_inds]
+            
             new_lnl_marginalized = block["dist_marg_lnlike_k"][
                 block_samples_accepted_inds
             ]
-            new_bestfit_lnlike = block["bestfit_lnlike_k"][block_samples_accepted_inds]
             new_inds_i = block["bank_i_inds_k"][block_samples_accepted_inds]
             new_inds_e = block["bank_e_inds_k"][block_samples_accepted_inds]
+            
+            # Convert tensor indices to numpy for indexing numpy arrays
+            if hasattr(new_inds_i, 'cpu'):
+                new_inds_i_np = new_inds_i.cpu().numpy()
+            else:
+                new_inds_i_np = new_inds_i
+            if hasattr(new_inds_e, 'cpu'):
+                new_inds_e_np = new_inds_e.cpu().numpy()
+            else:
+                new_inds_e_np = new_inds_e
+            
+            # Convert other tensor values to numpy for DataFrame
+            if hasattr(new_inds_o, 'cpu'):
+                new_inds_o_np = new_inds_o.cpu().numpy()
+            else:
+                new_inds_o_np = new_inds_o
+            if hasattr(new_dh_k, 'cpu'):
+                new_dh_k_np = new_dh_k.cpu().numpy()
+            else:
+                new_dh_k_np = new_dh_k
+            if hasattr(new_hh_k, 'cpu'):
+                new_hh_k_np = new_hh_k.cpu().numpy()
+            else:
+                new_hh_k_np = new_hh_k
+            if hasattr(new_bestfit_lnlike, 'cpu'):
+                new_bestfit_lnlike_np = new_bestfit_lnlike.cpu().numpy()
+            else:
+                new_bestfit_lnlike_np = new_bestfit_lnlike
+            
             new_ln_posterior = (
                 new_lnl_marginalized
-                + self.full_log_prior_weights_i[new_inds_i]
-                + self.full_log_prior_weights_e[new_inds_e]
+                + self.full_log_prior_weights_i[new_inds_i_np]
+                + self.full_log_prior_weights_e[new_inds_e_np]
             )
 
             new_samples_df = pd.DataFrame(
                 {
-                    "i": new_inds_i,
-                    "e": new_inds_e,
-                    "o": new_inds_o,
+                    "i": new_inds_i_np,
+                    "e": new_inds_e_np,
+                    "o": new_inds_o_np,
                     "lnl_marginalized": new_lnl_marginalized,
                     "ln_posterior": new_ln_posterior,
-                    "bestfit_lnlike": new_bestfit_lnlike,
-                    "d_h_1Mpc": new_dh_k,
-                    "h_h_1Mpc": new_hh_k,
+                    "bestfit_lnlike": new_bestfit_lnlike_np,
+                    "d_h_1Mpc": new_dh_k_np,
+                    "h_h_1Mpc": new_hh_k_np,
                 }
             )
 
@@ -745,10 +858,20 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         d_h = torch.sum(d_h_complex.real)
         h_h = torch.sum(h_h)
 
+        # Convert tensors to numpy for lookup table (required by cogwheel)
+        d_h_np = d_h.cpu().numpy() if hasattr(d_h, 'cpu') else d_h
+        h_h_np = h_h.cpu().numpy() if hasattr(h_h, 'cpu') else h_h
+        
         lnl_marginalized = self.likelihood_calculator.lookup_table.lnlike_marginalized(
-            d_h, h_h
+            d_h_np, h_h_np
         )
         bestfit_lnlike = 0.5 * (d_h**2) / h_h * (d_h > 0)
+
+        # Convert tensors to Python scalars for JSON serialization
+        if hasattr(bestfit_lnlike, 'item'):
+            bestfit_lnlike = bestfit_lnlike.item()
+        if hasattr(lnl_marginalized, 'item'):
+            lnl_marginalized = lnl_marginalized.item()
 
         return bestfit_lnlike, lnl_marginalized
 

@@ -146,7 +146,6 @@ class CoherentScoreSamplerFree(CoherentScoreHM):
                 h_h=np.array([]),
                 tdet_inds=tdet_inds,
                 proposals_n_qmc=[n_qmc],
-                proposals_weights=[1],
                 proposals=[t_arrival_prob],
                 flip_psi=np.array([], bool),
             )
@@ -179,7 +178,6 @@ class CoherentScoreSamplerFree(CoherentScoreHM):
             h_h=hh_qo[important],
             tdet_inds=tdet_inds,
             proposals_n_qmc=[n_qmc],
-            proposals_weights=[1],
             proposals=[t_arrival_prob],
             flip_psi=flip_psi,
         )
@@ -309,7 +307,6 @@ class MarginalizationInfoSamplerFree(MarginalizationInfoHM):
     prior_weights: np.ndarray = field(init=False)
     prior_weights_q: np.ndarray = field(init=False)
     n_effective_prior: float = field(init=False)
-    proposals_weights: list
 
     def __post_init__(self):
         """Set derived attributes."""
@@ -327,12 +324,11 @@ class MarginalizationInfoSamplerFree(MarginalizationInfoHM):
 
         denominators = np.zeros(len(self.q_inds))
         total_n_qmc = sum(self.proposals_n_qmc)
-        for n_qmc, proposal, w in zip(
-            self.proposals_n_qmc, self.proposals, self.proposals_weights
+        for n_qmc, proposal in zip(
+            self.proposals_n_qmc, self.proposals
         ):
             denominators += (
-                w
-                * (n_qmc / total_n_qmc)
+                (n_qmc / total_n_qmc)
                 * np.prod(
                     np.take_along_axis(proposal, self.tdet_inds, axis=1),
                     axis=0,
@@ -379,7 +375,6 @@ class MarginalizationInfoSamplerFree(MarginalizationInfoHM):
 
         self.proposals_n_qmc += other.proposals_n_qmc
         self.proposals += other.proposals
-        self.proposals_weights += other.proposals_weights
         for attr in (
             "ln_numerators",
             "ln_numerators_prior",
@@ -419,7 +414,6 @@ class MarginalizationInfoSamplerFree(MarginalizationInfoHM):
         for other in other_list:
             self.proposals_n_qmc += other.proposals_n_qmc
             self.proposals += other.proposals
-            self.proposals_weights += other.proposals_weights
 
         # treat numpy arrays
         for attr in (

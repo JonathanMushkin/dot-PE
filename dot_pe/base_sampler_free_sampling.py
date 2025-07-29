@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from numba import njit
+import torch
 
 from cogwheel import gw_plotting, plotting
 
@@ -72,6 +73,56 @@ def get_top_n_indices_two_pointer(x, y, N):
     N = min(N, lx + ly)
     ix = np.empty(N, np.int64)
     iy = np.empty(N, np.int64)
+    px, py = lx - 1, ly - 1
+    cx = cy = 0
+
+    while cx + cy < N and (px >= 0 or py >= 0):
+        if px >= 0 and (py < 0 or x[px] >= y[py]):
+            ix[cx] = px
+            px -= 1
+            cx += 1
+        else:
+            iy[cy] = py
+            py -= 1
+            cy += 1
+
+    # reverse in-place
+    for i in range(cx // 2):
+        ix[i], ix[cx - 1 - i] = ix[cx - 1 - i], ix[i]
+    for j in range(cy // 2):
+        iy[j], iy[cy - 1 - j] = iy[cy - 1 - j], iy[j]
+
+    return ix[:cx], iy[:cy]
+
+
+def get_top_n_indices_two_pointer_torch(x, y, N):
+    """
+    PyTorch version of get_top_n_indices_two_pointer for CUDA tensors.
+    
+    Parameters
+    ----------
+    x : torch.Tensor
+        First sorted array (descending)
+    y : torch.Tensor  
+        Second sorted array (descending)
+    N : int
+        Maximum number of indices to return
+        
+    Returns
+    -------
+    tuple
+        (indices_x, indices_y) - indices from x and y arrays
+    """
+    lx, ly = x.size(0), y.size(0)
+    
+    if lx == 0:
+        start = max(ly - N, 0)
+        out_y = torch.arange(start, ly, dtype=torch.long, device=y.device)
+        return torch.empty(0, dtype=torch.long, device=x.device), out_y
+
+    N = min(N, lx + ly)
+    ix = torch.empty(N, dtype=torch.long, device=x.device)
+    iy = torch.empty(N, dtype=torch.long, device=y.device)
     px, py = lx - 1, ly - 1
     cx = cy = 0
 
