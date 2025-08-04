@@ -351,7 +351,7 @@ def run_coherent_inference(
 
 
 def standardize_samples(
-    cached_dt_linfree_relative: dict,
+    cached_dt_linfree_relative: Union[dict, str, Path],
     lookup_table: LookupTable,
     pr,
     prob_samples: pd.DataFrame,
@@ -365,10 +365,8 @@ def standardize_samples(
 
     Parameters
     ----------
-    waveform_dir : Path
-        Path to the waveform directory.
-    cached_dt_linfree_relative : dict
-        Cached relative timeshifts from the compute phase.
+    cached_dt_linfree_relative : dict or str or Path
+        Cached relative timeshifts from the compute phase. Can be a dict or a path to a JSON file.
     lookup_table : LookupTable
         LookupTable object, for distance marginalization.
     pr : Prior
@@ -420,6 +418,10 @@ def standardize_samples(
     # suffix _u represent unique intrinsic indices
     unique_i = np.unique(prob_samples["i"].values)
     u_i = np.searchsorted(unique_i, prob_samples["i"].values)
+
+    # Load cached timeshifts from file if needed
+    if isinstance(cached_dt_linfree_relative, (str, Path)):
+        cached_dt_linfree_relative = read_json(cached_dt_linfree_relative)
 
     # Use cached timeshifts directly instead of going through IntrinsicSampleProcessor
     dt_linfree_u = np.array([cached_dt_linfree_relative[i] for i in unique_i])
