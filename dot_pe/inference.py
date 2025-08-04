@@ -492,9 +492,6 @@ def postprocess(
     event_data: EventData,
     rundir: Path,
     bank_folder: Path,
-    n_int: int,
-    inds: NDArray[np.int_],
-    n_ext: int,
     n_phi: int,
     pr,
     prob_samples: Union[pd.DataFrame, Path, str] = None,
@@ -515,12 +512,6 @@ def postprocess(
         Directory containing the results from the compute phase.
     bank_folder : Path
         Path to the bank folder.
-    n_int : int
-        Number of intrinsic samples.
-    inds : NDArray[np.int_]
-        Indices of the intrinsic samples to include.
-    n_ext : int
-        Number of extrinsic samples.
     n_phi : int
         Number of phi_ref samples.
     pr : Prior
@@ -543,7 +534,6 @@ def postprocess(
     samples : pd.DataFrame
         The standardized samples.
     """
-    waveform_dir = bank_folder / "waveforms"
     bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
 
     # Load prob_samples
@@ -843,9 +833,6 @@ def run(
         event_data=event_data,
         rundir=rundir,
         bank_folder=bank_folder,
-        n_int=n_int,
-        inds=inds,
-        n_ext=n_ext,
         n_phi=n_phi,
         pr=pr,
         n_draws=n_draws,
