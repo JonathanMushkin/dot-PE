@@ -353,10 +353,10 @@ def run_coherent_inference(
 def standardize_samples(
     cached_dt_linfree_relative: Union[dict, str, Path],
     lookup_table: LookupTable,
-    pr,
+    pr: "cogwheel.prior.Prior",
     prob_samples: pd.DataFrame,
-    intrinsic_samples: pd.DataFrame,
-    extrinsic_samples: pd.DataFrame,
+    intrinsic_samples: Union[pd.DataFrame, str, Path],
+    extrinsic_samples: Union[pd.DataFrame, str, Path],
     n_phi: int,
     tgps: float,
 ) -> pd.DataFrame:
@@ -374,15 +374,23 @@ def standardize_samples(
     prob_samples : DataFrame
         Samples with indices columns `i`, `e` and `o` and probabilistic
         information.
-    intrinsic_samples : DataFrame
-        Intrinsic samples.
-    extrinsic_samples : DataFrame
-        Extrinsic samples.
+    intrinsic_samples : DataFrame or str or Path
+        Intrinsic samples. Can be a DataFrame or a path to a feather file.
+    extrinsic_samples : DataFrame or str or Path
+        Extrinsic samples. Can be a DataFrame or a path to a feather file.
     n_phi : int
         Number of phi_ref samples.
     tgps : float
         GPS time of event.
     """
+
+    # Load intrinsic samples from file if needed
+    if isinstance(intrinsic_samples, (str, Path)):
+        intrinsic_samples = pd.read_feather(intrinsic_samples)
+
+    # Load extrinsic samples from file if needed
+    if isinstance(extrinsic_samples, (str, Path)):
+        extrinsic_samples = pd.read_feather(extrinsic_samples)
 
     combined_samples = pd.concat(
         [
@@ -493,7 +501,7 @@ def postprocess(
     rundir: Path,
     bank_folder: Path,
     n_phi: int,
-    pr,
+    pr: "cogwheel.prior.Prior",
     prob_samples: Union[pd.DataFrame, Path, str] = None,
     n_draws: int = None,
     max_n_draws: int = 10**4,
