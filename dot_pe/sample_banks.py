@@ -565,6 +565,41 @@ def create_physical_prior_bank(
     print("waveform bank created at", waveform_dir)
 
 
+def find_next_block_index(waveform_dir, blocksize, n_samples):
+    """
+    Find the next block index to start from based on existing waveform files.
+
+    Parameters
+    ----------
+    waveform_dir : Path
+        Directory containing waveform block files
+    blocksize : int
+        Number of samples per block
+    n_samples : int
+        Total number of samples
+
+    Returns
+    -------
+    int
+        Next block index to start generation from
+    """
+    if not waveform_dir.exists():
+        return 0
+
+    # Calculate total expected blocks (ceil division)
+    n_blocks = -(n_samples // -blocksize)
+
+    # Find the first incomplete block
+    for i in range(n_blocks):
+        amp_file = waveform_dir / f"amplitudes_block_{i}.npy"
+        phase_file = waveform_dir / f"phase_block_{i}.npy"
+        if not (amp_file.exists() and phase_file.exists()):
+            return i
+
+    # All blocks exist
+    return n_blocks
+
+
 def main(
     bank_size,
     q_min,
@@ -576,59 +611,95 @@ def main(
     n_blocks=None,
     n_pool=1,
     blocksize=4096,
-    i_start=0,
+    i_start=None,
     i_end=None,
     bank_dir=".",
     seed=None,
     approximant="IMRPhenomXODE",
+    resume=True,
 ):
     """
     Generate intrinsic samples and waveforms for a given bank.
     """
-    print("Generating intrinsic samples")
     bank_dir = Path(bank_dir)
     if not bank_dir.exists():
         bank_dir.mkdir(parents=True)
-    # create the generator
-    generator = IntrinsicSamplesGenerator()
-    # draw samples
-    intrinsic_samples = generator.draw_intrinsic_samples_uniform_in_lnmchrip_lnq(
-        bank_size,
-        q_min,
-        m_min,
-        m_max,
-        inc_faceon_factor,
-        f_ref,
-        seed,
-    )
 
-    if isinstance(fbin, (str, Path)):
-        fbin = np.load(fbin)
-    # save to file
     bank_file_path = bank_dir / "intrinsic_sample_bank.feather"
     bank_config_path = bank_dir / "bank_config.json"
-    with open(bank_config_path, "w", encoding="utf-8") as fp:
-        json.dump(
-            {
-                "q_min": q_min,
-                "min_mchirp": m_min,
-                "max_mchirp": m_max,
-                "f_ref": f_ref,
-                "fbin": fbin,
-                "seed": seed,
-                "bank_size": bank_size,
-                "inc_faceon_factor": inc_faceon_factor,
-                "approximant": approximant,
-            },
-            fp=fp,
-            cls=NumpyEncoder,
-            indent=4,
+
+    # Check if samples already exist and continue is True
+    if resume and bank_file_path.exists():
+        print(
+            f"Found existing intrinsic samples at {bank_file_path}, skipping sample generation"
         )
-    intrinsic_samples.to_feather(bank_file_path)
-    print("Saved intrinsic samples to", bank_file_path)
+        intrinsic_samples = pd.read_feather(bank_file_path)
+    else:
+        print("Generating intrinsic samples")
+        # create the generator
+        generator = IntrinsicSamplesGenerator()
+        # draw samples
+        intrinsic_samples = generator.draw_intrinsic_samples_uniform_in_lnmchrip_lnq(
+            bank_size,
+            q_min,
+            m_min,
+            m_max,
+            inc_faceon_factor,
+            f_ref,
+            seed,
+        )
+
+        if isinstance(fbin, (str, Path)):
+            fbin = np.load(fbin)
+        # save to file
+        with open(bank_config_path, "w", encoding="utf-8") as fp:
+            json.dump(
+                {
+                    "q_min": q_min,
+                    "min_mchirp": m_min,
+                    "max_mchirp": m_max,
+                    "f_ref": f_ref,
+                    "fbin": fbin,
+                    "seed": seed,
+                    "bank_size": bank_size,
+                    "inc_faceon_factor": inc_faceon_factor,
+                    "approximant": approximant,
+                },
+                fp=fp,
+                cls=NumpyEncoder,
+                indent=4,
+            )
+        intrinsic_samples.to_feather(bank_file_path)
+        print("Saved intrinsic samples to", bank_file_path)
+
+    # Load fbin from config if samples were loaded from file
+    if resume and bank_file_path.exists() and bank_config_path.exists():
+        with open(bank_config_path, "r", encoding="utf-8") as fp:
+            config_dict = json.load(fp)
+            if isinstance(config_dict["fbin"], list):
+                fbin = np.array(config_dict["fbin"])
+            else:
+                fbin = config_dict["fbin"]
+                if isinstance(fbin, (str, Path)):
+                    fbin = np.load(fbin)
 
     # create waveforms
     waveform_dir = bank_dir / "waveforms"
+
+    # Auto-detect i_start if not specified
+    if i_start is None:
+        if resume:
+            i_start = find_next_block_index(
+                waveform_dir, blocksize, len(intrinsic_samples)
+            )
+            if i_start > 0:
+                print(f"Resuming waveform generation from block {i_start}")
+            else:
+                print("No existing waveform blocks found, starting from beginning")
+        else:
+            i_start = 0
+            print("Starting waveform generation from beginning (resume=False)")
+
     print("Creating waveforms")
     waveform_banks.create_waveform_bank_from_samples(
         samples_path=bank_file_path,
@@ -679,7 +750,9 @@ def parse_args():
     parser.add_argument("--n_blocks", type=int, default=None, help="Number of blocks")
     parser.add_argument("--n_pool", type=int, default=1, help="Number of pools")
     parser.add_argument("--blocksize", type=int, default=4096, help="Block size")
-    parser.add_argument("--i_start", type=int, default=0, help="Start index")
+    parser.add_argument(
+        "--i_start", type=int, default=None, help="Start index (auto-detected if None)"
+    )
     parser.add_argument("--i_end", type=int, default=None, help="End index")
     parser.add_argument("--bank_dir", type=str, default=".", help="Bank directory")
     parser.add_argument(
@@ -689,6 +762,18 @@ def parse_args():
         help="Waveform approximant to use",
     )
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=True,
+        help="Resume from existing files if they exist (default: True)",
+    )
+    parser.add_argument(
+        "--no-resume",
+        dest="resume",
+        action="store_false",
+        help="Overwrite existing files instead of resuming",
+    )
 
     args = parser.parse_args()
     return vars(args)
