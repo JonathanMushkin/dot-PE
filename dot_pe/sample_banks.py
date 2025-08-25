@@ -565,9 +565,46 @@ def create_physical_prior_bank(
     print("waveform bank created at", waveform_dir)
 
 
+def find_missing_block_indices(waveform_dir, blocksize, n_samples):
+    """
+    Find all missing block indices based on existing waveform files.
+
+    Parameters
+    ----------
+    waveform_dir : Path
+        Directory containing waveform block files
+    blocksize : int
+        Number of samples per block
+    n_samples : int
+        Total number of samples
+
+    Returns
+    -------
+    list
+        List of missing block indices
+    """
+    if not waveform_dir.exists():
+        # If directory doesn't exist, all blocks are missing
+        n_blocks = -(n_samples // -blocksize)
+        return list(range(n_blocks))
+
+    # Calculate total expected blocks (ceil division)
+    n_blocks = -(n_samples // -blocksize)
+    missing_blocks = []
+
+    # Find all incomplete blocks
+    for i in range(n_blocks):
+        amp_file = waveform_dir / f"amplitudes_block_{i}.npy"
+        phase_file = waveform_dir / f"phase_block_{i}.npy"
+        if not (amp_file.exists() and phase_file.exists()):
+            missing_blocks.append(i)
+
+    return missing_blocks
+
+
 def find_next_block_index(waveform_dir, blocksize, n_samples):
     """
-    Find the next block index to start from based on existing waveform files.
+    Find the next block index to start from (for backward compatibility).
 
     Parameters
     ----------
@@ -583,21 +620,14 @@ def find_next_block_index(waveform_dir, blocksize, n_samples):
     int
         Next block index to start generation from
     """
-    if not waveform_dir.exists():
-        return 0
-
-    # Calculate total expected blocks (ceil division)
-    n_blocks = -(n_samples // -blocksize)
-
-    # Find the first incomplete block
-    for i in range(n_blocks):
-        amp_file = waveform_dir / f"amplitudes_block_{i}.npy"
-        phase_file = waveform_dir / f"phase_block_{i}.npy"
-        if not (amp_file.exists() and phase_file.exists()):
-            return i
-
-    # All blocks exist
-    return n_blocks
+    missing_blocks = find_missing_block_indices(waveform_dir, blocksize, n_samples)
+    if not missing_blocks:
+        # All blocks exist
+        n_blocks = -(n_samples // -blocksize)
+        return n_blocks
+    else:
+        # Return the first missing block
+        return missing_blocks[0]
 
 
 def main(
@@ -613,6 +643,7 @@ def main(
     blocksize=4096,
     i_start=None,
     i_end=None,
+    i_list=None,
     bank_dir=".",
     seed=None,
     approximant="IMRPhenomXODE",
@@ -686,17 +717,25 @@ def main(
     # create waveforms
     waveform_dir = bank_dir / "waveforms"
 
-    # Auto-detect i_start if not specified
-    if i_start is None:
-        if resume:
-            i_start = find_next_block_index(
-                waveform_dir, blocksize, len(intrinsic_samples)
+    # Determine which blocks to generate (priority: i_list > auto-detect > i_start/i_end)
+    if i_list is not None:
+        print(f"Using provided i_list with {len(i_list)} blocks: {i_list}")
+    elif resume and i_start is None:
+        # Auto-detect missing blocks when resuming
+        missing_blocks = find_missing_block_indices(
+            waveform_dir, blocksize, len(intrinsic_samples)
+        )
+        if missing_blocks:
+            i_list = missing_blocks
+            print(
+                f"Auto-detected {len(missing_blocks)} missing blocks: {missing_blocks[:10]}{'...' if len(missing_blocks) > 10 else ''}"
             )
-            if i_start > 0:
-                print(f"Resuming waveform generation from block {i_start}")
-            else:
-                print("No existing waveform blocks found, starting from beginning")
         else:
+            i_list = []
+            print("No missing blocks found, nothing to generate")
+    else:
+        # Use traditional i_start/i_end logic for backward compatibility
+        if i_start is None:
             i_start = 0
             print("Starting waveform generation from beginning (resume=False)")
 
@@ -710,6 +749,7 @@ def main(
         n_blocks=n_blocks,
         i_start=i_start,
         i_end=i_end,
+        i_list=i_list,
         approximant=approximant,
     )
 
@@ -754,6 +794,13 @@ def parse_args():
         "--i_start", type=int, default=None, help="Start index (auto-detected if None)"
     )
     parser.add_argument("--i_end", type=int, default=None, help="End index")
+    parser.add_argument(
+        "--i_list",
+        type=int,
+        nargs="*",
+        default=None,
+        help="List of specific block indices to generate (overrides i_start/i_end and auto-detection)",
+    )
     parser.add_argument("--bank_dir", type=str, default=".", help="Bank directory")
     parser.add_argument(
         "--approximant",

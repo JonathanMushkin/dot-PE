@@ -178,6 +178,14 @@ def parse_arguments(arguments=None):
         help="""index of the last block to generate.""",
     )
     parser.add_argument(
+        "--i_list",
+        dest="i_list",
+        type=int,
+        nargs="*",
+        default=None,
+        help="""list of specific block indices to generate (overrides i_start/i_end).""",
+    )
+    parser.add_argument(
         "--approximant",
         dest="approximant",
         type=str,
@@ -213,6 +221,7 @@ def create_waveform_bank_from_samples(
     blocksize=4096,
     i_start=0,
     i_end=None,
+    i_list=None,
     approximant="IMRPhenomXODE",
 ):
     """
@@ -265,10 +274,16 @@ def create_waveform_bank_from_samples(
     n_samples = intrinsic_samples.shape[0]
     n_blocks, blocksize = _set_blocksize_n_blocks(n_blocks, blocksize, n_samples)
 
-    # allow for partial generation of the waveforms, in case
-    # part of the waveforms are already done
-    if i_end is None:
-        i_end = n_blocks
+    # Determine which blocks to generate
+    if i_list is not None:
+        # Use specific list of block indices
+        block_indices = i_list
+    else:
+        # Use traditional range-based approach
+        if i_end is None:
+            i_end = n_blocks
+        block_indices = list(range(i_start, i_end))
+
     override_dic = config.DEFAULT_PARAMS_DICT | {"f_ref": f_ref}
     if n_pool and n_pool > 1:
         with Pool(n_pool) as pool:
@@ -286,11 +301,11 @@ def create_waveform_bank_from_samples(
                         logger,
                         start_time,
                     )
-                    for i in range(i_start, i_end)
+                    for i in block_indices
                 ],
             )
     else:
-        for i in tqdm(range(i_start, i_end), desc="Generating waveforms"):
+        for i in tqdm(block_indices, desc="Generating waveforms"):
             _gen_waveforms_from_index(
                 wfg,
                 intrinsic_samples,
@@ -368,5 +383,6 @@ if __name__ == "__main__":
         blocksize=args.blocksize,
         i_start=args.i_start,
         i_end=args.i_end,
+        i_list=args.i_list,
         approximant=args.approximant,
     )
