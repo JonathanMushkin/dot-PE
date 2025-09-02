@@ -28,10 +28,9 @@ class IntrinsicSamplesGenerator:
     The samples are drawn under:
     - log(m1) is uniform between log(m_min) and log(m_max)
     - log(m2) is uniform in log(m1*q_min) and log(m1)
-    - theta_jn prefers face-on / back-on orientation
-    Samples are re-wegithed according to the Physical prior:
-    - m1,m2 from mass.UniformDetectorFrameMassesPrior
     - cos(theta_jn) uniform in (-1, +1)
+    Samples are re-weighted according to the Physical prior:
+    - m1,m2 from mass.UniformDetectorFrameMassesPrior
 
     """
 
@@ -178,11 +177,11 @@ class IntrinsicSamplesGenerator:
         return s1z, s2z
 
     def draw_inplane_spins_weighted_inclination(
-        self, s1z, s2z, m1, m2, f_ref, u=None, inc_faceon_factor=2
+        self, s1z, s2z, m1, m2, f_ref, u=None, inc_faceon_factor=None
     ):
         """
-        Draw inplane spins and inclination under the ??? prior.
-        Use prior on iota to prefer face/back-on inclinations, and
+        Draw inplane spins and inclination uniform cos_theta_jn, chieff,
+        cums1r_s1z, cums1r_s1z, and inplane-spins angles.
         re-weight according the isotropic prior
 
         Parameters
@@ -196,9 +195,7 @@ class IntrinsicSamplesGenerator:
             values between 0 and 1 used to draw samples. If not passes,
             size in inferred from m1
         inc_faceon_factor :float, optional,
-            factor by which the prior (p.d.f) on inclination prefers
-            face-on (iota=0) to edge-on (iota=pi/2) orientations.
-            Default 2
+            Ignored parameter kept for backward compatibility.
 
         Returns
         -------
@@ -213,17 +210,19 @@ class IntrinsicSamplesGenerator:
                 (true prior / prior used for drawing)
 
         """
+        if inc_faceon_factor is not None:
+            import warnings
 
+            warnings.warn(
+                "inc_faceon_factor parameter is deprecated and will be removed in a future version",
+                DeprecationWarning,
+            )
         if u is None:
             n = len(np.atleast_1d(m1))
             u = qmc.Halton(d=5).random(n).T
-        inc_factor = (inc_faceon_factor - 1) / (inc_faceon_factor + 1)
-        theta_jn_range = np.linspace(0, np.pi, 10**4)
-        theta_jn_cdf = (
-            theta_jn_range + inc_factor / 2 * np.sin(2 * theta_jn_range)
-        ) / np.pi
-        theta_jn_samples = theta_jn_range[np.searchsorted(theta_jn_cdf, u[0])]
-        costheta_jn_samples = np.cos(theta_jn_samples)
+
+        costheta_jn_samples = -1 + 2 * u[0]
+        theta_jn_samples = np.arccos(costheta_jn_samples)
 
         phi_jl_hat_samples = u[1] * np.pi * 2
         phi12_samples = u[2] * np.pi * 2
@@ -255,10 +254,8 @@ class IntrinsicSamplesGenerator:
             ]
         ).T
 
-        pseudo_prior_pdf = (1 + inc_factor * np.cos(2 * theta_jn_samples)) / np.pi
-        # cos(theta_jn_samples) ~ U(-1,1)
-        prior_pdf = 1 / 2 * np.sin(theta_jn_samples)
-        log_prior_weights = np.log(prior_pdf / pseudo_prior_pdf)
+        # No reweighting needed since cosine_jn is drawn uniformly
+        log_prior_weights = np.zeros_like(costheta_jn_samples)
         return iota, s1x_n, s1y_n, s1z, s2x_n, s2y_n, s2z, log_prior_weights
 
     def draw_intrinsic_samples_uniform_in_ln_masses(
@@ -276,10 +273,9 @@ class IntrinsicSamplesGenerator:
         The samples are drawn under:
         - log(m1) is uniform between log(m_min) and log(m_max)
         - log(m2) is uniform in log(m1*q_min) and log(m1)
-        - theta_jn prefers face-on / back-on orientation
-        Samples are re-wegithed according to the Physical prior:
-        - m1,m2 from mass.UniformDetectorFrameMassesPrior
         - cos(theta_jn) uniform in (-1, +1)
+        Samples are re-weighted according to the Physical prior:
+        - m1,m2 from mass.UniformDetectorFrameMassesPrior
         Parameters
         ----------
         n : int, number of samples to draw
@@ -334,12 +330,11 @@ class IntrinsicSamplesGenerator:
         """
         Draw intrinsic samples, with importance sampling.
         The samples are drawn under:
-        - log(m1) is uniform between log(m_min) and log(m_max)
-        - log(m2) is uniform in log(m1*q_min) and log(m1)
-        - theta_jn prefers face-on / back-on orientation
-        Samples are re-wegithed according to the Physical prior:
-        - m1,m2 from mass.UniformDetectorFrameMassesPrior
+        - log(mchirp) is uniform between log(mchirp_min) and log(mchirp_max)
+        - log(q) is uniform in log(q_min) and log(1)
         - cos(theta_jn) uniform in (-1, +1)
+        Samples are re-weighted according to the Physical prior:
+        - m1,m2 from mass.UniformDetectorFrameMassesPrior
         Parameters
         ----------
         n : int, number of samples to draw
