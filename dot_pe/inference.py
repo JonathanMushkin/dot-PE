@@ -187,11 +187,19 @@ def collect_int_samples_from_single_detectors(
     bank_folder: Union[str, Path],
     i_int_start: int = 0,
     max_incoherent_lnlike_drop: float = 20,
+    preselected_indices: NDArray[np.int_] = None,
 ) -> Tuple[NDArray[np.int_], NDArray[np.float64]]:
     """
     Perform n_det independent single-detector likelihood evaluations and
     return the indices of the samples that passed a threshold and their
     corresponding incoherent log-likelihood values.
+
+    Parameters
+    ----------
+    preselected_indices : NDArray[np.int_], optional
+        Pre-filtered absolute bank indices to use instead of generating
+        np.arange(i_int_start, i_int_start + n_int). When provided, n_int
+        and i_int_start are ignored for index generation.
     """
 
     with open(bank_folder / "bank_config.json", "r", encoding="utf-8") as f:
@@ -200,7 +208,10 @@ def collect_int_samples_from_single_detectors(
         approximant = bank_config["approximant"]
         m_arr = np.array(bank_config["m_arr"])
     # do single detector pe for each detector
-    intrinsic_indices = np.arange(i_int_start, i_int_start + n_int)
+    if preselected_indices is not None:
+        intrinsic_indices = preselected_indices
+    else:
+        intrinsic_indices = np.arange(i_int_start, i_int_start + n_int)
 
     lnlike_di = np.zeros((len(event_data.detector_names), len(intrinsic_indices)))
     for batch_start in tqdm(
@@ -638,6 +649,8 @@ def run(
     mchirp_guess: float = None,
     extrinsic_samples: Union[str, Path] = None,
     n_phi_incoherent: int = None,
+    preselected_indices: NDArray[np.int_] = None,
+    preselected_indices_path: Union[Path, str] = None,
 ) -> Path:
     """Run the magic integral for a given event and bank folder."""
     bank_folder = Path(bank_folder)
@@ -651,6 +664,12 @@ def run(
 
     if not Path(rundir).exists():
         mkdirs(rundir)
+
+    # Load preselected indices from file if provided
+    if preselected_indices_path is not None and preselected_indices is None:
+        print(f"Loading preselected indices from {preselected_indices_path}")
+        preselected_indices = np.load(preselected_indices_path)
+        print(f"Loaded {len(preselected_indices)} preselected indices")
     with open(rundir / "run_kwargs.json", "w", encoding="utf-8") as fp:
         json.dump(
             {
@@ -683,6 +702,9 @@ def run(
                 else None,
                 "n_phi_incoherent": int(n_phi_incoherent)
                 if n_phi_incoherent is not None
+                else None,
+                "preselected_indices_path": str(preselected_indices_path)
+                if preselected_indices_path is not None
                 else None,
             },
             fp,
@@ -750,6 +772,7 @@ def run(
             bank_folder=bank_folder,
             i_int_start=i_int_start,
             max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
+            preselected_indices=preselected_indices,
         )
         np.savez(
             rundir / "intrinsic_samples.npz",
@@ -1033,6 +1056,12 @@ def parse_arguments() -> Dict:
         type=Path,
         default=None,
         help="Path to extrinsic samples file. If None, extrinsic samples will be drawn as usual.",
+    )
+    parser.add_argument(
+        "--preselected_indices_path",
+        type=Path,
+        default=None,
+        help="Path to .npy file containing preselected indices for second-stage filtering.",
     )
 
     return vars(parser.parse_args())
