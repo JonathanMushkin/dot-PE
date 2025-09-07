@@ -187,7 +187,7 @@ def collect_int_samples_from_single_detectors(
     bank_folder: Union[str, Path],
     i_int_start: int = 0,
     max_incoherent_lnlike_drop: float = 20,
-    preselected_indices: NDArray[np.int_] = None,
+    preselected_indices: Union[NDArray[np.int_], List[int], str, Path, None] = None,
 ) -> Tuple[NDArray[np.int_], NDArray[np.float64]]:
     """
     Perform n_det independent single-detector likelihood evaluations and
@@ -196,10 +196,13 @@ def collect_int_samples_from_single_detectors(
 
     Parameters
     ----------
-    preselected_indices : NDArray[np.int_], optional
+    preselected_indices : Union[NDArray[np.int_], List[int], str, Path, None], optional
         Pre-filtered absolute bank indices to use instead of generating
-        np.arange(i_int_start, i_int_start + n_int). When provided, n_int
-        and i_int_start are ignored for index generation.
+        np.arange(i_int_start, i_int_start + n_int). Can be:
+        - numpy array or list of integers: direct indices
+        - str or Path: path to .npy file containing indices
+        - None: use standard range generation (default)
+        When provided, n_int and i_int_start are ignored for index generation.
     """
 
     with open(bank_folder / "bank_config.json", "r", encoding="utf-8") as f:
@@ -209,7 +212,20 @@ def collect_int_samples_from_single_detectors(
         m_arr = np.array(bank_config["m_arr"])
     # do single detector pe for each detector
     if preselected_indices is not None:
-        intrinsic_indices = preselected_indices
+        # Handle different input types for preselected_indices
+        if isinstance(preselected_indices, (str, Path)):
+            # Load from file
+            intrinsic_indices = np.load(preselected_indices)
+        elif isinstance(preselected_indices, list):
+            # Convert list to numpy array
+            intrinsic_indices = np.array(preselected_indices, dtype=np.int_)
+        elif isinstance(preselected_indices, np.ndarray):
+            # Use numpy array directly
+            intrinsic_indices = preselected_indices
+        else:
+            raise TypeError(
+                f"preselected_indices must be array, list, str, Path, or None, got {type(preselected_indices)}"
+            )
     else:
         intrinsic_indices = np.arange(i_int_start, i_int_start + n_int)
 
@@ -649,8 +665,7 @@ def run(
     mchirp_guess: float = None,
     extrinsic_samples: Union[str, Path] = None,
     n_phi_incoherent: int = None,
-    preselected_indices: NDArray[np.int_] = None,
-    preselected_indices_path: Union[Path, str] = None,
+    preselected_indices: Union[NDArray[np.int_], List[int], str, Path, None] = None,
 ) -> Path:
     """Run the magic integral for a given event and bank folder."""
     bank_folder = Path(bank_folder)
@@ -664,12 +679,6 @@ def run(
 
     if not Path(rundir).exists():
         mkdirs(rundir)
-
-    # Load preselected indices from file if provided
-    if preselected_indices_path is not None and preselected_indices is None:
-        print(f"Loading preselected indices from {preselected_indices_path}")
-        preselected_indices = np.load(preselected_indices_path)
-        print(f"Loaded {len(preselected_indices)} preselected indices")
     with open(rundir / "run_kwargs.json", "w", encoding="utf-8") as fp:
         json.dump(
             {
@@ -703,9 +712,9 @@ def run(
                 "n_phi_incoherent": int(n_phi_incoherent)
                 if n_phi_incoherent is not None
                 else None,
-                "preselected_indices_path": str(preselected_indices_path)
-                if preselected_indices_path is not None
-                else None,
+                "preselected_indices": str(preselected_indices)
+                if isinstance(preselected_indices, (str, Path))
+                else ("array" if preselected_indices is not None else None),
             },
             fp,
             indent=4,
@@ -1058,10 +1067,10 @@ def parse_arguments() -> Dict:
         help="Path to extrinsic samples file. If None, extrinsic samples will be drawn as usual.",
     )
     parser.add_argument(
-        "--preselected_indices_path",
-        type=Path,
+        "--preselected_indices",
+        type=str,
         default=None,
-        help="Path to .npy file containing preselected indices for second-stage filtering.",
+        help="Preselected indices for second-stage filtering. Can be a path to .npy file.",
     )
 
     return vars(parser.parse_args())
