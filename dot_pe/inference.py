@@ -251,7 +251,7 @@ def collect_int_samples_from_single_detectors(
     selected = incoherent_lnlikes >= incoherent_threshold
 
     inds = intrinsic_indices[selected]
-    incoherent_lnlikes = incoherent_lnlikes[inds]
+    incoherent_lnlikes = incoherent_lnlikes[selected]
     return inds, incoherent_lnlikes
 
 
