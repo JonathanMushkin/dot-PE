@@ -204,7 +204,7 @@ def collect_int_samples_from_single_detectors(
         - None: use standard range generation (default)
         When provided, n_int and i_int_start are ignored for index generation.
     """
-
+    bank_folder = Path(bank_folder)
     with open(bank_folder / "bank_config.json", "r", encoding="utf-8") as f:
         bank_config = json.load(f)
         fbin = np.array(bank_config["fbin"])
@@ -275,7 +275,7 @@ def run_coherent_inference(
     event_data: EventData,
     rundir: Path,
     par_dic_0: Dict,
-    bank_folder: Path,
+    bank_folder: Union[str, Path],
     n_int: int,
     inds: NDArray[np.int_],
     n_ext: int,
@@ -304,6 +304,7 @@ def run_coherent_inference(
     n_distance_marginalizations : int
         The number of distance marginalizations performed.
     """
+    bank_folder = Path(bank_folder)
     waveform_dir = bank_folder / "waveforms"
     bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
     with open(bank_folder / "bank_config.json", "r", encoding="utf-8") as f:
@@ -526,7 +527,7 @@ def sample_distance_multiprocess(num_cores, lookup_table, dh, hh):
 def postprocess(
     event_data: EventData,
     rundir: Path,
-    bank_folder: Path,
+    bank_folder: Union[str, Path],
     n_phi: int,
     pr: "cogwheel.prior.Prior",
     prob_samples: Union[pd.DataFrame, Path, str] = None,
@@ -545,7 +546,7 @@ def postprocess(
         Event data.
     rundir : Path
         Directory containing the results from the compute phase.
-    bank_folder : Path
+    bank_folder : Union[str, Path]
         Path to the bank folder.
     n_phi : int
         Number of phi_ref samples.
@@ -569,6 +570,7 @@ def postprocess(
     samples : pd.DataFrame
         The standardized samples.
     """
+    bank_folder = Path(bank_folder)
     bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
 
     # Load prob_samples
@@ -643,7 +645,7 @@ def postprocess(
 
 def run(
     event: Union[str, Path, EventData],
-    bank_folder: Path,
+    bank_folder: Union[str, Path],
     n_int: int,
     n_ext: int,
     n_phi: int,
