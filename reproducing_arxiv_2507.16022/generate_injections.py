@@ -11,23 +11,18 @@ Based on the original generate_injections.py from the experiments.
 
 import numpy as np
 from pathlib import Path
-import sys
 import pandas as pd
 import json
 from tqdm import tqdm
 import logging
 import argparse
-from typing import Dict, Tuple
 
-# Add cogwheel to path
-cogwheel_path = "/home/projects/barakz/jonatahm/GW/cogwheel-private"
-sys.path.insert(0, cogwheel_path)
-
+# Import packages
 from cogwheel import data
 from cogwheel.likelihood import CBCLikelihood
 from cogwheel.waveform import WaveformGenerator
 from cogwheel.validation import generate_injections
-from cogwheel.sampler_free import sample_generation
+from dot_pe import sample_generation
 
 # Configure logging
 logging.basicConfig(
