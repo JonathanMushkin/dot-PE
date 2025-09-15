@@ -27,7 +27,7 @@ def main():
     """Generate all required banks for the paper reproduction."""
 
     # Bank configurations: mchirp_range -> (min_mchirp, max_mchirp)
-    bank_configs = {
+    mchirp_ranges = {
         3: (3.0, 3.2),
         5: (5.0, 6.0),
         10: (10.0, 12.0),
@@ -35,6 +35,7 @@ def main():
         50: (50.0, 60.0),
         100: (100.0, 300.0),
     }
+    q_min = 1 / 5
 
     # Bank sizes
     regular_bank_size = 2**16  # 65536
@@ -42,7 +43,7 @@ def main():
 
     # Common parameters from existing configs
     common_params = {
-        "q_min": 0.2,
+        "q_min": 1 / 5,
         "f_ref": 50.0,
         "fbin": config.DEFAULT_FBIN,
         "inc_faceon_factor": 1.0,
@@ -54,7 +55,7 @@ def main():
 
     base_dir = Path.cwd()
 
-    for mchirp_val, (min_mchirp, max_mchirp) in bank_configs.items():
+    for mchirp_val, (min_mchirp, max_mchirp) in mchirp_ranges.items():
         logger.info(f"Creating banks for mchirp range {mchirp_val}")
 
         # Create regular bank
@@ -64,14 +65,18 @@ def main():
         try:
             sample_banks.main(
                 bank_size=regular_bank_size,
-                min_mchirp=min_mchirp,
-                max_mchirp=max_mchirp,
+                m_min=min_mchirp,
+                m_max=max_mchirp,
                 bank_dir=regular_bank_dir,
                 **common_params,
             )
-            logger.info(f"Successfully created regular bank: {regular_bank_dir}")
+            logger.info(
+                f"Successfully created regular bank: {regular_bank_dir}"
+            )
         except Exception as e:
-            logger.error(f"Failed to create regular bank {regular_bank_dir}: {e}")
+            logger.error(
+                f"Failed to create regular bank {regular_bank_dir}: {e}"
+            )
             continue
 
         # Create dense bank
