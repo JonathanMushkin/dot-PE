@@ -58,26 +58,26 @@ def main():
     for mchirp_val, (min_mchirp, max_mchirp) in mchirp_ranges.items():
         logger.info(f"Creating banks for mchirp range {mchirp_val}")
 
-        # Create regular bank
-        regular_bank_dir = base_dir / f"bank_mchirp_{mchirp_val}"
-        logger.info(f"Creating regular bank: {regular_bank_dir}")
+        # # Create regular bank
+        # regular_bank_dir = base_dir / f"bank_mchirp_{mchirp_val}"
+        # logger.info(f"Creating regular bank: {regular_bank_dir}")
 
-        try:
-            sample_banks.main(
-                bank_size=regular_bank_size,
-                m_min=min_mchirp,
-                m_max=max_mchirp,
-                bank_dir=regular_bank_dir,
-                **common_params,
-            )
-            logger.info(
-                f"Successfully created regular bank: {regular_bank_dir}"
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to create regular bank {regular_bank_dir}: {e}"
-            )
-            continue
+        # try:
+        #     sample_banks.main(
+        #         bank_size=regular_bank_size,
+        #         m_min=min_mchirp,
+        #         m_max=max_mchirp,
+        #         bank_dir=regular_bank_dir,
+        #         **common_params,
+        #     )
+        #     logger.info(
+        #         f"Successfully created regular bank: {regular_bank_dir}"
+        #     )
+        # except Exception as e:
+        #     logger.error(
+        #         f"Failed to create regular bank {regular_bank_dir}: {e}"
+        #     )
+        #     continue
 
         # Create dense bank
         dense_bank_dir = base_dir / f"bank_mchirp_dense_{mchirp_val}"
@@ -86,8 +86,8 @@ def main():
         try:
             sample_banks.main(
                 bank_size=dense_bank_size,
-                min_mchirp=min_mchirp,
-                max_mchirp=max_mchirp,
+                m_min=min_mchirp,
+                m_max=max_mchirp,
                 bank_dir=dense_bank_dir,
                 **common_params,
             )

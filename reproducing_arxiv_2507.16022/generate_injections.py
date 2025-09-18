@@ -16,13 +16,15 @@ import json
 from tqdm import tqdm
 import logging
 import argparse
+import sys
 
+sys.path.insert(0, "..")
 # Import packages
 from cogwheel import data
 from cogwheel.likelihood import CBCLikelihood
 from cogwheel.waveform import WaveformGenerator
 from cogwheel.validation import generate_injections
-from dot_pe import sample_generation
+from dot_pe import sample_banks
 
 # Configure logging
 logging.basicConfig(
@@ -44,8 +46,8 @@ H_H_MAX = 200
 
 # Default parameters
 DEFAULT_N_INJECTIONS = 1024
-DEFAULT_BATCH_SIZE = 10240  # 10 * N_INJECTIONS from original script
-DEFAULT_N_CORES = 32
+DEFAULT_BATCH_SIZE = 10240
+DEFAULT_N_CORES = 6
 
 
 def create_a_batch_of_samples(
@@ -56,7 +58,7 @@ def create_a_batch_of_samples(
     n_samples: int,
 ) -> pd.DataFrame:
     """Create a batch of samples with specified parameters."""
-    isg = sample_generation.IntrinsicSamplesGenerator()
+    isg = sample_banks.IntrinsicSamplesGenerator()
     int_samples = isg.draw_physical_prior_samples(
         q_min,
         min_mchirp,
@@ -113,7 +115,9 @@ def _batch_of_injections_in_hh_range(
         q_min, min_mchirp, max_mchirp, f_ref, n_samples=batch_size
     )
 
-    h_h_1mpc = generate_injections._compute_h_h_1mpc(batch, cbc_likelihood, n_cores)
+    h_h_1mpc = generate_injections._compute_h_h_1mpc(
+        batch, cbc_likelihood, n_cores
+    )
     d_ref = np.sqrt(np.max(h_h_1mpc) / h_h_min)
 
     batch["d_luminosity"] = batch["dimensionless_distance"] * d_ref
@@ -126,7 +130,9 @@ def _batch_of_injections_in_hh_range(
         & (batch["h_h"] < h_h_max)
     ].reset_index(drop=True)
 
-    logger.info(f"Accepted {len(injections_in_range)} samples out of {batch_size}")
+    logger.info(
+        f"Accepted {len(injections_in_range)} samples out of {batch_size}"
+    )
     return injections_in_range
 
 
@@ -146,14 +152,18 @@ def generate_injections_in_hh_range(
 ) -> pd.DataFrame:
     """Generate injections within a specified h_h range until the desired number is reached."""
     event_data = data.EventData.gaussian_noise("", **event_data_kwargs)
-    waveform_generator = WaveformGenerator.from_event_data(event_data, approximant)
+    waveform_generator = WaveformGenerator.from_event_data(
+        event_data, approximant
+    )
     cbc_likelihood = CBCLikelihood(event_data, waveform_generator)
     cbc_likelihood.asd_drift = None
 
     iteration = 0
     injs_above_threshold = pd.DataFrame()
 
-    with tqdm(total=n_injections, desc=f"mchirp {min_mchirp}-{max_mchirp}") as pbar:
+    with tqdm(
+        total=n_injections, desc=f"mchirp {min_mchirp}-{max_mchirp}"
+    ) as pbar:
         while len(injs_above_threshold) < n_injections:
             iteration += 1
             batch = _batch_of_injections_in_hh_range(
@@ -289,7 +299,9 @@ def main():
         100: (100.0, 300.0),
     }
 
-    logger.info(f"Starting injection generation for mass ranges: {args.mass_ranges}")
+    logger.info(
+        f"Starting injection generation for mass ranges: {args.mass_ranges}"
+    )
     logger.info(f"Banks directory: {args.banks_dir}")
     logger.info(f"Output directory: {args.output_dir}")
     logger.info(f"Injections per mass range: {args.n_injections}")
@@ -311,7 +323,9 @@ def main():
             continue
 
         if not (bank_folder / "bank_config.json").exists():
-            logger.error(f"Bank config not found: {bank_folder / 'bank_config.json'}")
+            logger.error(
+                f"Bank config not found: {bank_folder / 'bank_config.json'}"
+            )
             continue
 
         # Create output directory for this mass range
