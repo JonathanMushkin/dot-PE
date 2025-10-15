@@ -188,11 +188,11 @@ def collect_int_samples_from_single_detectors(
     i_int_start: int = 0,
     max_incoherent_lnlike_drop: float = 20,
     preselected_indices: Union[NDArray[np.int_], List[int], str, Path, None] = None,
-) -> Tuple[NDArray[np.int_], NDArray[np.float64]]:
+) -> Tuple[NDArray[np.int_], NDArray[np.float64], NDArray[np.float64]]:
     """
     Perform n_det independent single-detector likelihood evaluations and
     return the indices of the samples that passed a threshold and their
-    corresponding incoherent log-likelihood values.
+    corresponding single detector log-likelihood values and their incoherent sum.
 
     Parameters
     ----------
@@ -267,8 +267,9 @@ def collect_int_samples_from_single_detectors(
     selected = incoherent_lnlikes >= incoherent_threshold
 
     inds = intrinsic_indices[selected]
+    lnlike_di = lnlike_di[:, selected]
     incoherent_lnlikes = incoherent_lnlikes[selected]
-    return inds, incoherent_lnlikes
+    return inds, lnlike_di, incoherent_lnlikes
 
 
 def run_coherent_inference(
@@ -773,7 +774,7 @@ def run(
         print("Collecting intrinsic samples from individual detectors...")
         # Use n_phi_incoherent for single detector evaluation (thresholding)
         n_phi_incoherent = n_phi_incoherent if n_phi_incoherent is not None else n_phi
-        inds, incoherent_lnlikes = collect_int_samples_from_single_detectors(
+        inds, lnlikes_di, incoherent_lnlikes = collect_int_samples_from_single_detectors(
             event_data=event_data,
             par_dic_0=par_dic_0,
             single_detector_blocksize=single_detector_blocksize,
@@ -788,6 +789,7 @@ def run(
         np.savez(
             rundir / "intrinsic_samples.npz",
             inds=inds,
+            lnlikes_di=lnlikes_di,
             incoherent_lnlikes=incoherent_lnlikes,
         )
     print(f"{len(inds)} intrinsic samples selected.")
