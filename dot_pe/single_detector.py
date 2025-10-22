@@ -724,21 +724,17 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         -------
 
         """
-        # use lat, lon of maximal response:
+        # use lat, lon at zenith, where response has norm 1:
         lat, lon = skyloc_angles.cart3d_to_latlon(
             skyloc_angles.normalize(DETECTORS[det_name].location)
         )
-
+        # psi0 = arg_r0/2 satisfies fplus = 1, fcross = 0
         fpfc0 = get_fplus_fcross_0(det_name, lat, lon).squeeze()
         arg_r0 = np.arctan2(fpfc0[1], fpfc0[0])
-        # psi0 satisfy fplus = 1, fcross = 0
-
-        # detector response is approximately 1 at lat, lon
-
-        d_luminosity = 1 / np.sqrt(np.sum(r**2, axis=-1))
-
+        norm_r = np.linalg.norm(r, axis=-1)
         arg_r = np.arctan2(r[1], r[0])
 
+        d_luminosity = 1 / norm_r
         psi = -(arg_r - arg_r0) / 2
 
         return psi, d_luminosity
