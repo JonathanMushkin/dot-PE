@@ -395,7 +395,8 @@ def standardize_samples(
     Parameters
     ----------
     cached_dt_linfree_relative : dict or str or Path
-        Cached relative timeshifts from the compute phase. Can be a dict or a path to a JSON file.
+        Cached relative timeshifts from the compute phase. Can be a dict
+        or a path to a JSON file.
     lookup_table : LookupTable
         LookupTable object, for distance marginalization.
     pr : Prior
@@ -404,9 +405,11 @@ def standardize_samples(
         Samples with indices columns `i`, `e` and `o` and probabilistic
         information.
     intrinsic_samples : DataFrame or str or Path
-        Intrinsic samples. Can be a DataFrame or a path to a feather file.
+        Intrinsic samples. Can be a DataFrame or a path to a feather
+        file.
     extrinsic_samples : DataFrame or str or Path
-        Extrinsic samples. Can be a DataFrame or a path to a feather file.
+        Extrinsic samples. Can be a DataFrame or a path to a feather
+        file.
     n_phi : int
         Number of phi_ref samples.
     tgps : float
