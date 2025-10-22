@@ -39,7 +39,7 @@ from cogwheel.likelihood import RelativeBinningLikelihood, LookupTable
 from cogwheel.posterior import Posterior
 from cogwheel.utils import exp_normalize, get_rundir, mkdirs, read_json
 from cogwheel.waveform import WaveformGenerator
-
+from cogwheel.prior import Prior
 from .base_sampler_free_sampling import (
     get_n_effective_total_i_e,
 )
@@ -382,7 +382,7 @@ def run_coherent_inference(
 def standardize_samples(
     cached_dt_linfree_relative: Union[dict, str, Path],
     lookup_table: LookupTable,
-    pr: "cogwheel.prior.Prior",
+    pr: Prior,
     prob_samples: pd.DataFrame,
     intrinsic_samples: Union[pd.DataFrame, str, Path],
     extrinsic_samples: Union[pd.DataFrame, str, Path],
@@ -530,7 +530,7 @@ def postprocess(
     rundir: Path,
     bank_folder: Union[str, Path],
     n_phi: int,
-    pr: "cogwheel.prior.Prior",
+    pr: Prior,
     prob_samples: Union[pd.DataFrame, Path, str] = None,
     n_draws: int = None,
     max_n_draws: int = 10**4,
@@ -669,6 +669,7 @@ def run(
     extrinsic_samples: Union[str, Path] = None,
     n_phi_incoherent: int = None,
     preselected_indices: Union[NDArray[np.int_], List[int], str, Path, None] = None,
+    coherent_posterior_kwargs: Dict = {},
 ) -> Path:
     """Run the magic integral for a given event and bank folder."""
     bank_folder = Path(bank_folder)
@@ -735,15 +736,26 @@ def run(
         m_arr = np.array(bank_config["m_arr"])
 
     print("Creating COGWHEEL objects...")
+    coherent_posterior_kwargs = (
+        coherent_posterior_kwargs if coherent_posterior_kwargs else {}
+    )
     posterior_kwargs = {
         "likelihood_class": RelativeBinningLikelihood,
         "approximant": approximant,
         "prior_class": "CartesianIASPrior",
-    }
+    } | coherent_posterior_kwargs
 
     likelihood_kwargs = {"fbin": fbin, "pn_phase_tol": None}
-    ref_wf_finder_kwargs = {"time_range": (-1e-1, +1e-1), "f_ref": f_ref}
+    if "likelihood_kwargs" in posterior_kwargs:
+        likelihood_kwargs = likelihood_kwargs | posterior_kwargs.pop(
+            "likelihood_kwargs"
+        )
 
+    ref_wf_finder_kwargs = {"time_range": (-1e-1, +1e-1), "f_ref": f_ref}
+    if "ref_wf_finder_kwargs" in posterior_kwargs:
+        ref_wf_finder_kwargs = ref_wf_finder_kwargs | posterior_kwargs.pop(
+            "ref_wf_finder_kwargs"
+        )
     coherent_posterior = Posterior.from_event(
         event=event_data,
         mchirp_guess=mchirp_guess,
@@ -774,17 +786,19 @@ def run(
         print("Collecting intrinsic samples from individual detectors...")
         # Use n_phi_incoherent for single detector evaluation (thresholding)
         n_phi_incoherent = n_phi_incoherent if n_phi_incoherent is not None else n_phi
-        inds, lnlikes_di, incoherent_lnlikes = collect_int_samples_from_single_detectors(
-            event_data=event_data,
-            par_dic_0=par_dic_0,
-            single_detector_blocksize=single_detector_blocksize,
-            n_int=n_int,
-            n_phi=n_phi_incoherent,
-            n_t=n_t,
-            bank_folder=bank_folder,
-            i_int_start=i_int_start,
-            max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
-            preselected_indices=preselected_indices,
+        inds, lnlikes_di, incoherent_lnlikes = (
+            collect_int_samples_from_single_detectors(
+                event_data=event_data,
+                par_dic_0=par_dic_0,
+                single_detector_blocksize=single_detector_blocksize,
+                n_int=n_int,
+                n_phi=n_phi_incoherent,
+                n_t=n_t,
+                bank_folder=bank_folder,
+                i_int_start=i_int_start,
+                max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
+                preselected_indices=preselected_indices,
+            )
         )
         np.savez(
             rundir / "intrinsic_samples.npz",
