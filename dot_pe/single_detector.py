@@ -739,6 +739,32 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
 
         return psi, d_luminosity
 
+    def psi_and_d_luminosity_to_response(
+        self,
+        psi: "float | np.ndarray",
+        d_luminosity: "float | np.ndarray",
+        det_name: str,
+    ) -> np.ndarray:
+        """
+        Assume sky location at detector zenith, and get the detector response
+        divided by luminoisty distance per polarization.
+
+        Returns
+        -------
+        numpy.ndarray
+            Detector response divided by luminosity distance per polarization.
+        """
+        # use lat, lon at zenith, where response has norm 1:
+        lat, lon = skyloc_angles.cart3d_to_latlon(
+            skyloc_angles.normalize(DETECTORS[det_name].location)
+        )
+
+        esp = sample_processing.ExtrinsicSampleProcessor(det_name)
+        fpfc = esp.compute_detector_responses(det_name, lat, lon, psi).squeeze()
+        r = fpfc / np.expand_dims(d_luminosity, -1)
+
+        return r
+
     def transform_par_dic_by_sky_poisition(
         self, det_name, par_dic, lon, lat, tgps=None
     ):
