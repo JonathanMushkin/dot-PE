@@ -735,7 +735,7 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         arg_r = np.arctan2(r[1], r[0])
 
         d_luminosity = 1 / norm_r
-        psi = -(arg_r - arg_r0) / 2
+        psi = (-(arg_r - arg_r0) / 2) % np.pi
 
         return psi, d_luminosity
 
