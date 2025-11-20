@@ -1,5 +1,5 @@
 """Conditional sampling from PowerLawIntrinsicIASPrior."""
 
-from conditioned_sampling.conditional_sampler import ConditionalPriorSampler
+from dot_pe.zoom.conditional_sampling import ConditionalPriorSampler
 
 __all__ = ["ConditionalPriorSampler"]
