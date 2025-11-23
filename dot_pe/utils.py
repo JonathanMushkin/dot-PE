@@ -8,12 +8,15 @@ from pathlib import Path
 from typing import List, Union
 
 import numpy as np
+import pandas as pd
 import torch
 from numba import njit
 from scipy.special import logsumexp
 from torch.types import Device
 
 from cogwheel.data import EventData
+from cogwheel import gw_utils
+from cogwheel.utils import read_json
 
 
 def is_dtype_supported(device: Device, dtype: torch.dtype) -> bool:
@@ -157,6 +160,57 @@ def get_event_data(event: Union[str, Path, EventData]) -> EventData:
         except FileNotFoundError:
             event_data = EventData.from_npz(filename=event)
     return event_data
+
+
+def compute_lnq(m1, m2):
+    """Compute log mass ratio: ln(q) = ln(m2/m1)."""
+    return np.log(m2 / m1)
+
+
+def load_intrinsic_samples_from_rundir(rundir: Union[str, Path]) -> pd.DataFrame:
+    """
+    Load weighted intrinsic samples from a previous inference run.
+
+    Loads the bank and prob_samples from a run directory, aggregates weights
+    by intrinsic index 'i', and adds transformed columns (mchirp, lnq, chieff).
+
+    Parameters
+    ----------
+    rundir : str or Path
+        Path to the inference run directory containing run_kwargs.json and
+        prob_samples.feather.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with bank rows corresponding to prob_samples indices,
+        including a 'weights' column from aggregated prob_samples, and
+        'mchirp', 'lnq', 'chieff' columns computed from the bank parameters.
+    """
+    rundir = Path(rundir)
+    run_kwargs = read_json(rundir / "run_kwargs.json")
+    bank_folder = Path(run_kwargs["bank_folder"])
+
+    bank = pd.read_feather(bank_folder / "intrinsic_sample_bank.feather")
+    prob_samples = pd.read_feather(rundir / "prob_samples.feather")
+
+    aggregated_weights = prob_samples.groupby("i")["weights"].sum()
+
+    indices = aggregated_weights.index.to_numpy(dtype=int)
+    weighted_bank = bank.iloc[indices].copy().reset_index(drop=True)
+    weighted_bank["i"] = indices
+    weighted_bank["weights"] = aggregated_weights.values
+
+    m1 = weighted_bank["m1"].to_numpy()
+    m2 = weighted_bank["m2"].to_numpy()
+    s1z = weighted_bank.get("s1z", pd.Series(np.zeros(len(weighted_bank)))).to_numpy()
+    s2z = weighted_bank.get("s2z", pd.Series(np.zeros(len(weighted_bank)))).to_numpy()
+
+    weighted_bank["mchirp"] = gw_utils.m1m2_to_mchirp(m1, m2)
+    weighted_bank["lnq"] = compute_lnq(m1, m2)
+    weighted_bank["chieff"] = gw_utils.chieff(m1, m2, s1z, s2z)
+
+    return weighted_bank
 
 
 def safe_logsumexp(x):
