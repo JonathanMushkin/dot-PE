@@ -7,10 +7,13 @@ conditioned on fixed values of f_ref, mchirp, lnq, chieff.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Optional, Dict, Union
+
 import numpy as np
 import pandas as pd
 from scipy.stats import qmc
-from typing import Optional, Dict
 
 from dot_pe.power_law_mass_prior import (
     PowerLawIntrinsicIASPrior,
@@ -222,6 +225,127 @@ class ConditionalPriorSampler:
         """
         df = self.sample(n_samples, mchirp, lnq, chieff, method)
         return {col: df[col].values for col in df.columns}
+
+    def sample_vectorized(
+        self,
+        mchirp: np.ndarray,
+        lnq: np.ndarray,
+        chieff: np.ndarray,
+        method: str = "mc",
+    ) -> pd.DataFrame:
+        """
+        Sample one sample for each set of fixed parameters (vectorized).
+
+        Parameters
+        ----------
+        mchirp : np.ndarray
+            Array of fixed chirp masses (M_sun).
+        lnq : np.ndarray
+            Array of fixed log mass ratios.
+        chieff : np.ndarray
+            Array of fixed effective aligned spins.
+        method : str, optional
+            Sampling method: "qmc" or "mc". Default is "mc".
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with all standard parameters and sampled parameters, one row per input parameter set.
+            Standard parameters: m1, m2, s1z, s2z, iota, s1x_n, s1y_n, s2x_n, s2y_n, etc.
+            Sampled parameters: mchirp_p, lnq, chieff, cumchidiff, costheta_jn, phi_jl_hat, phi12, cums1r_s1z, cums2r_s2z.
+        """
+        n_samples = len(mchirp)
+        if len(lnq) != n_samples or len(chieff) != n_samples:
+            raise ValueError("All input arrays must have the same length")
+
+        remaining_sampled_params = [
+            "cumchidiff",
+            "costheta_jn",
+            "phi_jl_hat",
+            "phi12",
+            "cums1r_s1z",
+            "cums2r_s2z",
+        ]
+
+        if method == "qmc":
+            sampler = qmc.Halton(
+                d=len(remaining_sampled_params),
+                scramble=True,
+                seed=self.seed,
+            )
+            u = sampler.random(n_samples).T
+        else:
+            rng = np.random.default_rng(self.seed)
+            u = rng.random((len(remaining_sampled_params), n_samples))
+
+        samples_list = []
+        for i in range(n_samples):
+            fixed_sampled = self._get_fixed_sampled_params(mchirp[i], lnq[i], chieff[i])
+
+            sampled_params = fixed_sampled.copy()
+            for j, param_name in enumerate(remaining_sampled_params):
+                if param_name == "cumchidiff":
+                    param_range = self.spin_prior.range_dic[param_name]
+                else:
+                    param_range = self.inplane_spin_prior.range_dic[param_name]
+                sampled_params[param_name] = param_range[0] + u[j, i] * (
+                    param_range[1] - param_range[0]
+                )
+
+            standard_params = self.prior.transform(
+                **sampled_params,
+                f_ref=self.f_ref,
+            )
+
+            combined_params = {**standard_params, **sampled_params}
+            samples_list.append(combined_params)
+
+        return pd.DataFrame(samples_list)
+
+    def to_json(self, path: Union[str, Path]) -> None:
+        """Save ConditionalPriorSampler state to JSON file.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to JSON file to save.
+        """
+        path = Path(path)
+        data = {
+            "mchirp_range": list(self.mchirp_range),
+            "q_min": self.q_min,
+            "f_ref": self.f_ref,
+            "seed": self.seed,
+        }
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+
+    @classmethod
+    def from_json(cls, path: Union[str, Path]) -> "ConditionalPriorSampler":
+        """Load ConditionalPriorSampler state from JSON file.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to JSON file to load.
+
+        Returns
+        -------
+        ConditionalPriorSampler
+            Reconstructed ConditionalPriorSampler instance.
+        """
+        from cogwheel.utils import read_json
+
+        path = Path(path)
+        data = read_json(path)
+
+        return cls(
+            mchirp_range=tuple(data["mchirp_range"]),
+            q_min=data["q_min"],
+            f_ref=data["f_ref"],
+            seed=data.get("seed"),
+        )
 
 
 # ============================================================================

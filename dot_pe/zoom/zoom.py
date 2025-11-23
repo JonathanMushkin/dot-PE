@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from pathlib import Path
+from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
 from scipy import linalg, stats
@@ -27,6 +29,7 @@ class Zoomer:
     engine_seed: Optional[int] = None
     mean: Optional[np.ndarray] = field(init=False, default=None)
     cov: Optional[np.ndarray] = field(init=False, default=None)
+    bounds: Optional[Bounds] = field(init=False, default=None)
     distribution: Optional[stats._multivariate.multivariate_normal_frozen] = field(
         init=False, default=None
     )
@@ -119,6 +122,7 @@ class Zoomer:
         if self.distribution is None or self.mean is None or self.cov is None:
             raise RuntimeError("Call fit() before sampling.")
 
+        self.bounds = bounds
         dim = self.mean.shape[0]
         normalized_bounds = self._normalize_bounds(bounds, dim)
         qmc_sampler = self._build_qmc_sampler(dim)
@@ -230,6 +234,67 @@ class Zoomer:
             if upper is not None:
                 mask &= samples[:, dim] <= upper
         return mask
+
+    def to_json(self, path: Union[str, Path]) -> None:
+        """Save Zoomer state to JSON file.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to JSON file to save.
+        """
+        path = Path(path)
+        data = {
+            "jitter": self.jitter,
+            "engine_seed": self.engine_seed,
+        }
+
+        if self.mean is not None:
+            data["mean"] = self.mean.tolist()
+        if self.cov is not None:
+            data["cov"] = self.cov.tolist()
+        if self.bounds is not None:
+            data["bounds"] = {str(k): list(v) for k, v in self.bounds.items()}
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+
+    @classmethod
+    def from_json(cls, path: Union[str, Path]) -> "Zoomer":
+        """Load Zoomer state from JSON file.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to JSON file to load.
+
+        Returns
+        -------
+        Zoomer
+            Reconstructed Zoomer instance.
+        """
+        from cogwheel.utils import read_json
+
+        path = Path(path)
+        data = read_json(path)
+
+        zoomer = cls(
+            jitter=data.get("jitter", 1e-12),
+            engine_seed=data.get("engine_seed"),
+        )
+
+        if "mean" in data:
+            zoomer.mean = np.array(data["mean"])
+        if "cov" in data:
+            zoomer.cov = np.array(data["cov"])
+        if zoomer.mean is not None and zoomer.cov is not None:
+            zoomer.distribution = stats.multivariate_normal(
+                mean=zoomer.mean, cov=zoomer.cov, allow_singular=True
+            )
+        if "bounds" in data:
+            zoomer.bounds = {int(k): tuple(v) for k, v in data["bounds"].items()}
+
+        return zoomer
 
 
 # ============================================================================
