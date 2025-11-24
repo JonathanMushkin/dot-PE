@@ -42,6 +42,7 @@ def fit_zoomer(
     weights: np.ndarray,
     prior_kwargs: dict,
     seed: int,
+    n_sig: float = None,
 ) -> tuple[Zoomer, ConditionalPriorSampler, dict]:
     """Fit Gaussian zoomer to weighted samples."""
     mchirp = df["mchirp"].values
@@ -58,7 +59,7 @@ def fit_zoomer(
     }
 
     zoomer = Zoomer(engine_seed=seed)
-    zoomer.fit(data, weights)
+    zoomer.fit(data, weights, n_sig)
     cond_sampler = ConditionalPriorSampler(**prior_kwargs, seed=seed)
 
     return zoomer, cond_sampler, bounds
@@ -200,6 +201,12 @@ def parse_args() -> argparse.Namespace:
         help="Single detector blocksize (default: same as inference-blocksize)",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--n-sig",
+        type=float,
+        default=None,
+        help="Number of standard deviations for zoomer fitting (default: None)",
+    )
     return parser.parse_args()
 
 
@@ -228,7 +235,7 @@ def main() -> None:
     print("Fitting zoomer from previous run...")
     weighted_df = load_intrinsic_samples_from_rundir(prev_run_dir)
     zoomer, cond_sampler, bounds = fit_zoomer(
-        weighted_df, weighted_df["weights"].values, prior_kwargs, args.seed
+        weighted_df, weighted_df["weights"].values, prior_kwargs, args.seed, args.n_sig
     )
 
     zoomer.to_json(output_dir / "Zoomer.json")
