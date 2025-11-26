@@ -61,8 +61,6 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
-notebooks/test_bank/
-notebooks/test_event/
 
 # Conditioned sampling data directories
 conditioned_sampling/infernece_example/bank/*
@@ -88,3 +86,8 @@ conditioned_sampling/infernece_example/zoom/
 ehthumbs.db
 Thumbs.db 
 .ipynb_checkpoints/ 
+
+# Notebook-generated artifacts
+notebooks/iterative_zoom/
+notebooks/test_bank/
+notebooks/test_event/
