@@ -62,13 +62,6 @@ coverage.xml
 .pytest_cache/
 cover/
 
-# Conditioned sampling data directories
-conditioned_sampling/infernece_example/bank/*
-!conditioned_sampling/infernece_example/bank/.gitkeep
-conditioned_sampling/infernece_example/injection/
-conditioned_sampling/infernece_example/inference_runs/
-conditioned_sampling/infernece_example/zoom/
-
 # IDE specific files
 .idea/
 .vscode/
