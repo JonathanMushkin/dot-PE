@@ -81,6 +81,5 @@ Thumbs.db
 .ipynb_checkpoints/ 
 
 # Notebook-generated artifacts
-notebooks/iterative_zoom/
-notebooks/test_bank/
-notebooks/test_event/
+.ipynb_checkpoints/
+**/artifacts/
