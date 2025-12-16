@@ -167,10 +167,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         self.max_bestfit_lnlike_diff = max_bestfit_lnlike_diff
         # minimal bestfit lnlike to keep is updated throughout the run
         if min_bestfit_lnlike_to_keep is None:
-            self.min_bestfit_lnlike_to_keep = (
-                self.likelihood.lnlike_fft(self.likelihood.par_dic_0)
-                - self.max_bestfit_lnlike_diff
-            )
+            self.min_bestfit_lnlike_to_keep = -np.inf
         else:
             self.min_bestfit_lnlike_to_keep = min_bestfit_lnlike_to_keep
 
