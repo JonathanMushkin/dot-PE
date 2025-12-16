@@ -24,6 +24,8 @@ if __name__ == "__main__":
         sys.path.insert(0, str(project_root))
 
 from cogwheel import data
+from cogwheel.gw_prior.mass import UniformDetectorFrameMassesPrior
+from cogwheel.gw_prior.spin import UniformEffectiveSpinPrior
 from dot_pe import inference, waveform_banks
 from dot_pe.zoom.conditional_sampling import ConditionalPriorSampler
 from dot_pe.zoom.zoom import Zoomer
@@ -88,8 +90,6 @@ def draw_from_zoomer(
     seed: int,
 ) -> pd.DataFrame:
     """Draw samples from zoomer + conditional sampler with importance weights."""
-    from cogwheel.gw_prior import IntrinsicIASPrior
-
     samples, gaussian_pdfs = zoomer.sample(n_samples, bounds=bounds)
     mchirp, lnq, chieff = samples.T
 
@@ -99,16 +99,23 @@ def draw_from_zoomer(
     df["lnq"] = lnq
     df["chieff"] = chieff
 
-    intrinsic_prior = IntrinsicIASPrior(
+    mass_prior = UniformDetectorFrameMassesPrior(
         mchirp_range=cond_sampler.mchirp_range,
         q_min=cond_sampler.q_min,
-        f_ref=cond_sampler.f_ref,
     )
+    aligned_spin_prior = UniformEffectiveSpinPrior()
 
-    sampled_param_names = [
-        "mchirp",
-        "lnq",
-        "chieff",
+    log_assumed_prior = np.vectorize(mass_prior.lnprior)(
+        df["mchirp"].values, df["lnq"].values
+    ) + np.vectorize(aligned_spin_prior.lnprior)(
+        df["chieff"].values,
+        df["cumchidiff"].values,
+        df["m1"].values,
+        df["m2"].values,
+    )
+    log_gaussian = np.log(gaussian_pdfs)
+
+    remaining_sampled_params = [
         "cumchidiff",
         "costheta_jn",
         "phi_jl_hat",
@@ -116,18 +123,16 @@ def draw_from_zoomer(
         "cums1r_s1z",
         "cums2r_s2z",
     ]
-    log_assumed_prior = np.array(
-        [
-            intrinsic_prior.lnprior(
-                **{name: row[name] for name in sampled_param_names},
-                f_ref=cond_sampler.f_ref,
-            )
-            for _, row in df.iterrows()
-        ]
-    )
-    log_gaussian = np.log(gaussian_pdfs)
+    log_uniform = 0.0
+    for param_name in remaining_sampled_params:
+        if param_name == "cumchidiff":
+            param_range = cond_sampler.aligned_spin_prior.range_dic[param_name]
+        else:
+            param_range = cond_sampler.inplane_spin_prior.range_dic[param_name]
+        log_uniform -= np.log(param_range[1] - param_range[0])
 
-    df["log_prior_weights"] = log_assumed_prior - log_gaussian
+    log_proposal = log_gaussian + log_uniform
+    df["log_prior_weights"] = log_assumed_prior - log_proposal
 
     return df
 
