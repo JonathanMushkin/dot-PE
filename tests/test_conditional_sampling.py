@@ -342,7 +342,7 @@ def test_zoomer_with_weights():
     try:
         mcp = gw_plotting.MultiCornerPlot(
             [samples_unweighted, samples, prior_samples_df],
-            params=["mchirp", "lnq", "chieff"],
+            params=["mchirp", "lnq", "chieff", "m1", "m2"],
             weights_col="weights",
             labels=["Unweighted Proposal", "Weighted Proposal", "Direct Prior"],
             smooth=1,
