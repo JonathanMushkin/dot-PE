@@ -43,6 +43,7 @@ def fit_zoomer(
     prior_kwargs: dict,
     seed: int,
     n_sig: float = None,
+    aligned_spin: bool = False,
 ) -> tuple[Zoomer, ConditionalPriorSampler, dict]:
     """Fit Gaussian zoomer to weighted samples."""
     mchirp = df["mchirp"].values
@@ -60,7 +61,9 @@ def fit_zoomer(
 
     zoomer = Zoomer(engine_seed=seed)
     zoomer.fit(data, weights, n_sig)
-    cond_sampler = ConditionalPriorSampler(**prior_kwargs, seed=seed)
+    cond_sampler = ConditionalPriorSampler(
+        **prior_kwargs, aligned_spin=aligned_spin, seed=seed
+    )
 
     return zoomer, cond_sampler, bounds
 
