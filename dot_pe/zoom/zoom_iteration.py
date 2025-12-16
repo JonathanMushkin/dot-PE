@@ -7,8 +7,6 @@ The script does three core operations:
 3. Run inference with the new bank
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -129,24 +127,7 @@ def draw_from_zoomer(
     )
     log_gaussian = np.log(gaussian_pdfs)
 
-    remaining_sampled_params = [
-        "cumchidiff",
-        "costheta_jn",
-        "phi_jl_hat",
-        "phi12",
-        "cums1r_s1z",
-        "cums2r_s2z",
-    ]
-    log_uniform = 0.0
-    for param_name in remaining_sampled_params:
-        if param_name == "cumchidiff":
-            param_range = cond_sampler.spin_prior.range_dic[param_name]
-        else:
-            param_range = cond_sampler.inplane_spin_prior.range_dic[param_name]
-        log_uniform -= np.log(param_range[1] - param_range[0])
-
-    log_proposal = log_gaussian + log_uniform
-    df["log_prior_weights"] = log_assumed_prior - log_proposal
+    df["log_prior_weights"] = log_assumed_prior - log_gaussian
 
     return df
 
