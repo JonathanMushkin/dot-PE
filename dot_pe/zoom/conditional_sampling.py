@@ -1,11 +1,9 @@
 """
-Conditional sampling from PowerLawIntrinsicIASPrior.
+Conditional sampling from IntrinsicIASPrior.
 
-This module provides functionality to sample from PowerLawIntrinsicIASPrior
+This module provides functionality to sample from IntrinsicIASPrior
 conditioned on fixed values of f_ref, mchirp, lnq, chieff.
 """
-
-from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -15,15 +13,13 @@ import numpy as np
 import pandas as pd
 from scipy.stats import qmc
 
-from dot_pe.power_law_mass_prior import (
-    PowerLawIntrinsicIASPrior,
-    PowerLawChirpMassPrior,
-)
+from cogwheel.gw_prior import IntrinsicIASPrior
+from cogwheel.gw_prior.mass import UniformDetectorFrameMassesPrior
 
 
 class ConditionalPriorSampler:
     """
-    Sample from PowerLawIntrinsicIASPrior conditioned on fixed parameters.
+    Sample from IntrinsicIASPrior conditioned on fixed parameters.
 
     This class allows sampling the remaining parameters (cumchidiff, in-plane spins and
     orientation) when f_ref, mchirp, lnq, chieff are fixed.
@@ -36,6 +32,9 @@ class ConditionalPriorSampler:
         Minimum mass ratio.
     f_ref : float
         Reference frequency (Hz).
+    aligned_spin : bool, optional
+        If True, only sample costheta_jn (iota) and zero out in-plane spins.
+        Default is False (precessing mode).
     seed : int, optional
         Random seed for reproducibility.
     """
@@ -45,14 +44,16 @@ class ConditionalPriorSampler:
         mchirp_range: tuple[float, float],
         q_min: float,
         f_ref: float,
+        aligned_spin: bool = False,
         seed: Optional[int] = None,
     ):
         self.mchirp_range = mchirp_range
         self.q_min = q_min
         self.f_ref = f_ref
+        self.aligned_spin = aligned_spin
         self.seed = seed
 
-        self.prior = PowerLawIntrinsicIASPrior(
+        self.prior = IntrinsicIASPrior(
             mchirp_range=mchirp_range,
             q_min=q_min,
             f_ref=f_ref,
@@ -63,31 +64,26 @@ class ConditionalPriorSampler:
     def _identify_parameter_mapping(self):
         """Identify which subpriors correspond to which standard_params."""
         self.mass_prior = None
-        self.spin_prior = None
+        self.aligned_spin_prior = None
         self.inplane_spin_prior = None
 
         for subprior in self.prior.subpriors:
-            if hasattr(subprior, "standard_params"):
+            if isinstance(subprior, UniformDetectorFrameMassesPrior):
+                self.mass_prior = subprior
+            elif hasattr(subprior, "standard_params"):
                 if (
-                    "m1" in subprior.standard_params
-                    and "m2" in subprior.standard_params
-                ):
-                    self.mass_prior = subprior
-                elif (
                     "s1z" in subprior.standard_params
                     and "s2z" in subprior.standard_params
                 ):
                     if "chieff" in getattr(subprior, "range_dic", {}):
-                        self.spin_prior = subprior
+                        self.aligned_spin_prior = subprior
                 elif "iota" in subprior.standard_params:
                     self.inplane_spin_prior = subprior
 
-        if (
-            self.mass_prior is None
-            or self.spin_prior is None
-            or self.inplane_spin_prior is None
-        ):
-            raise RuntimeError("Could not identify all required prior components.")
+        if self.mass_prior is None or self.aligned_spin_prior is None:
+            raise RuntimeError("Could not identify mass_prior and aligned_spin_prior.")
+        if self.inplane_spin_prior is None:
+            raise RuntimeError("Could not identify inplane_spin_prior.")
 
     def _get_fixed_sampled_params(
         self, mchirp: float, lnq: float, chieff: float
@@ -107,12 +103,10 @@ class ConditionalPriorSampler:
         Returns
         -------
         dict
-            Dictionary with fixed sampled_params values (mchirp_p, lnq, chieff).
+            Dictionary with fixed sampled_params values (mchirp, lnq, chieff).
         """
-        mchirp_p = mchirp**PowerLawChirpMassPrior.TRANSFORM_POWER
-
         return {
-            "mchirp_p": mchirp_p,
+            "mchirp": mchirp,
             "lnq": lnq,
             "chieff": chieff,
         }
@@ -151,14 +145,17 @@ class ConditionalPriorSampler:
         """
         fixed_sampled = self._get_fixed_sampled_params(mchirp, lnq, chieff)
 
-        remaining_sampled_params = [
-            "cumchidiff",
-            "costheta_jn",
-            "phi_jl_hat",
-            "phi12",
-            "cums1r_s1z",
-            "cums2r_s2z",
-        ]
+        if self.aligned_spin:
+            remaining_sampled_params = ["costheta_jn", "cumchidiff"]
+        else:
+            remaining_sampled_params = [
+                "cumchidiff",
+                "costheta_jn",
+                "phi_jl_hat",
+                "phi12",
+                "cums1r_s1z",
+                "cums2r_s2z",
+            ]
 
         if method == "qmc":
             sampler = qmc.Halton(
@@ -177,17 +174,29 @@ class ConditionalPriorSampler:
 
             for j, param_name in enumerate(remaining_sampled_params):
                 if param_name == "cumchidiff":
-                    param_range = self.spin_prior.range_dic[param_name]
+                    param_range = self.aligned_spin_prior.range_dic[param_name]
                 else:
                     param_range = self.inplane_spin_prior.range_dic[param_name]
                 sampled_params[param_name] = param_range[0] + u[j, i] * (
                     param_range[1] - param_range[0]
                 )
 
+            if self.aligned_spin:
+                sampled_params["phi_jl_hat"] = 0.0
+                sampled_params["phi12"] = 0.0
+                sampled_params["cums1r_s1z"] = 0.0
+                sampled_params["cums2r_s2z"] = 0.0
+
             standard_params = self.prior.transform(
                 **sampled_params,
                 f_ref=self.f_ref,
             )
+
+            if self.aligned_spin:
+                standard_params["s1x_n"] = 0.0
+                standard_params["s1y_n"] = 0.0
+                standard_params["s2x_n"] = 0.0
+                standard_params["s2y_n"] = 0.0
 
             samples_list.append(standard_params)
 
@@ -252,20 +261,23 @@ class ConditionalPriorSampler:
         pd.DataFrame
             DataFrame with all standard parameters and sampled parameters, one row per input parameter set.
             Standard parameters: m1, m2, s1z, s2z, iota, s1x_n, s1y_n, s2x_n, s2y_n, etc.
-            Sampled parameters: mchirp_p, lnq, chieff, cumchidiff, costheta_jn, phi_jl_hat, phi12, cums1r_s1z, cums2r_s2z.
+            Sampled parameters: mchirp, lnq, chieff, cumchidiff, costheta_jn, phi_jl_hat, phi12, cums1r_s1z, cums2r_s2z.
         """
         n_samples = len(mchirp)
         if len(lnq) != n_samples or len(chieff) != n_samples:
             raise ValueError("All input arrays must have the same length")
 
-        remaining_sampled_params = [
-            "cumchidiff",
-            "costheta_jn",
-            "phi_jl_hat",
-            "phi12",
-            "cums1r_s1z",
-            "cums2r_s2z",
-        ]
+        if self.aligned_spin:
+            remaining_sampled_params = ["costheta_jn", "cumchidiff"]
+        else:
+            remaining_sampled_params = [
+                "cumchidiff",
+                "costheta_jn",
+                "phi_jl_hat",
+                "phi12",
+                "cums1r_s1z",
+                "cums2r_s2z",
+            ]
 
         if method == "qmc":
             sampler = qmc.Halton(
@@ -285,17 +297,29 @@ class ConditionalPriorSampler:
             sampled_params = fixed_sampled.copy()
             for j, param_name in enumerate(remaining_sampled_params):
                 if param_name == "cumchidiff":
-                    param_range = self.spin_prior.range_dic[param_name]
+                    param_range = self.aligned_spin_prior.range_dic[param_name]
                 else:
                     param_range = self.inplane_spin_prior.range_dic[param_name]
                 sampled_params[param_name] = param_range[0] + u[j, i] * (
                     param_range[1] - param_range[0]
                 )
 
+            if self.aligned_spin:
+                sampled_params["phi_jl_hat"] = 0.0
+                sampled_params["phi12"] = 0.0
+                sampled_params["cums1r_s1z"] = 0.0
+                sampled_params["cums2r_s2z"] = 0.0
+
             standard_params = self.prior.transform(
                 **sampled_params,
                 f_ref=self.f_ref,
             )
+
+            if self.aligned_spin:
+                standard_params["s1x_n"] = 0.0
+                standard_params["s1y_n"] = 0.0
+                standard_params["s2x_n"] = 0.0
+                standard_params["s2y_n"] = 0.0
 
             combined_params = {**standard_params, **sampled_params}
             samples_list.append(combined_params)
@@ -315,6 +339,7 @@ class ConditionalPriorSampler:
             "mchirp_range": list(self.mchirp_range),
             "q_min": self.q_min,
             "f_ref": self.f_ref,
+            "aligned_spin": self.aligned_spin,
             "seed": self.seed,
         }
 
@@ -344,6 +369,7 @@ class ConditionalPriorSampler:
             mchirp_range=tuple(data["mchirp_range"]),
             q_min=data["q_min"],
             f_ref=data["f_ref"],
+            aligned_spin=data.get("aligned_spin", False),
             seed=data.get("seed"),
         )
 
