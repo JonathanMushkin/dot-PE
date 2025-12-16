@@ -4,8 +4,6 @@ Custom prior with power-law chirp mass distribution.
 Copied locally for the incoherent-search tooling to avoid cross-package imports.
 """
 
-from __future__ import annotations
-
 import numpy as np
 from scipy.integrate import dblquad
 
