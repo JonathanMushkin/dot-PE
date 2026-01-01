@@ -235,40 +235,18 @@ def test_zoomer_with_weights():
     mean = np.array([30.0, np.log(0.5), 0.5])
 
     # Define desired standard deviations for each dimension
-    sigma = np.array([1.0, 0.1, 0.1])  # For mchirp, lnq, chieff
+    sigma = np.array([4.0, 0.5, 0.5])  # For mchirp, lnq, chieff
 
-    # Start with diagonal matrix (identity)
-    cov = np.eye(3)
-
-    # Apply rotations using random angles (in cartesian coordinate style)
-    rng = np.random.default_rng(42)
-    # Two rotation angles for 3D rotations
-    theta1 = rng.uniform(0, 2 * np.pi)  # Rotation in x-y plane
-    theta2 = rng.uniform(0, 2 * np.pi)  # Rotation in y-z plane
-
-    # Create rotation matrices
-    R1 = np.array(
-        [
-            [np.cos(theta1), -np.sin(theta1), 0],
-            [np.sin(theta1), np.cos(theta1), 0],
-            [0, 0, 1],
-        ]
-    )
-    R2 = np.array(
-        [
-            [1, 0, 0],
-            [0, np.cos(theta2), -np.sin(theta2)],
-            [0, np.sin(theta2), np.cos(theta2)],
-        ]
-    )
-
-    # Apply rotations: R2 @ R1 @ cov @ R1.T @ R2.T
-    cov = R2 @ R1 @ cov @ R1.T @ R2.T
-
+    lower_mat = np.array([[1, 0, 0], [0.1, 1, 0], [0.2, 0.1, 1]])
     # Scale each element by sigma_i * sigma_j
+
+    cov = lower_mat @ lower_mat.T
     for i in range(3):
         for j in range(3):
-            cov[i, j] = cov[i, j] * sigma[i] * sigma[j]
+            cov[i, j] = np.sqrt(cov[i, j] * sigma[i] * sigma[j])
+
+    print("  Covariance matrix:")
+    print(cov)
 
     # Create zoomer and manually set mean and covariance
     zoomer = Zoomer(engine_seed=42)
@@ -346,6 +324,7 @@ def test_zoomer_with_weights():
             weights_col="weights",
             labels=["Unweighted Proposal", "Weighted Proposal", "Direct Prior"],
             smooth=1,
+            bins=50,
         )
         mcp.plot()
         output_dir = Path(__file__).parent / "artifacts/cond_sampling/test_output"
