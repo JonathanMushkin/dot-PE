@@ -49,7 +49,7 @@ from .coherent_processing import (
     CoherentLikelihoodProcessor,
     CoherentExtrinsicSamplesGenerator,
 )
-from .utils import get_event_data, safe_logsumexp
+from .utils import get_event_data, safe_logsumexp, validate_bank_configs
 from .single_detector import SingleDetectorProcessor
 from .sample_processing import IntrinsicSampleProcessor, ExtrinsicSampleProcessor
 
@@ -274,7 +274,8 @@ def collect_int_samples_from_single_detectors(
 
 def run_coherent_inference(
     event_data: EventData,
-    rundir: Path,
+    bank_rundir: Path,
+    top_rundir: Path,
     par_dic_0: Dict,
     bank_folder: Union[str, Path],
     n_int: int,
@@ -289,6 +290,13 @@ def run_coherent_inference(
     """
     Perform the heavy computation phase of coherent inference.
     This function stops after saving prob_samples.feather.
+
+    Parameters
+    ----------
+    bank_rundir : Path
+        Directory for bank-specific outputs (CLP, prob_samples, cache).
+    top_rundir : Path
+        Top-level rundir where shared extrinsic samples are stored.
 
     Returns
     -------
@@ -327,18 +335,20 @@ def run_coherent_inference(
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
     )
 
-    # Load extrinsic samples to get the actual number
-    extrinsic_samples = pd.read_feather(rundir / "extrinsic_samples.feather")
+    # Load extrinsic samples from top-level rundir (shared across all banks)
+    extrinsic_samples = pd.read_feather(top_rundir / "extrinsic_samples.feather")
 
     i_blocks = inds_to_blocks(inds, blocksize)
     e_blocks = inds_to_blocks(np.arange(n_ext), blocksize)
-    clp.load_extrinsic_samples_data(rundir)
-    clp.to_json(rundir, overwrite=True)
+    # Load extrinsic samples data from top-level rundir (shared)
+    clp.load_extrinsic_samples_data(top_rundir)
+    # Save CLP to bank-specific rundir
+    clp.to_json(bank_rundir, overwrite=True)
     # perform the run
     print(f"Creating {len(i_blocks)} x {len(e_blocks)} likelihood blocks...")
 
     _ = clp.create_likelihood_blocks(
-        tempdir=rundir,
+        tempdir=bank_rundir,
         i_blocks=i_blocks,
         e_blocks=e_blocks,
         response_dpe=clp.full_response_dpe,
@@ -346,10 +356,10 @@ def run_coherent_inference(
     )
 
     clp.prob_samples["weights"] = exp_normalize(clp.prob_samples["ln_posterior"].values)
-    clp.prob_samples.to_feather(rundir / "prob_samples.feather")
+    clp.prob_samples.to_feather(bank_rundir / "prob_samples.feather")
 
     # Save the IntrinsicSampleProcessor cache for post-processing
-    cache_path = rundir / "intrinsic_sample_processor_cache.json"
+    cache_path = bank_rundir / "intrinsic_sample_processor_cache.json"
     cache_dict = {
         int(k): float(v)
         for k, v in clp.intrinsic_sample_processor.cached_dt_linfree_relative.items()
@@ -380,11 +390,11 @@ def run_coherent_inference(
 
 
 def standardize_samples(
-    cached_dt_linfree_relative: Union[dict, str, Path],
+    cached_dt_linfree_relative: Union[dict, str, Path, Dict[str, dict]],
     lookup_table: LookupTable,
     pr: Prior,
     prob_samples: pd.DataFrame,
-    intrinsic_samples: Union[pd.DataFrame, str, Path],
+    intrinsic_samples: Union[pd.DataFrame, str, Path, Dict[str, pd.DataFrame]],
     extrinsic_samples: Union[pd.DataFrame, str, Path],
     n_phi: int,
     tgps: float,
@@ -394,87 +404,103 @@ def standardize_samples(
 
     Parameters
     ----------
-    cached_dt_linfree_relative : dict or str or Path
-        Cached relative timeshifts from the compute phase. Can be a dict
-        or a path to a JSON file.
+    cached_dt_linfree_relative : Dict[str, dict]
+        Cached relative timeshifts from the compute phase, mapping bank_id to cache dict.
     lookup_table : LookupTable
         LookupTable object, for distance marginalization.
     pr : Prior
         Prior object.
     prob_samples : DataFrame
-        Samples with indices columns `i`, `e` and `o` and probabilistic
-        information.
-    intrinsic_samples : DataFrame or str or Path
-        Intrinsic samples. Can be a DataFrame or a path to a feather
-        file.
+        Samples with indices columns `i`, `e` and `o`, probabilistic information,
+        and `bank_id` column.
+    intrinsic_samples : Dict[str, pd.DataFrame]
+        Intrinsic samples, mapping bank_id to DataFrame.
     extrinsic_samples : DataFrame or str or Path
-        Extrinsic samples. Can be a DataFrame or a path to a feather
-        file.
+        Extrinsic samples. Can be a DataFrame or a path to a feather file.
     n_phi : int
         Number of phi_ref samples.
     tgps : float
         GPS time of event.
     """
+    if "bank_id" not in prob_samples.columns:
+        raise ValueError("prob_samples must have 'bank_id' column")
 
-    # Load intrinsic samples from file if needed
-    if isinstance(intrinsic_samples, (str, Path)):
-        intrinsic_samples = pd.read_feather(intrinsic_samples)
+    if not isinstance(intrinsic_samples, dict) or not isinstance(
+        cached_dt_linfree_relative, dict
+    ):
+        raise ValueError(
+            "intrinsic_samples and cached_dt_linfree_relative "
+            "must be dicts mapping bank_id to values"
+        )
 
     # Load extrinsic samples from file if needed
     if isinstance(extrinsic_samples, (str, Path)):
         extrinsic_samples = pd.read_feather(extrinsic_samples)
 
-    combined_samples = pd.concat(
-        [
-            intrinsic_samples.iloc[prob_samples["i"].values].reset_index(drop=True),
-            extrinsic_samples.iloc[prob_samples["e"].values].reset_index(drop=True),
-        ],
-        axis=1,
-    )
+    # Process each bank group separately
+    combined_samples_list = []
+    for bank_id, group in prob_samples.groupby("bank_id"):
+        # Get intrinsic samples for this bank
+        bank_intrinsic = intrinsic_samples[bank_id]
+        bank_cache = cached_dt_linfree_relative[bank_id]
 
-    combined_samples.drop(
-        columns=["weights", "log_prior_weights", "original_index"],
-        inplace=True,
-        errors="ignore",  # Only drop columns that exist
-    )
+        # Combine intrinsic and extrinsic samples for this group
+        group_combined = pd.concat(
+            [
+                bank_intrinsic.iloc[group["i"].values].reset_index(drop=True),
+                extrinsic_samples.iloc[group["e"].values].reset_index(drop=True),
+            ],
+            axis=1,
+        )
 
-    combined_samples = pd.concat([combined_samples, prob_samples], axis=1)
+        # Drop unwanted columns
+        group_combined.drop(
+            columns=["weights", "log_prior_weights", "original_index"],
+            inplace=True,
+            errors="ignore",  # Only drop columns that exist
+        )
 
-    combined_samples["phi"] = np.linspace(0, 2 * np.pi, n_phi, endpoint=False)[
-        combined_samples["o"].values
-    ]
+        # Add prob_samples columns
+        group_combined = pd.concat(
+            [group_combined, group.reset_index(drop=True)], axis=1
+        )
 
-    # Apply changes for linear free timeshifts.
-    # See linear_free_timeshifts.py for details about the convention.
-    # suffix _u represent unique intrinsic indices
-    combined_samples.rename(
-        columns={
-            "t_geocenter": "t_geocenter_linfree",
-            "phi": "phi_ref_linfree",
-        },
-        inplace=True,
-    )
-    # load timeshifts and phaseshifts of the intrinsic samples.
-    # suffix _u represent unique intrinsic indices
-    unique_i = np.unique(prob_samples["i"].values)
-    u_i = np.searchsorted(unique_i, prob_samples["i"].values)
+        # Add phi column
+        group_combined["phi"] = np.linspace(0, 2 * np.pi, n_phi, endpoint=False)[
+            group_combined["o"].values
+        ]
 
-    # Load cached timeshifts from file if needed
-    if isinstance(cached_dt_linfree_relative, (str, Path)):
-        cached_dt_linfree_relative = read_json(cached_dt_linfree_relative)
+        # Apply linear free timeshift renaming
+        group_combined.rename(
+            columns={
+                "t_geocenter": "t_geocenter_linfree",
+                "phi": "phi_ref_linfree",
+            },
+            inplace=True,
+        )
 
-    # Use cached timeshifts directly instead of going through IntrinsicSampleProcessor
-    dt_linfree_u = np.array([cached_dt_linfree_relative[i] for i in unique_i])
-    # Since banks no longer store dphi_linfree, we use zeros
-    dphi_linfree_u = np.zeros_like(dt_linfree_u)
+        # Load timeshifts for this bank
+        unique_i_bank = np.unique(group["i"].values)
+        u_i_bank = np.searchsorted(unique_i_bank, group["i"].values)
 
-    combined_samples["t_geocenter"] = (
-        combined_samples["t_geocenter_linfree"] - dt_linfree_u[u_i]
-    )
+        dt_linfree_u_bank = np.array([bank_cache[i] for i in unique_i_bank])
+        dphi_linfree_u_bank = np.zeros_like(dt_linfree_u_bank)
 
-    combined_samples["phi_ref"] = (
-        combined_samples["phi_ref_linfree"] - dphi_linfree_u[u_i]
-    )
+        group_combined["t_geocenter"] = (
+            group_combined["t_geocenter_linfree"] - dt_linfree_u_bank[u_i_bank]
+        )
+
+        group_combined["phi_ref"] = (
+            group_combined["phi_ref_linfree"] - dphi_linfree_u_bank[u_i_bank]
+        )
+
+        combined_samples_list.append(group_combined)
+
+    # Concatenate all banks in original order
+    combined_samples = pd.concat(combined_samples_list, ignore_index=True)
+    # Reorder to match original prob_samples order
+    combined_samples = combined_samples.reindex(prob_samples.index)
+    combined_samples.reset_index(drop=True, inplace=True)
 
     combined_samples["ra"] = skyloc_angles.lon_to_ra(
         combined_samples["lon"], GreenwichMeanSiderealTime(tgps)
@@ -504,7 +530,11 @@ def standardize_samples(
         combined_samples["d_h_1Mpc"] / combined_samples["d_luminosity"]
         - 0.5 * combined_samples["h_h_1Mpc"] / combined_samples["d_luminosity"] ** 2
     )
-    combined_samples["weights"] = exp_normalize(combined_samples["ln_posterior"].values)
+    # Normalize weights (use existing weights column if present, else recompute)
+    if "weights" not in combined_samples.columns:
+        combined_samples["weights"] = exp_normalize(
+            combined_samples["ln_posterior"].values
+        )
 
     pr.inverse_transform_samples(combined_samples)
 
@@ -531,7 +561,9 @@ def sample_distance_multiprocess(num_cores, lookup_table, dh, hh):
 def postprocess(
     event_data: EventData,
     rundir: Path,
-    bank_folder: Union[str, Path],
+    bank_folder: Union[
+        str, Path, Dict[str, Path], List[Union[str, Path]], Tuple[Union[str, Path], ...]
+    ],
     n_phi: int,
     pr: Prior,
     prob_samples: Union[pd.DataFrame, Path, str] = None,
@@ -550,8 +582,9 @@ def postprocess(
         Event data.
     rundir : Path
         Directory containing the results from the compute phase.
-    bank_folder : Union[str, Path]
-        Path to the bank folder.
+    bank_folder : Union[str, Path, Dict[str, Path], List, Tuple]
+        Path(s) to the bank folder(s). Can be a single path, dict mapping bank_id to path,
+        or list/tuple of paths. Will be normalized to a dict internally.
     n_phi : int
         Number of phi_ref samples.
     pr : Prior
@@ -574,21 +607,31 @@ def postprocess(
     samples : pd.DataFrame
         The standardized samples.
     """
-    bank_folder = Path(bank_folder)
-    bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
+    # Normalize bank_folder to dict format using _parse_bank_folders
+    # This handles str, Path, List, Tuple, or already-dict inputs
+    if isinstance(bank_folder, dict):
+        # Already a dict, use as-is
+        banks = bank_folder
+    else:
+        # Use _parse_bank_folders to normalize to dict format
+        banks = _parse_bank_folders(bank_folder)
 
-    # Load prob_samples
+    # Load prob_samples if needed
     if prob_samples is None:
         prob_samples = pd.read_feather(rundir / "prob_samples.feather")
     elif isinstance(prob_samples, (str, Path)):
         prob_samples = pd.read_feather(prob_samples)
     # If prob_samples is already a DataFrame, use it directly
 
+    # Check if prob_samples has bank_id column (indicates multiple banks)
+    is_multi_bank = "bank_id" in prob_samples.columns
+    if not is_multi_bank:
+        # If bank_id not present, add it based on banks dict
+        prob_samples["bank_id"] = list(banks.keys())[0]
+        is_multi_bank = True
+
     # Load extrinsic samples
     extrinsic_samples = pd.read_feather(rundir / "extrinsic_samples.feather")
-
-    # Load intrinsic samples using the proper method
-    intrinsic_samples = IntrinsicSampleProcessor.load_bank(bank_file_path)
 
     if draw_subset:
         # Calculate effective sample size for subsetting
@@ -618,26 +661,47 @@ def postprocess(
         lookup_table = LookupTable()
     # Otherwise, use the provided lookup_table directly
 
-    # Load the cached timeshifts
-    cache_path = rundir / "intrinsic_sample_processor_cache.json"
-    with open(cache_path, "r") as f:
-        cached_dt_linfree_relative_json = json.load(f)
-    cached_dt_linfree_relative = {
-        int(k): v for k, v in cached_dt_linfree_relative_json.items()
-    }
+    # Load intrinsic samples per bank
+    intrinsic_samples_by_bank = {}
+    for bank_id, bank_path in banks.items():
+        bank_file_path = Path(bank_path) / "intrinsic_sample_bank.feather"
+        intrinsic_samples_by_bank[bank_id] = IntrinsicSampleProcessor.load_bank(
+            bank_file_path
+        )
+
+    # Load cached timeshifts per bank
+    cached_dt_by_bank = {}
+    unique_bank_ids = prob_samples["bank_id"].unique()
+    for bank_id in unique_bank_ids:
+        # Load cache file from banks/<bank_id>/ subdirectory, or rundir if not found there
+        cache_path_multi = (
+            rundir / "banks" / bank_id / "intrinsic_sample_processor_cache.json"
+        )
+        cache_path_single = rundir / "intrinsic_sample_processor_cache.json"
+        if cache_path_multi.exists():
+            cache_path = cache_path_multi
+        elif cache_path_single.exists():
+            cache_path = cache_path_single
+        else:
+            warnings.warn(f"Cache file not found for bank {bank_id}, using empty cache")
+            cached_dt_by_bank[bank_id] = {}
+            continue
+
+        with open(cache_path, "r") as f:
+            cached_dt_by_bank[bank_id] = {int(k): v for k, v in json.load(f).items()}
 
     samples = standardize_samples(
-        cached_dt_linfree_relative,
+        cached_dt_by_bank,
         lookup_table,
         pr,
         prob_samples,
-        intrinsic_samples,
+        intrinsic_samples_by_bank,
         extrinsic_samples,
         n_phi,
         event_data.tgps,
     )
 
-    if draw_subset:  # could be more elegant. But it is not. JM 10/3/2025
+    if draw_subset:
         samples["weights"] = 1.0
     print(
         "Standardizing samples done in "
@@ -647,9 +711,42 @@ def postprocess(
     return samples
 
 
+def _parse_bank_folders(
+    bank_folder: Union[str, Path, List[Union[str, Path]], Tuple[Union[str, Path], ...]],
+) -> Dict[str, Path]:
+    """
+    Parse bank_folder input into a dict mapping bank_id to bank_path.
+
+    Accepts:
+    - Single path (str or Path): treated as one bank
+    - List/tuple of paths: multiple banks
+    - Comma-separated string: multiple banks
+
+    Returns:
+    - Dict[str, Path] mapping bank_id (e.g., "bank_0", "bank_1", ...) to bank_path
+    """
+    if isinstance(bank_folder, str) and "," in bank_folder:
+        bank_paths = [Path(p.strip()) for p in bank_folder.split(",")]
+    elif isinstance(bank_folder, (list, tuple)):
+        bank_paths = [Path(p) for p in bank_folder]
+    else:
+        bank_paths = [Path(bank_folder)]
+
+    # Convert to Path and assign sequential IDs
+    banks = {}
+    for i, bank_path in enumerate(bank_paths):
+        bank_path = Path(bank_path)
+        if not bank_path.exists():
+            raise ValueError(f"Bank folder does not exist: {bank_path}")
+        bank_id = f"bank_{i}"
+        banks[bank_id] = bank_path
+
+    return banks
+
+
 def run(
     event: Union[str, Path, EventData],
-    bank_folder: Union[str, Path],
+    bank_folder: Union[str, Path, List[Union[str, Path]], Tuple[Union[str, Path], ...]],
     n_int: int,
     n_ext: int,
     n_phi: int,
@@ -675,8 +772,18 @@ def run(
     coherent_posterior_kwargs: Dict = {},
 ) -> Path:
     """Run the magic integral for a given event and bank folder."""
-    bank_folder = Path(bank_folder)
     print("Setting paths & loading configurations...")
+
+    # Parse bank folders into dict mapping bank_id to bank_path
+    banks = _parse_bank_folders(bank_folder)
+
+    # Validate bank configs
+    bank_paths = list(banks.values())
+    bank_config = validate_bank_configs(bank_paths)
+
+    # Use first bank folder for initial setup
+    first_bank_id = list(banks.keys())[0]
+    bank_folder = banks[first_bank_id]
     if event_dir is not None and rundir is not None:
         warnings.warn(
             "Both 'event_dir' and 'rundir' are provided. 'event_dir' will be ignored."
@@ -728,15 +835,14 @@ def run(
         )
     # set paths and basic configs
     event_data = get_event_data(event)
-    bank_config_path = Path(bank_folder) / "bank_config.json"
     if isinstance(inds_path, str):
         inds_path = Path(inds_path)
-    with open(bank_config_path, "r", encoding="utf-8") as fp:
-        bank_config = json.load(fp)
-        fbin = np.array(bank_config["fbin"])
-        approximant = bank_config["approximant"]
-        f_ref = bank_config["f_ref"]
-        m_arr = np.array(bank_config["m_arr"])
+
+    # Use validated bank config
+    fbin = np.array(bank_config["fbin"])
+    approximant = bank_config["approximant"]
+    f_ref = bank_config["f_ref"]
+    m_arr = np.array(bank_config["m_arr"])
 
     print("Creating COGWHEEL objects...")
     coherent_posterior_kwargs = (
@@ -770,75 +876,43 @@ def run(
 
     coherent_posterior.to_json(dirname=rundir)
 
-    if load_inds and inds_path is not None and Path(inds_path).exists():
-        print("Loading intrinsic samples indices")
-        if inds_path.suffix == ".npz":
-            data = np.load(inds_path)
-            inds = data["inds"]
-            incoherent_lnlikes = data["incoherent_lnlikes"]
-        else:
-            # Backward compatibility for old .npy format
-            inds = np.load(inds_path)
-            incoherent_lnlikes = None
-        np.savez(
-            rundir / "intrinsic_samples.npz",
-            inds=inds,
-            incoherent_lnlikes=incoherent_lnlikes,
-        )
-    else:
-        print("Collecting intrinsic samples from individual detectors...")
-        # Use n_phi_incoherent for single detector evaluation (thresholding)
-        n_phi_incoherent = n_phi_incoherent if n_phi_incoherent is not None else n_phi
-        inds, lnlikes_di, incoherent_lnlikes = (
-            collect_int_samples_from_single_detectors(
-                event_data=event_data,
-                par_dic_0=par_dic_0,
-                single_detector_blocksize=single_detector_blocksize,
-                n_int=n_int,
-                n_phi=n_phi_incoherent,
-                n_t=n_t,
-                bank_folder=bank_folder,
-                i_int_start=i_int_start,
-                max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
-                preselected_indices=preselected_indices,
-            )
-        )
-        np.savez(
-            rundir / "intrinsic_samples.npz",
-            inds=inds,
-            lnlikes_di=lnlikes_di,
-            incoherent_lnlikes=incoherent_lnlikes,
-        )
-    print(f"{len(inds)} intrinsic samples selected.")
-
     pr = coherent_posterior.prior
 
     coherent_score_kwargs = {
         "min_n_effective_prior": coherent_score_min_n_effective_prior
     }
 
+    print(f"Running inference with {len(banks)} bank(s)")
+
+    # Generate extrinsic samples once globally (before bank loop)
     if extrinsic_samples is not None:
         print("Loading extrinsic samples from file...")
-        # Load extrinsic samples from file
         if isinstance(extrinsic_samples, (str, Path)):
-            extrinsic_samples = pd.read_feather(extrinsic_samples)
-            if "log_prior_weights" not in extrinsic_samples.columns:
-                if "weights" in extrinsic_samples.columns:
-                    extrinsic_samples["log_prior_weights"] = np.log(
-                        extrinsic_samples["weights"]
+            extrinsic_samples_df = pd.read_feather(extrinsic_samples)
+            if "log_prior_weights" not in extrinsic_samples_df.columns:
+                if "weights" in extrinsic_samples_df.columns:
+                    extrinsic_samples_df["log_prior_weights"] = np.log(
+                        extrinsic_samples_df["weights"]
                     )
                 else:
-                    extrinsic_samples["log_prior_weights"] = 0.0  #
-
-            extrinsic_samples.to_feather(rundir / "extrinsic_samples.feather")
+                    extrinsic_samples_df["log_prior_weights"] = 0.0
+            extrinsic_samples_df.to_feather(rundir / "extrinsic_samples.feather")
     else:
-        # Generate extrinsic samples as usual
-        print("Generating extrinsic samples...")
-        waveform_dir = bank_folder / "waveforms"
-        bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
+        # Generate extrinsic samples using first bank (for initialization)
+        # The actual intrinsic indices used will be determined per-bank
+        print("Generating extrinsic samples (global)...")
+        first_bank_path = list(banks.values())[0]
+        waveform_dir = first_bank_path / "waveforms"
+        bank_file_path = first_bank_path / "intrinsic_sample_bank.feather"
         wfg = WaveformGenerator.from_event_data(event_data, approximant)
         marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
-            event_data, wfg, par_dic_0, fbin, coherent_score=coherent_score_kwargs
+            event_data,
+            wfg,
+            par_dic_0,
+            fbin,
+            coherent_score={
+                "min_n_effective_prior": coherent_score_min_n_effective_prior
+            },
         )
 
         ext_sample_generator = CoherentExtrinsicSamplesGenerator(
@@ -848,54 +922,186 @@ def run(
             seed=seed,
         )
 
+        # Generate extrinsic samples using first bank's intrinsic samples
+        # These will be shared across all banks
+        # We use a representative set of indices from the first bank
+        first_bank_file = first_bank_path / "intrinsic_sample_bank.feather"
+        # Load first bank to get representative indices
+        first_bank_df = pd.read_feather(first_bank_file)
+        # Use first n_int samples from first bank as representative
+        representative_inds = np.arange(min(n_int, len(first_bank_df)))
+
         get_marg_info_kwargs = {
             "save_marg_info": True,
             "save_marg_info_dir": rundir,
-            "n_combine": 16,  # default value
-            "indices": inds,
-            "single_marg_info_min_n_effective_prior": 32,  # default value
+            "n_combine": 16,
+            "indices": representative_inds,
+            "single_marg_info_min_n_effective_prior": 32,
         }
 
-        (extrinsic_samples, response_dpe, timeshift_dbe) = (
+        (extrinsic_samples_df, response_dpe, timeshift_dbe) = (
             ext_sample_generator.draw_extrinsic_samples_from_indices(
                 n_ext, get_marg_info_kwargs=get_marg_info_kwargs
             )
         )
 
-        # save results to disk
-        extrinsic_samples.to_feather(rundir / "extrinsic_samples.feather")
+        extrinsic_samples_df.to_feather(rundir / "extrinsic_samples.feather")
         np.save(arr=response_dpe, file=rundir / "response_dpe.npy")
         np.save(arr=timeshift_dbe, file=rundir / "timeshift_dbe.npy")
 
-    (
-        ln_evidence,
-        ln_evidence_discarded,
-        n_effective,
-        n_effective_i,
-        n_effective_e,
-        n_distance_marginalizations,
-    ) = run_coherent_inference(
-        event_data=event_data,
-        rundir=rundir,
-        par_dic_0=par_dic_0,
-        bank_folder=bank_folder,
-        n_int=n_int,
-        inds=inds,
-        n_ext=n_ext,
-        n_phi=n_phi,
-        m_arr=m_arr,
-        blocksize=blocksize,
-        size_limit=size_limit,
-        max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
+    # Create banks subdirectory
+    banks_dir = rundir / "banks"
+    banks_dir.mkdir(exist_ok=True)
+
+    # Store per-bank results
+    bank_results = []
+    all_prob_samples = []
+
+    # Handle preselected_indices: convert to dict if needed
+    preselected_indices_dict = None
+    if preselected_indices is not None:
+        if isinstance(preselected_indices, dict):
+            preselected_indices_dict = preselected_indices
+        else:
+            # If single value provided, apply to all banks (backward compatibility)
+            preselected_indices_dict = {
+                bank_id: preselected_indices for bank_id in banks
+            }
+
+    # Loop over banks
+    for bank_id, bank_path in banks.items():
+        print(f"\nProcessing bank: {bank_id}")
+        bank_rundir = banks_dir / bank_id
+        bank_rundir.mkdir(exist_ok=True)
+
+        # Collect intrinsic samples from single detectors for this bank
+        if load_inds and inds_path is not None and Path(inds_path).exists():
+            print(f"Loading intrinsic samples indices for bank {bank_id}")
+            if Path(inds_path).suffix == ".npz":
+                data = np.load(inds_path)
+                inds = data["inds"]
+                incoherent_lnlikes = data.get("incoherent_lnlikes", None)
+            else:
+                inds = np.load(inds_path)
+                incoherent_lnlikes = None
+            np.savez(
+                bank_rundir / "intrinsic_samples.npz",
+                inds=inds,
+                incoherent_lnlikes=incoherent_lnlikes,
+            )
+        else:
+            print(f"Collecting intrinsic samples for bank {bank_id}...")
+            n_phi_incoherent = (
+                n_phi_incoherent if n_phi_incoherent is not None else n_phi
+            )
+            inds, lnlikes_di, incoherent_lnlikes = (
+                collect_int_samples_from_single_detectors(
+                    event_data=event_data,
+                    par_dic_0=par_dic_0,
+                    single_detector_blocksize=single_detector_blocksize,
+                    n_int=n_int,  # Per-bank
+                    n_phi=n_phi_incoherent,
+                    n_t=n_t,
+                    bank_folder=bank_path,
+                    i_int_start=0,  # Each bank starts at 0
+                    max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
+                    preselected_indices=preselected_indices_dict.get(bank_id)
+                    if preselected_indices_dict
+                    else None,
+                )
+            )
+            np.savez(
+                bank_rundir / "intrinsic_samples.npz",
+                inds=inds,
+                lnlikes_di=lnlikes_di,
+                incoherent_lnlikes=incoherent_lnlikes,
+            )
+        print(f"Bank {bank_id}: {len(inds)} intrinsic samples selected.")
+
+        # Run coherent inference for this bank
+        (
+            lnZ_k,
+            lnZ_discarded_k,
+            n_effective_k,
+            n_effective_i_k,
+            n_effective_e_k,
+            n_distance_marginalizations_k,
+        ) = run_coherent_inference(
+            event_data=event_data,
+            bank_rundir=bank_rundir,
+            top_rundir=rundir,
+            par_dic_0=par_dic_0,
+            bank_folder=bank_path,
+            n_int=n_int,  # Original normalization
+            inds=inds,
+            n_ext=n_ext,
+            n_phi=n_phi,
+            m_arr=m_arr,
+            blocksize=blocksize,
+            size_limit=size_limit,
+            max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
+        )
+
+        # Load prob_samples and add bank_id
+        prob_samples_k = pd.read_feather(bank_rundir / "prob_samples.feather")
+        prob_samples_k["bank_id"] = bank_id
+
+        # Store results
+        bank_results.append(
+            {
+                "bank_id": bank_id,
+                "lnZ_k": lnZ_k,
+                "lnZ_discarded_k": lnZ_discarded_k,
+                "N_k": n_int,  # Original intrinsic normalization
+                "n_effective_k": n_effective_k,
+                "n_effective_i_k": n_effective_i_k,
+                "n_effective_e_k": n_effective_e_k,
+                "n_distance_marginalizations_k": n_distance_marginalizations_k,
+                "n_inds_used": len(inds),
+            }
+        )
+        all_prob_samples.append(prob_samples_k)
+
+    # Combine evidences
+    N_total = sum(r["N_k"] for r in bank_results)
+    if N_total <= 0:
+        warnings.warn("Total intrinsic normalization N_total <= 0")
+
+    lnZ_values = [r["lnZ_k"] + np.log(r["N_k"]) for r in bank_results]
+    lnZ_total = safe_logsumexp(lnZ_values) - np.log(N_total)
+
+    lnZ_discarded_values = [
+        r["lnZ_discarded_k"] + np.log(r["N_k"]) for r in bank_results
+    ]
+    lnZ_discarded_total = safe_logsumexp(lnZ_discarded_values) - np.log(N_total)
+
+    # Combine prob_samples across banks
+    print("\nCombining prob_samples across banks...")
+    combined_prob_samples = pd.concat(all_prob_samples, ignore_index=True)
+
+    # Add global weight column
+    for r in bank_results:
+        mask = combined_prob_samples["bank_id"] == r["bank_id"]
+        combined_prob_samples.loc[mask, "ln_weight_global"] = combined_prob_samples.loc[
+            mask, "ln_posterior"
+        ] - np.log(r["N_k"])
+
+    # Normalize globally
+    combined_prob_samples["weights"] = exp_normalize(
+        combined_prob_samples["ln_weight_global"].values
     )
-    print("Saving samples to file...")
-    # Run the post-processing phase
+
+    # Save combined prob_samples
+    combined_prob_samples.to_feather(rundir / "prob_samples.feather")
+
+    # Run post-processing
     samples = postprocess(
         event_data=event_data,
         rundir=rundir,
-        bank_folder=bank_folder,
+        bank_folder=banks,
         n_phi=n_phi,
         pr=pr,
+        prob_samples=combined_prob_samples,
         n_draws=n_draws,
         max_n_draws=10**4,
         draw_subset=draw_subset,
@@ -906,21 +1112,53 @@ def run(
     samples.to_feather(samples_path)
     print(f"Samples saved to:\n {samples_path}")
 
+    # Calculate combined effective sample sizes (same logic for all cases)
+    total_weight = combined_prob_samples["weights"].sum()
+    n_effective_total = 1.0 / (
+        (combined_prob_samples["weights"] ** 2).sum() / total_weight
+    )
+
+    # For intrinsic/extrinsic, use weighted average
+    n_effective_i_total = np.average(
+        [r["n_effective_i_k"] for r in bank_results],
+        weights=[r["N_k"] for r in bank_results],
+    )
+    n_effective_e_total = np.average(
+        [r["n_effective_e_k"] for r in bank_results],
+        weights=[r["N_k"] for r in bank_results],
+    )
+
+    # Create summary dict
     summary_dict = {
-        "n_effective": float(n_effective),
-        "n_effective_i": float(n_effective_i),
-        "n_effective_e": float(n_effective_e),
+        "n_effective": float(n_effective_total),
+        "n_effective_i": float(n_effective_i_total),
+        "n_effective_e": float(n_effective_e_total),
         "bestfit_lnlike_max": float(samples["bestfit_lnlike"].max()),
         "lnl_marginalized_max": float(samples["lnl_marginalized"].max()),
-        "n_i_inds_used": int(len(inds)),
-        "ln_evidence": float(ln_evidence),
-        "ln_evidence_discarded": float(ln_evidence_discarded),
-        "n_distance_marginalizations": int(n_distance_marginalizations),
+        "n_i_inds_used": int(sum(r["n_inds_used"] for r in bank_results)),
+        "ln_evidence": float(lnZ_total),
+        "ln_evidence_discarded": float(lnZ_discarded_total),
+        "n_distance_marginalizations": int(
+            sum(r["n_distance_marginalizations_k"] for r in bank_results)
+        ),
+        "n_banks": len(banks),
+        "per_bank_results": {
+            r["bank_id"]: {
+                "ln_evidence": float(r["lnZ_k"]),
+                "n_effective": float(r["n_effective_k"]),
+                "n_inds_used": int(r["n_inds_used"]),
+                "N_k": int(r["N_k"]),
+            }
+            for r in bank_results
+        },
     }
 
-    # for injections, add the likelihood to the summary dict
+    # For injections
     if getattr(event_data, "injection", None) is not None:
-        clp = read_json(rundir / "CoherentLikelihoodProcessor.json")
+        # Load first bank's CLP for injection comparison
+        first_bank_id = list(banks.keys())[0]
+        clp_path = banks_dir / first_bank_id / "CoherentLikelihoodProcessor.json"
+        clp = read_json(clp_path)
         inj_par_dic = event_data.injection["par_dic"]
         bestfit_lnlike, lnl_marginalized = clp.get_bestfit_and_marginalized_lnlike(
             inj_par_dic

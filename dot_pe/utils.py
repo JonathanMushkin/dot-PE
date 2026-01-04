@@ -3,9 +3,10 @@ Utility functions for the sampler_free module.
 """
 
 import gc
+import json
 import logging
 from pathlib import Path
-from typing import List, Union
+from typing import Dict, List, Union
 
 import numpy as np
 import pandas as pd
@@ -243,3 +244,72 @@ def sample_k_from_N(N, k):
         arr[i] = arr[j]
         arr[j] = tmp
     return arr[:k]
+
+
+def validate_bank_configs(bank_paths: List[Path]) -> Dict:
+    """
+    Validate that all bank configs match on critical parameters.
+
+    Parameters
+    ----------
+    bank_paths : List[Path]
+        List of bank folder paths to validate.
+
+    Returns
+    -------
+    Dict
+        Shared bank config dictionary.
+
+    Raises
+    ------
+    ValueError
+        If any critical parameters mismatch across banks.
+    """
+    if len(bank_paths) == 0:
+        raise ValueError("No bank paths provided for validation")
+
+    configs = []
+    for bank_path in bank_paths:
+        config_path = bank_path / "bank_config.json"
+        if not config_path.exists():
+            raise ValueError(f"Bank config not found: {config_path}")
+        with open(config_path, "r", encoding="utf-8") as f:
+            configs.append(json.load(f))
+
+    # Get first config as reference
+    ref_config = configs[0]
+    ref_approximant = ref_config["approximant"]
+    ref_fbin = np.array(ref_config["fbin"])
+    ref_f_ref = ref_config["f_ref"]
+    ref_m_arr = np.array(ref_config["m_arr"])
+
+    # Validate against reference
+    for i, config in enumerate(configs[1:], start=1):
+        errors = []
+
+        if config["approximant"] != ref_approximant:
+            errors.append(
+                f"approximant mismatch: bank {i} has '{config['approximant']}', "
+                f"expected '{ref_approximant}'"
+            )
+
+        if not np.array_equal(np.array(config["fbin"]), ref_fbin):
+            errors.append(
+                f"fbin mismatch: bank {i} has different frequency bins than reference"
+            )
+
+        if config["f_ref"] != ref_f_ref:
+            errors.append(
+                f"f_ref mismatch: bank {i} has {config['f_ref']}, expected {ref_f_ref}"
+            )
+
+        if not np.array_equal(np.array(config["m_arr"]), ref_m_arr):
+            errors.append(
+                f"m_arr mismatch: bank {i} has different m_arr than reference"
+            )
+
+        if errors:
+            error_msg = "Bank config validation failed:\n" + "\n".join(errors)
+            raise ValueError(error_msg)
+
+    return ref_config
