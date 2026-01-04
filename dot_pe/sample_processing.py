@@ -318,7 +318,9 @@ class IntrinsicSampleProcessor:
             self.cached_dt_linfree_relative[int(i)] = float(dt)
 
     @staticmethod
-    def load_bank(sample_bank_path, indices=None):
+    def load_bank(
+        sample_bank_path, indices=None, renormalize_log_prior_weights: bool = False
+    ):
         """
         load intrinsic samples from a file
         """
@@ -332,11 +334,12 @@ class IntrinsicSampleProcessor:
             f_ref = config.DEFAULT_F_REF
 
         bank = pd.read_feather(sample_bank_path)
-        bank["log_prior_weights"] = (
-            bank["log_prior_weights"].values
-            - safe_logsumexp(bank["log_prior_weights"].values)
-            + np.log(bank.shape[0])
-        )
+        if renormalize_log_prior_weights:
+            bank["log_prior_weights"] = (
+                bank["log_prior_weights"].values
+                - safe_logsumexp(bank["log_prior_weights"].values)
+                + np.log(bank.shape[0])
+            )
         if indices is None:
             indices = range(bank.shape[0])
         if max(indices) > bank.shape[0]:

@@ -6,7 +6,9 @@ import gc
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Union
+from typing import Dict, List, Tuple, Union
+
+from numpy.typing import NDArray
 
 import numpy as np
 import pandas as pd
@@ -313,3 +315,46 @@ def validate_bank_configs(bank_paths: List[Path]) -> Dict:
             raise ValueError(error_msg)
 
     return ref_config
+
+
+def parse_bank_folders(
+    bank_folder: Union[str, Path, List[Union[str, Path]], Tuple[Union[str, Path], ...]],
+) -> Dict[str, Path]:
+    """
+    Parse bank_folder input into a dict mapping bank_id to bank_path.
+
+    Accepts:
+    - Single path (str or Path): treated as one bank
+    - List/tuple of paths: multiple banks
+    - Comma-separated string: multiple banks
+
+    Returns:
+    - Dict[str, Path] mapping bank_id (e.g., "bank_0", "bank_1", ...) to bank_path
+    """
+    if isinstance(bank_folder, str) and "," in bank_folder:
+        bank_paths = [Path(p.strip()) for p in bank_folder.split(",")]
+    elif isinstance(bank_folder, (list, tuple)):
+        bank_paths = [Path(p) for p in bank_folder]
+    else:
+        bank_paths = [Path(bank_folder)]
+
+    # Convert to Path and assign sequential IDs
+    banks = {}
+    for i, bank_path in enumerate(bank_paths):
+        bank_path = Path(bank_path)
+        if not bank_path.exists():
+            raise ValueError(f"Bank folder does not exist: {bank_path}")
+        bank_id = f"bank_{i}"
+        banks[bank_id] = bank_path
+
+    return banks
+
+
+def inds_to_blocks(
+    indices: NDArray[np.int_], block_size: int
+) -> List[NDArray[np.int_]]:
+    """Split the indices into blocks of size blocksize (or less)."""
+    return [
+        indices[i * block_size : (i + 1) * block_size]
+        for i in range(-(len(indices) // -block_size))
+    ]

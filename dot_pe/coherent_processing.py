@@ -64,6 +64,8 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         dir_permissions=DIR_PERMISSIONS,
         file_permissions=FILE_PERMISSIONS,
         full_intrinsic_indices=None,
+        renormalize_log_prior_weights_i: bool = False,
+        intrinsic_logw_lookup=None,
         n_samples_discarded: int = 0,
         logsumexp_discarded_ln_posterior: float = -np.inf,
         logsumsqrexp_discarded_ln_posterior: float = -np.inf,
@@ -138,7 +140,9 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
 
         # this is the raw intrinsic sample bank, used to draw samples
         self.intrinsic_sample_bank = self.intrinsic_sample_processor.load_bank(
-            intrinsic_bank_file, full_intrinsic_indices
+            intrinsic_bank_file,
+            full_intrinsic_indices,
+            renormalize_log_prior_weights=renormalize_log_prior_weights_i,
         )
 
         if full_intrinsic_indices is None:
@@ -153,12 +157,26 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         self.full_log_prior_weights_i = self.intrinsic_sample_bank[
             "log_prior_weights"
         ].values
+        if renormalize_log_prior_weights_i:
+            self.full_log_prior_weights_i = (
+                self.full_log_prior_weights_i
+                - safe_logsumexp(self.full_log_prior_weights_i)
+                + np.log(len(self.full_log_prior_weights_i))
+            )  # mean weight = 1
 
-        self.full_log_prior_weights_i = (
-            self.full_log_prior_weights_i
-            - safe_logsumexp(self.full_log_prior_weights_i)
-            + np.log(len(self.full_log_prior_weights_i))
-        )  # mean weight = 1
+        self._intrinsic_logw_sorted_inds = None
+        self._intrinsic_logw_sorted_vals = None
+        if intrinsic_logw_lookup is not None:
+            inds, logw = intrinsic_logw_lookup
+            inds = np.asarray(inds, dtype=int)
+            logw = np.asarray(logw, dtype=float)
+            if inds.shape != logw.shape:
+                raise ValueError(
+                    "intrinsic_logw_lookup inds and logw must have same shape"
+                )
+            order = np.argsort(inds)
+            self._intrinsic_logw_sorted_inds = inds[order]
+            self._intrinsic_logw_sorted_vals = logw[order]
 
         self.full_log_prior_weights_e = None
         self.full_response_dpe = None
@@ -211,6 +229,17 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         self.initialize_prob_samples()
         self._next_block = None
         self.setup_logger()
+
+    def _get_intrinsic_logw(self, abs_i):
+        if self._intrinsic_logw_sorted_inds is None:
+            return self.full_log_prior_weights_i[abs_i]
+        abs_i = np.asarray(abs_i, dtype=int)
+        pos = np.searchsorted(self._intrinsic_logw_sorted_inds, abs_i)
+        if np.any(pos < 0) or np.any(pos >= self._intrinsic_logw_sorted_inds.size):
+            raise ValueError("Intrinsic index out of range of intrinsic_logw_lookup")
+        if np.any(self._intrinsic_logw_sorted_inds[pos] != abs_i):
+            raise ValueError("Intrinsic index missing from intrinsic_logw_lookup")
+        return self._intrinsic_logw_sorted_vals[pos]
 
     def get_init_dict(self):
         """Return init dict.
@@ -587,7 +616,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
 
         ln_posterior = (
             block["dist_marg_lnlike_k"][discarded_inds]
-            + self.full_log_prior_weights_i[discarded_i]
+            + self._get_intrinsic_logw(discarded_i)
             + self.full_log_prior_weights_e[discarded_e]
         )
 
@@ -667,7 +696,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
             new_inds_e = block["bank_e_inds_k"][block_samples_accepted_inds]
             new_ln_posterior = (
                 new_lnl_marginalized
-                + self.full_log_prior_weights_i[new_inds_i]
+                + self._get_intrinsic_logw(new_inds_i)
                 + self.full_log_prior_weights_e[new_inds_e]
             )
 
