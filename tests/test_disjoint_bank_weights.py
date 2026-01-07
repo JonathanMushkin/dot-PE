@@ -39,6 +39,7 @@ N_EXT = 2**10
 N_PHI = 32
 N_T = 64
 BLOCKSIZE = 2**12
+N_POOL = 6
 
 
 def create_injection_event(tmp_path, seed=20223001):
@@ -103,7 +104,7 @@ def create_bank(
     seed=777,
     approximant="IMRPhenomXPHM",
     generate_waveforms=True,
-    n_pool=1,
+    n_pool=N_POOL,
 ):
     """Create a single bank with samples and waveforms."""
     bank_dir = tmp_path / bank_dir_name
@@ -198,7 +199,7 @@ def test_multi_bank_inference_3_banks(tmp_path):
         bank_size=single_bank_size,
         seed=777,
         generate_waveforms=True,
-        n_pool=1,
+        n_pool=N_POOL,
     )
 
     n_ext = N_EXT
@@ -313,7 +314,7 @@ def test_multi_bank_inference_3_banks(tmp_path):
             bank_size=bank_size,
             seed=888 + i,
             generate_waveforms=True,
-            n_pool=1,  # Serial for tests
+            n_pool=N_POOL,
         )
         bank_dirs.append(bank_dir)
 
