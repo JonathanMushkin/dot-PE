@@ -9,9 +9,11 @@ calculations.
 import itertools
 import json
 from pathlib import Path
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 from scipy.integrate import cumulative_trapezoid, trapezoid
 from scipy.stats.qmc import Halton
 
@@ -28,18 +30,50 @@ from .utils import safe_logsumexp
 
 class ExtrinsicSampleProcessor:
     """
-    A class to process extirnsic samples and creates the
-    relevant high-dimensional arrays to pass to a LikelihoodCalculator class.
+    Process extrinsic samples and create high-dimensional arrays for likelihood calculations.
+
+    This class handles detector responses, time shifts, and sky location sampling
+    for extrinsic parameters in gravitational wave data analysis.
     """
 
-    def __init__(self, detector_names):
-        self.n_polarizations = 2
+    def __init__(self, detector_names: List[str]) -> None:
+        """
+        Initialize the extrinsic sample processor.
+
+        Parameters
+        ----------
+        detector_names
+            Detector names (e.g., ['H', 'L', 'V']).
+        """
+        self.n_polarizations: int = 2
         self.lal_dic = create_lal_dict()
-        self.detector_names = detector_names
+        self.detector_names: List[str] = detector_names
 
     @staticmethod
-    def compute_detector_responses(detector_names, lat, lon, psi):
-        """Compute detector response at specific lat, lon and psi"""
+    def compute_detector_responses(
+        detector_names: List[str],
+        lat: Union[float, NDArray[np.float64]],
+        lon: Union[float, NDArray[np.float64]],
+        psi: Union[float, NDArray[np.float64]],
+    ) -> NDArray[np.complex128]:
+        """
+        Compute detector response at specific latitude, longitude, and polarization angle.
+
+        Parameters
+        ----------
+        detector_names
+            Detector names.
+        lat
+            Latitude in radians.
+        lon
+            Longitude in radians.
+        psi
+            Polarization angle in radians.
+
+        Returns
+        -------
+        Detector response array with shape (n_detectors, n_samples, 2).
+        """
         lat, lon, psi = np.atleast_1d(lat, lon, psi)
         fplus_fcross_0 = get_fplus_fcross_0(detector_names, lat, lon)  # edP
         psi_rot = np.array(
@@ -52,17 +86,27 @@ class ExtrinsicSampleProcessor:
             "edP, pPe-> edp", fplus_fcross_0, psi_rot, optimize=True
         )  # edp
 
-    def compute_extrinsic_timeshift(self, detector_names, extrinsic_samples, f):
+    def compute_extrinsic_timeshift(
+        self,
+        detector_names: List[str],
+        extrinsic_samples: pd.DataFrame,
+        f: NDArray[np.float64],
+    ) -> NDArray[np.complex128]:
         """
-        Compute extrinsic time shift for each detector, related to
-        the relative position of the source and the detectors.
-        input:
-        detector_names: list of detector names
-        extrinsic_samples: pandas dataframe with extrinsic parameters
-        f: array of frequencies
-        output:
-        extrinsic_timeshift_exp: timeshift exponentials for each
-                                 detector
+        Compute extrinsic time shift for each detector.
+
+        Parameters
+        ----------
+        detector_names
+            Detector names.
+        extrinsic_samples
+            DataFrame with extrinsic parameters (must contain 'lat', 'lon', 't_geocenter').
+        f
+            Frequency array.
+
+        Returns
+        -------
+        Time shift exponentials with shape (n_samples, n_detectors, n_frequencies).
         """
         # time difference related to the relative positions of the source
         # and the detectors (shape ed)
@@ -83,10 +127,27 @@ class ExtrinsicSampleProcessor:
         )  # edb
         return extrinsic_timeshift_exp
 
-    def get_components(self, extrinsic_samples, fbin, tcoarse):
+    def get_components(
+        self,
+        extrinsic_samples: pd.DataFrame,
+        fbin: NDArray[np.float64],
+        tcoarse: float,
+    ) -> Tuple[NDArray[np.complex128], NDArray[np.complex128]]:
         """
-        Compute the detector responses and the extrinsic time shifts
-        for the extrinsic samples.
+        Compute detector responses and extrinsic time shifts for extrinsic samples.
+
+        Parameters
+        ----------
+        extrinsic_samples
+            DataFrame with extrinsic parameters (must contain 'lat', 'lon', 'psi').
+        fbin
+            Frequency bins.
+        tcoarse
+            Coarse time shift.
+
+        Returns
+        -------
+        Tuple of (response_dpe, timeshifts_dbe) arrays.
         """
         response_dpe = np.moveaxis(
             self.compute_detector_responses(
@@ -110,32 +171,36 @@ class ExtrinsicSampleProcessor:
         return response_dpe, timeshifts_dbe
 
     def get_lon_lat_grid_and_distributions(
-        self, det_name, lon_grid_size=2**10, lat_grid_size=2**10
-    ):
+        self, det_name: str, lon_grid_size: int = 2**10, lat_grid_size: int = 2**10
+    ) -> Tuple[
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        float,
+    ]:
         """
-        Generate points on (x,y) grid which maps to (lon, lat) points,
-        and evaluate p.d.f. and c.d.fs for drawing points.
+        Generate points on (x,y) grid which maps to (lon, lat) points.
 
-        Paremeters
+        Evaluates PDF and CDF for drawing points from detector response pattern.
+
+        Parameters
         ----------
-        det_name : str,
-            detector name, 'H','L' or 'V'
-        lon_grid_size : int,
-            number of grid points in longitude axis. Default 2**13
-        lat_grid_size : int,
-            number of grid points in latitude axis. Default 2**13.
+        det_name
+            Detector name, 'H', 'L', or 'V'.
+        lon_grid_size
+            Number of grid points in longitude axis.
+        lat_grid_size
+            Number of grid points in latitude axis.
 
-        Return
-        ------
-        x : numpy.ndarray,
-            grid points of uniform points mapped to lon.
-        y : numpy.ndarray
-            grid points of uniform points mapped to lat.
-        cdf_x : numpy.ndarray
-            CDF evaluated at x grid points.
-        pdf_y_given_x numpy.ndarray (lon_grid_size, lat_grid_size)
-            PDF of y given x, evaluated on grid points.
-
+        Returns
+        -------
+        Tuple of (x, y, cdf_x, pdf_y_given_x, normalization).
+            - x: Grid points mapped to longitude.
+            - y: Grid points mapped to latitude.
+            - cdf_x: CDF evaluated at x grid points.
+            - pdf_y_given_x: PDF of y given x, shape (lon_grid_size, lat_grid_size).
+            - normalization: Normalization constant.
         """
 
         x = np.linspace(0, 1, lon_grid_size, endpoint=False)  # -> lon
@@ -167,26 +232,33 @@ class ExtrinsicSampleProcessor:
 
         return x, y, cdf_x, pdf_y_given_x, normalization
 
-    def uniform_samples_to_lon_lat_psi(self, u, x, y, cdf_x, pdf_y_given_x):
+    def uniform_samples_to_lon_lat_psi(
+        self,
+        u: NDArray[np.float64],
+        x: NDArray[np.float64],
+        y: NDArray[np.float64],
+        cdf_x: NDArray[np.float64],
+        pdf_y_given_x: NDArray[np.float64],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
         """
-        Draw samples using (random) numbers u.
+        Map uniform random numbers to longitude, latitude, and polarization angle.
+
         Parameters
         ----------
-        u - numpy.ndarray, (2, n_samples)
-            numbers from the (0,1) interval to be mapped to lat and lon.
-        x - numpy.ndarray, (lon_grid_size,)
-            grid points on the (0,1) interval, mapped to lon.
-        y - numpy.ndarray, (lat_grid_size)
-            grid points on the (0,1) interval, mapped to lat.
-        cdf_x - numpy.ndarray, (lon_grid_size,)
-            correspond to the cumulative distribution of x
-        pdf_y_given_x - numpy.ndarray( lon_grid_size, lat_grid_size)
-            distribution fucntion of y given x.
+        u
+            Uniform random numbers, shape (3, n_samples) from (0,1) interval.
+        x
+            Grid points on (0,1) interval mapped to longitude.
+        y
+            Grid points on (0,1) interval mapped to latitude.
+        cdf_x
+            Cumulative distribution of x.
+        pdf_y_given_x
+            PDF of y given x.
 
-        Return
-        ------
-        lon, lat, psi - numpy.ndarrays, (n_samples, ) each.
-
+        Returns
+        -------
+        Tuple of (lon, lat, psi) arrays, each with shape (n_samples,).
         """
         x_inds = np.searchsorted(cdf_x, u[0])
         x_samples = x[x_inds]
@@ -206,39 +278,44 @@ class ExtrinsicSampleProcessor:
         return lon, lat, psi
 
     def create_extrinsic_data_for_detector(
-        self, det_name, n_samples=512, lon_grid_size=2**13, lat_grid_size=2**13
-    ):
+        self,
+        det_name: str,
+        n_samples: int = 512,
+        lon_grid_size: int = 2**13,
+        lat_grid_size: int = 2**13,
+    ) -> Tuple[
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.complex128],
+    ]:
         """
         Draw random samples from the detector response pattern.
-        Sky position (lon, lat) are drawn form the cubed-detector
-        reponse magnitude, (Fp^2 + Fc^2)^(3/2).
-        Polaraization angle is drawn uniformly on (0, pi).
-        Time is not explicitly drawn, but u_t (uniform on (0,1)) are
-        provided. Given a CDF (c) defined on time array (t), samples
-        can be drawn using t_samples = t[np.searchsorted(u_t, c)]
 
-        Parameters:
+        Sky position (lon, lat) are drawn from the cubed detector response magnitude,
+        (Fp^2 + Fc^2)^(3/2). Polarization angle is drawn uniformly on (0, 2π).
+        Time is not explicitly drawn, but u_t (uniform on (0,1)) are provided.
+        Given a CDF (c) defined on time array (t), samples can be drawn using
+        t_samples = t[np.searchsorted(u_t, c)].
+
+        Parameters
         ----------
-        det_name : str,
-            'H','L', or 'V'.
-        n_samples : int,
-            number of samples to draw.
-        log_grid_size : int,
-            number of grid points on the pdf / cdf of longitude (x).
-        lat_grid_size : int,
-            number of grid points on the pdf, cdf of latitude (y).
+        det_name
+            Detector name, 'H', 'L', or 'V'.
+        n_samples
+            Number of samples to draw.
+        lon_grid_size
+            Number of grid points on the PDF/CDF of longitude (x).
+        lat_grid_size
+            Number of grid points on the PDF/CDF of latitude (y).
 
-        Returns:
+        Returns
         -------
-        lon, lat, psi : numpy.ndarrays of floats,
-            samples of longitude, latitude, and polarization angle.
-        u_t: numpy.ndarray of floats,
-            random samples on the unit intervals, to be mapped to time
-            samples given a cumulative distribution.
-        detector_response : numpy.ndarray
-             detector response of detector `det_name` evaluated on
-             `lon`, `lat` and `psi`.
-
+        Tuple of (lon, lat, psi, u_t, detector_response).
+            - lon, lat, psi: Samples of longitude, latitude, and polarization angle.
+            - u_t: Random samples on (0,1) to be mapped to time samples.
+            - detector_response: Detector response evaluated on lon, lat, psi.
         """
 
         (x, y, cdf_x, pdf_y_given_x, normalization) = (
@@ -264,48 +341,93 @@ class ExtrinsicSampleProcessor:
 
 class IntrinsicSampleProcessor:
     """
-    A class to load and process intrinsic samples and creates the
-    relevant high-dimensional arrays to pass to a LikelihoodCalculator class.
+    Load and process intrinsic samples and create high-dimensional arrays for likelihood calculations.
+
+    This class handles loading waveform banks, processing amplitudes and phases,
+    and computing relative-binning weights.
     """
 
-    def __init__(self, like, waveform_dir=None):
+    def __init__(
+        self,
+        like,
+        waveform_dir: Optional[Union[str, Path]] = None,
+        use_cached_dt: bool = True,
+        update_cached_dt: bool = True,
+    ) -> None:
         """
-        Parameters:
+        Initialize the intrinsic sample processor.
 
-        like: Relative-binning likelihood object, serves as a
-        place holder for event_data, waveform_generator, distance
-        marginalization lookup-table, and used to
-        calculate relative-binning weights.
+        Parameters
+        ----------
+        like
+            Relative-binning likelihood object. Serves as a placeholder for event_data,
+            waveform_generator, distance marginalization lookup-table, and is used to
+            calculate relative-binning weights.
+        waveform_dir
+            Directory containing waveform data.
+        use_cached_dt
+            Whether to use cached time shifts.
+        update_cached_dt
+            Whether to update cached time shifts.
         """
 
-        self.n_polarizations = 2
+        self.n_polarizations: int = 2
         self.likelihood = like
-        self.m_arr = like.waveform_generator.m_arr
+        self.m_arr: NDArray[np.float64] = like.waveform_generator.m_arr
         self.m_inds, self.mprime_inds = zip(
             *itertools.combinations_with_replacement(range(len(self.m_arr)), 2)
         )
         self.lal_dic = create_lal_dict()
-        self.waveform_dir = waveform_dir
-        self.cached_dt_linfree_relative = {}
+        self.waveform_dir: Optional[Path] = Path(waveform_dir) if waveform_dir else None
+        self.cached_dt_linfree_relative: dict[int, float] = {}
+        self.use_cached_dt: bool = use_cached_dt
+        self.update_cached_dt: bool = update_cached_dt
 
     @property
-    def n_intrinsic(self):
-        """Number of intrinsic samples."""
+    def n_intrinsic(self) -> int:
+        """
+        Number of intrinsic samples.
+
+        Returns
+        -------
+        Number of intrinsic samples, or 0 if not set.
+        """
         return getattr(getattr(self, "intrinsic_samples", None), "__len__", 0)
 
     @property
-    def n_fbin(self):
-        """Number of relative-binning frequency bins."""
+    def n_fbin(self) -> int:
+        """
+        Number of relative-binning frequency bins.
+
+        Returns
+        -------
+        Number of frequency bins.
+        """
         return len(self.likelihood.fbin)
 
     @property
-    def n_modes(self):
-        """Number of harminic modes l."""
+    def n_modes(self) -> int:
+        """
+        Number of harmonic modes.
+
+        Returns
+        -------
+        Number of harmonic modes.
+        """
         return len(self.likelihood.waveform_generator._harmonic_modes_by_m.values())
 
-    def cache_dt_linfree_relative(self, inds, dts):
+    def cache_dt_linfree_relative(
+        self, inds: NDArray[np.int_], dts: NDArray[np.float64]
+    ) -> None:
         """
-        Store relative-linear-free timeshifts
+        Store relative-linear-free time shifts.
+
+        Parameters
+        ----------
+        inds
+            Sample indices.
+        dts
+            Time shifts to cache.
         """
         is_not_cached = np.logical_not(
             np.isin(
@@ -318,9 +440,26 @@ class IntrinsicSampleProcessor:
             self.cached_dt_linfree_relative[int(i)] = float(dt)
 
     @staticmethod
-    def load_bank(sample_bank_path, indices=None):
+    def load_bank(
+        sample_bank_path: Union[str, Path],
+        indices: Optional[Union[List[int], NDArray[np.int_], range]] = None,
+        renormalize_log_prior_weights: bool = False,
+    ) -> pd.DataFrame:
         """
-        load intrinsic samples from a file
+        Load intrinsic samples from a file.
+
+        Parameters
+        ----------
+        sample_bank_path
+            Path to the intrinsic sample bank file.
+        indices
+            Indices of samples to load. If None, all samples are loaded.
+        renormalize_log_prior_weights
+            Whether to renormalize log prior weights.
+
+        Returns
+        -------
+        DataFrame containing intrinsic samples.
         """
         sample_bank_path = Path(sample_bank_path)
         bank_config_path = sample_bank_path.with_name("bank_config.json")
@@ -332,11 +471,12 @@ class IntrinsicSampleProcessor:
             f_ref = config.DEFAULT_F_REF
 
         bank = pd.read_feather(sample_bank_path)
-        bank["log_prior_weights"] = (
-            bank["log_prior_weights"].values
-            - safe_logsumexp(bank["log_prior_weights"].values)
-            + np.log(bank.shape[0])
-        )
+        if renormalize_log_prior_weights:
+            bank["log_prior_weights"] = (
+                bank["log_prior_weights"].values
+                - safe_logsumexp(bank["log_prior_weights"].values)
+                + np.log(bank.shape[0])
+            )
         if indices is None:
             indices = range(bank.shape[0])
         if max(indices) > bank.shape[0]:
@@ -362,16 +502,28 @@ class IntrinsicSampleProcessor:
         return bank
 
     @staticmethod
-    def _load_waveforms(waveform_dir, indices):
+    def _load_waveforms(
+        waveform_dir: Union[str, Path], indices: NDArray[np.int_]
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
         """
-        load amplitude and phases from directory.
-        Phases are in the linear-free convention.
-        Per mode, the linear-free nad standard phases are related by:
-        Phase(m,f) [linear free] = (Phase(m,f) [standard]
-                                  -2*pi*dt_linear_free*f
-                                  - m*dphi_linear_free)
+        Load amplitude and phases from directory.
+
+        Phases are in the linear-free convention. Per mode, the linear-free and standard
+        phases are related by:
+        Phase(m,f) [linear free] = (Phase(m,f) [standard] - 2*pi*dt_linear_free*f - m*dphi_linear_free)
         t (standard) = t (linear free) - dt_linear_free
         phi (standard) = phi (linear free) + dphi_linear_free
+
+        Parameters
+        ----------
+        waveform_dir
+            Directory containing waveform data.
+        indices
+            Indices of waveforms to load.
+
+        Returns
+        -------
+        Tuple of (amplitudes, phases) arrays.
         """
 
         amplitudes, phases = IntrinsicSampleProcessor._load_amp_and_phase(
@@ -381,11 +533,25 @@ class IntrinsicSampleProcessor:
         return amplitudes, phases
 
     @staticmethod
-    def _load_amp_and_phase(waveform_dir, indices):
+    def _load_amp_and_phase(
+        waveform_dir: Union[str, Path], indices: NDArray[np.int_]
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
         """
         Load amplitudes and phases from directory.
-        h = amplitudes * np.exp(1j * phases)
-        all arrays have shape (n_inds, n_modes, n_pol, n_fbin).
+
+        Waveforms are represented as h = amplitudes * np.exp(1j * phases).
+        All arrays have shape (n_inds, n_modes, n_pol, n_fbin).
+
+        Parameters
+        ----------
+        waveform_dir
+            Directory containing waveform data.
+        indices
+            Indices of waveforms to load.
+
+        Returns
+        -------
+        Tuple of (amplitudes, phases) arrays, each with shape (n_inds, n_modes, n_pol, n_fbin).
         """
         waveform_dir = Path(waveform_dir)
         bank_config_path = waveform_dir.parent / "bank_config.json"
@@ -428,18 +594,32 @@ class IntrinsicSampleProcessor:
 
         return amplitudes, phases
 
-    def load_amp_and_phase(self, waveform_dir, indices):
+    def load_amp_and_phase(
+        self, waveform_dir: Union[str, Path], indices: NDArray[np.int_]
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
         """
-        load relative binning waveform with timeshift correction
-        relative to the reference waveform.
+        Load relative-binning waveforms with time shift correction relative to reference waveform.
+
+        Parameters
+        ----------
+        waveform_dir
+            Directory containing waveform data.
+        indices
+            Indices of waveforms to load.
+
+        Returns
+        -------
+        Tuple of (amplitudes, phases) arrays.
         """
 
         amplitudes, phases = self._load_amp_and_phase(waveform_dir, indices)
         relative_timeshifts = np.zeros(len(indices))
-
-        is_cached = np.isin(
-            indices, np.fromiter(self.cached_dt_linfree_relative, dtype=int)
-        )
+        if self.use_cached_dt:
+            is_cached = np.isin(
+                indices, np.fromiter(self.cached_dt_linfree_relative, dtype=int)
+            )
+        else:
+            is_cached = np.zeros_like(indices, dtype=bool)
         if np.any(is_cached):
             relative_timeshifts[is_cached] = np.array(
                 [self.cached_dt_linfree_relative[i] for i in indices[is_cached]]
@@ -457,14 +637,31 @@ class IntrinsicSampleProcessor:
                 amplitudes[~is_cached], phases[~is_cached]
             )
         )
-
-        self.cache_dt_linfree_relative(indices, relative_timeshifts)
+        if self.update_cached_dt:
+            self.cache_dt_linfree_relative(
+                indices[~is_cached], relative_timeshifts[~is_cached]
+            )
 
         return amplitudes, phases
 
-    def get_relative_linfree_dt_from_waveform(self, amp_impb, phase_impb):
+    def get_relative_linfree_dt_from_waveform(
+        self,
+        amp_impb: NDArray[np.float64],
+        phase_impb: NDArray[np.float64],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
         """
-        Find the relative-binning timeshifts and apply them to the phase.
+        Find the relative-binning time shifts and apply them to the phase.
+
+        Parameters
+        ----------
+        amp_impb
+            Amplitudes with shape (n_inds, n_modes, n_pol, n_fbin).
+        phase_impb
+            Phases with shape (n_inds, n_modes, n_pol, n_fbin).
+
+        Returns
+        -------
+        Tuple of (phase_impb_updated, relative_timeshift_i).
         """
         m2_index = list(self.likelihood.waveform_generator.m_arr).index(2)
         h2plus_fbin = amp_impb[:, m2_index, 0] * np.exp(
@@ -489,11 +686,27 @@ class IntrinsicSampleProcessor:
 
         return phase_impb, relative_timeshift_i
 
-    def load_linfree_dt_and_dphi(self, waveform_dir, indices):
+    def load_linfree_dt_and_dphi(
+        self,
+        waveform_dir: Union[str, Path],
+        indices: Union[int, List[int], NDArray[np.int_]],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
         """
         Load linear-free dt and dphi values.
+
         Since banks no longer store these values, we return zeros.
-        The relative timeshifts are computed on-the-fly when needed.
+        The relative time shifts are computed on-the-fly when needed.
+
+        Parameters
+        ----------
+        waveform_dir
+            Directory containing waveform data.
+        indices
+            Indices of waveforms to process.
+
+        Returns
+        -------
+        Tuple of (dt_linfree, dphi_linfree) arrays.
         """
         if isinstance(indices, int):
             indices = [
@@ -526,10 +739,27 @@ class IntrinsicSampleProcessor:
 
         return dt_linfree - dt_linfree_relative, dphi_linfree
 
-    def load_waveforms(self, waveform_dir, indices):
+    def load_waveforms(
+        self, waveform_dir: Union[str, Path], indices: NDArray[np.int_]
+    ) -> Tuple[
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+    ]:
         """
-        Same as parent method, but applies timeshift relative to the
-        relative-binning reference waveform as well.
+        Load waveforms with time shift correction relative to reference waveform.
+
+        Parameters
+        ----------
+        waveform_dir
+            Directory containing waveform data.
+        indices
+            Indices of waveforms to load.
+
+        Returns
+        -------
+        Tuple of (amplitudes, phases, dt_linfree, dphi_linfree).
         """
         amplitudes, phases = self.load_amp_and_phase(waveform_dir, indices)
 
@@ -545,12 +775,33 @@ class IntrinsicSampleProcessor:
             dphi_linfree,
         )
 
-    def get_hplus_hcross_0(self, par_dic, f=None, force_fslice=False, fslice=None):
+    def get_hplus_hcross_0(
+        self,
+        par_dic: dict,
+        f: Optional[NDArray[np.float64]] = None,
+        force_fslice: bool = False,
+        fslice: Optional[slice] = None,
+    ) -> NDArray[np.complex128]:
         """
-        create (n modes x 2 polarizations x n frequencies) array
-        using d_luminosity = 1Mpc and phi_ref = 0
-        shifted to center for lk.event_data.times, without t_refdet
-        shifts or linear-free time shifts
+        Create (n_modes x 2 polarizations x n_frequencies) array.
+
+        Uses d_luminosity = 1Mpc and phi_ref = 0, shifted to center for event_data.times,
+        without t_refdet shifts or linear-free time shifts.
+
+        Parameters
+        ----------
+        par_dic
+            Parameter dictionary.
+        f
+            Frequency array. If None, uses self.likelihood.fbin.
+        force_fslice
+            Whether to force frequency slice.
+        fslice
+            Frequency slice to use.
+
+        Returns
+        -------
+        Waveform array with shape (n_modes, 2, n_frequencies).
         """
         if f is None:
             f = self.likelihood.fbin
@@ -589,25 +840,23 @@ class IntrinsicSampleProcessor:
         shift = get_shift(f, self.likelihood.event_data.tcoarse)
         return hplus_hcross_0_mpf * shift
 
-    def get_summary(self):
+    def get_summary(
+        self,
+    ) -> Tuple[NDArray[np.complex128], NDArray[np.complex128]]:
         """
-        Get the relative-binning summary statistics for the likelihood
-        calculations. The weights are calculated per detector (d),
-        harmonic mode (m), polarization (p) and frequency bin (b).
-        For <h,h>, the weights are cacluated per mode pair (m and
-        m') and pair polarization pair (p and p'). For the modes we use
-        a single index (m) to represent all unique combinations of
-        modes, and for the polarizations we calcualted the 4 p-p
+        Get the relative-binning summary statistics for likelihood calculations.
+
+        The weights are calculated per detector (d), harmonic mode (m), polarization (p),
+        and frequency bin (b). For <h,h>, the weights are calculated per mode pair (m and m')
+        and polarization pair (p and p'). For the modes we use a single index (m) to represent
+        all unique combinations of modes, and for the polarizations we calculate the 4 p-p
         combinations.
 
-        Output:
-        dh_weights_dmpb: array of weights for the integrand
-        data * h.conj(), for each detector, mode, polarization, and
-        frequency bin.
-        hh_weights_dmppb: array of weights for the integrand
-        h*h.conj(), for each detector, mode pairs, polarization pair,
-        and
-
+        Returns
+        -------
+        Tuple of (dh_weights_dmpb, hh_weights_dmppb).
+            - dh_weights_dmpb: Weights for integrand data * h.conj(), shape (d, m, p, b).
+            - hh_weights_dmppb: Weights for integrand h*h.conj(), shape (d, m, m', p, p', b).
         """
         # impose zero orbital phase and distance 1Mpc
         par_dic = self.likelihood.par_dic_0 | getattr(self.likelihood, "_ref_dic", {})

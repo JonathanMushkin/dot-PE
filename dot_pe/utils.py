@@ -3,9 +3,12 @@ Utility functions for the sampler_free module.
 """
 
 import gc
+import json
 import logging
 from pathlib import Path
-from typing import List, Union
+from typing import Dict, List, Tuple, Union
+
+from numpy.typing import NDArray
 
 import numpy as np
 import pandas as pd
@@ -243,3 +246,115 @@ def sample_k_from_N(N, k):
         arr[i] = arr[j]
         arr[j] = tmp
     return arr[:k]
+
+
+def validate_bank_configs(bank_paths: List[Path]) -> Dict:
+    """
+    Validate that all bank configs match on critical parameters.
+
+    Parameters
+    ----------
+    bank_paths : List[Path]
+        List of bank folder paths to validate.
+
+    Returns
+    -------
+    Dict
+        Shared bank config dictionary.
+
+    Raises
+    ------
+    ValueError
+        If any critical parameters mismatch across banks.
+    """
+    if len(bank_paths) == 0:
+        raise ValueError("No bank paths provided for validation")
+
+    configs = []
+    for bank_path in bank_paths:
+        config_path = bank_path / "bank_config.json"
+        if not config_path.exists():
+            raise ValueError(f"Bank config not found: {config_path}")
+        with open(config_path, "r", encoding="utf-8") as f:
+            configs.append(json.load(f))
+
+    # Get first config as reference
+    ref_config = configs[0]
+    ref_approximant = ref_config["approximant"]
+    ref_fbin = np.array(ref_config["fbin"])
+    ref_f_ref = ref_config["f_ref"]
+    ref_m_arr = np.array(ref_config["m_arr"])
+
+    # Validate against reference
+    for i, config in enumerate(configs[1:], start=1):
+        errors = []
+
+        if config["approximant"] != ref_approximant:
+            errors.append(
+                f"approximant mismatch: bank {i} has '{config['approximant']}', "
+                f"expected '{ref_approximant}'"
+            )
+
+        if not np.array_equal(np.array(config["fbin"]), ref_fbin):
+            errors.append(
+                f"fbin mismatch: bank {i} has different frequency bins than reference"
+            )
+
+        if config["f_ref"] != ref_f_ref:
+            errors.append(
+                f"f_ref mismatch: bank {i} has {config['f_ref']}, expected {ref_f_ref}"
+            )
+
+        if not np.array_equal(np.array(config["m_arr"]), ref_m_arr):
+            errors.append(
+                f"m_arr mismatch: bank {i} has different m_arr than reference"
+            )
+
+        if errors:
+            error_msg = "Bank config validation failed:\n" + "\n".join(errors)
+            raise ValueError(error_msg)
+
+    return ref_config
+
+
+def parse_bank_folders(
+    bank_folder: Union[str, Path, List[Union[str, Path]], Tuple[Union[str, Path], ...]],
+) -> Dict[str, Path]:
+    """
+    Parse bank_folder input into a dict mapping bank_id to bank_path.
+
+    Accepts:
+    - Single path (str or Path): treated as one bank
+    - List/tuple of paths: multiple banks
+    - Comma-separated string: multiple banks
+
+    Returns:
+    - Dict[str, Path] mapping bank_id (e.g., "bank_0", "bank_1", ...) to bank_path
+    """
+    if isinstance(bank_folder, str) and "," in bank_folder:
+        bank_paths = [Path(p.strip()) for p in bank_folder.split(",")]
+    elif isinstance(bank_folder, (list, tuple)):
+        bank_paths = [Path(p) for p in bank_folder]
+    else:
+        bank_paths = [Path(bank_folder)]
+
+    # Convert to Path and assign sequential IDs
+    banks = {}
+    for i, bank_path in enumerate(bank_paths):
+        bank_path = Path(bank_path)
+        if not bank_path.exists():
+            raise ValueError(f"Bank folder does not exist: {bank_path}")
+        bank_id = f"bank_{i}"
+        banks[bank_id] = bank_path
+
+    return banks
+
+
+def inds_to_blocks(
+    indices: NDArray[np.int_], block_size: int
+) -> List[NDArray[np.int_]]:
+    """Split the indices into blocks of size blocksize (or less)."""
+    return [
+        indices[i * block_size : (i + 1) * block_size]
+        for i in range(-(len(indices) // -block_size))
+    ]
