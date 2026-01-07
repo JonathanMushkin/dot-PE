@@ -885,8 +885,9 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         self,
         batch_idx,
         bank,
-        min_marg_lnlike_for_sampling,
-        single_marg_info_min_n_effective_prior,
+        waveform_dir=None,
+        min_marg_lnlike_for_sampling=0.0,
+        single_marg_info_min_n_effective_prior=0.0,
     ):
         """
         Process a batch of indices:
@@ -910,7 +911,7 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
 
         # Load waveforms for the valid indices
         amp_impb, phase_impb = self.intrinsic_sample_processor.load_amp_and_phase(
-            self.waveform_dir, np.array(valid_ids)
+            waveform_dir, np.array(valid_ids)
         )
 
         # Process waveforms to obtain dh and hh batches
@@ -939,6 +940,119 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
                 used_indices_batch.append(idx)
         return marg_info_batch, used_indices_batch
 
+    def get_marg_info_batch_multibank(
+        self,
+        batch_sample_idx,
+        batch_bank_idx,
+        banks,
+        waveform_dirs,
+        min_marg_lnlike_for_sampling,
+        single_marg_info_min_n_effective_prior,
+    ):
+        """
+        Process a batch of (bank_idx, sample_idx) pairs for multibank extrinsic sampling.
+        Filters in batch order, loads waveforms grouped by bank but preserves shuffled order,
+        then builds MarginalizationInfo objects.
+
+        Parameters
+        ----------
+        batch_sample_idx : np.ndarray
+            1D array of iloc positions within the relevant bank dataframe.
+        batch_bank_idx : np.ndarray
+            1D array of int bank indices (0..n_banks-1), same length as batch_sample_idx.
+        banks : list[pd.DataFrame]
+            List of bank DataFrames, indexed by bank idx.
+        waveform_dirs : list[Path]
+            List of waveform directories, indexed by bank idx.
+        min_marg_lnlike_for_sampling : float
+            Minimum marginalized likelihood threshold.
+        single_marg_info_min_n_effective_prior : float
+            Minimum n_effective_prior threshold for accepting MarginalizationInfo objects.
+
+        Returns
+        -------
+        marg_info_batch : list
+            List of accepted MarginalizationInfo objects.
+        used_bank_idx_batch : list[int]
+            List of bank indices for accepted objects.
+        used_sample_idx_batch : list[int]
+            List of sample indices for accepted objects.
+        """
+        # Filter in batch order (preserves shuffled order)
+        valid_mask = np.array(
+            [
+                self.likelihood.lnlike(
+                    banks[int(bank_idx)].iloc[int(sample_idx)].to_dict()
+                    | config.DEFAULT_PARAMS_DICT
+                )
+                > min_marg_lnlike_for_sampling
+                for sample_idx, bank_idx in zip(batch_sample_idx, batch_bank_idx)
+            ],
+            dtype=bool,
+        )
+        if not np.any(valid_mask):
+            return [], [], []
+
+        valid_sample_idx = np.asarray(batch_sample_idx, dtype=int)[valid_mask]
+        valid_bank_idx = np.asarray(batch_bank_idx, dtype=int)[valid_mask]
+
+        # Load waveforms per bank, scatter back preserving valid order
+        # Cannot initialize arrays upfront: shape depends on waveform data (n_modes, n_pol, n_fbin)
+        # which we only know after loading the first batch
+        amp_impb = None
+        phase_impb = None
+
+        for bank_idx in np.unique(valid_bank_idx):
+            pos = np.where(valid_bank_idx == int(bank_idx))[0]
+            ids = valid_sample_idx[pos]
+
+            amp_bank, phase_bank = self.intrinsic_sample_processor.load_amp_and_phase(
+                Path(waveform_dirs[int(bank_idx)]), np.asarray(ids, dtype=int)
+            )
+
+            if amp_impb is None:
+                amp_impb = np.empty(
+                    (len(valid_sample_idx),) + amp_bank.shape[1:], dtype=amp_bank.dtype
+                )
+                phase_impb = np.empty(
+                    (len(valid_sample_idx),) + phase_bank.shape[1:],
+                    dtype=phase_bank.dtype,
+                )
+
+            amp_impb[pos] = amp_bank
+            phase_impb[pos] = phase_bank
+
+        # Process waveforms to obtain dh and hh batches
+        dh_batch, hh_batch = self.likelihood._get_many_dh_hh(
+            amp_impb,
+            phase_impb,
+            self.likelihood._d_h_weights,
+            self.likelihood._h_h_weights,
+            self.intrinsic_sample_processor.m_inds,
+            self.intrinsic_sample_processor.mprime_inds,
+            self.likelihood.asd_drift,
+        )
+
+        marg_info_batch = []
+        used_bank_idx_batch = []
+        used_sample_idx_batch = []
+
+        # Iterate in valid (shuffled) order
+        for dh, hh, bank_idx, sample_idx in zip(
+            dh_batch, hh_batch, valid_bank_idx, valid_sample_idx
+        ):
+            self.likelihood.coherent_score._switch_qmc_sequence(0)
+            mi = self.likelihood.coherent_score.get_marginalization_info(
+                dh, hh, self.likelihood._times
+            )
+
+            if mi.n_effective_prior > single_marg_info_min_n_effective_prior:
+                marg_info_batch.append(mi)
+                used_bank_idx_batch.append(int(bank_idx))
+                used_sample_idx_batch.append(int(sample_idx))
+
+        return marg_info_batch, used_bank_idx_batch, used_sample_idx_batch
+
     def get_marg_info(
         self,
         n_combine,
@@ -947,6 +1061,7 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         single_marg_info_min_n_effective_prior=0.0,
         save_marg_info=True,
         save_marg_info_dir=None,
+        waveform_dir=None,
     ):
         """
         Create a MarginalizationInfo object from a set of indices.
@@ -966,11 +1081,18 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
             MarginalizationInfo object to be used.
         save_marg_info : bool, optional
             If True, save the MarginalizationInfo object to a file.
+        save_marg_info_dir: str, optional
+            Folder path to save the MarginalizationInfo into.
+        waveform_dir: str, optional
+            Path for waveforms. Default to None, which uses value from
+            self.waveform_dir.
+
         """
 
         self.log(f"Getting {n_combine} MarginalizationInfo objects.")
         bank = pd.read_feather(self.intrinsic_bank_file)
-
+        if waveform_dir is None:
+            waveform_dir = self.waveform_dir
         if indices is None:
             indices = self.full_intrinsic_indices
 
@@ -992,6 +1114,7 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
                 marg_info_batch, used_indices_batch = self.get_marg_info_batch(
                     batch,
                     bank,
+                    waveform_dir,
                     min_marg_lnlike_for_sampling,
                     single_marg_info_min_n_effective_prior,
                 )
@@ -1037,6 +1160,155 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
 
         return marg_info
 
+    def get_marg_info_multibank(
+        self,
+        n_combine,
+        banks,
+        waveform_dirs,
+        sample_idx_arr,
+        bank_idx_arr,
+        min_marg_lnlike_for_sampling=0.0,
+        single_marg_info_min_n_effective_prior=0.0,
+        save_marg_info=True,
+        save_marg_info_dir=None,
+    ):
+        """
+        Create a MarginalizationInfo object from globally shuffled (bank_idx, sample_idx) pairs
+        across multiple banks, without replacement.
+
+        Parameters
+        ----------
+        n_combine : int
+            The number of MarginalizationInfo objects to combine.
+        banks : list[pd.DataFrame]
+            List of bank DataFrames, indexed by bank idx.
+        waveform_dirs : list[Path]
+            List of waveform directories, indexed by bank idx.
+        sample_idx_arr : np.ndarray
+            1D array of sample indices (iloc positions), already globally shuffled.
+        bank_idx_arr : np.ndarray
+            1D array of bank indices, same length as sample_idx_arr, already globally shuffled.
+        min_marg_lnlike_for_sampling : float, optional
+            The minimum marginalized likelihood for a sample to be used.
+        single_marg_info_min_n_effective_prior : float, optional
+            The minimum effective number of samples for a single MarginalizationInfo object.
+        save_marg_info : bool, optional
+            If True, save the MarginalizationInfo object to a file.
+        save_marg_info_dir : str or Path, optional
+            Folder path to save the MarginalizationInfo into.
+
+        Returns
+        -------
+        marg_info : MarginalizationInfo
+            Merged MarginalizationInfo object.
+        """
+        # Ensure arrays
+        sample_idx_arr = np.asarray(sample_idx_arr, dtype=int)
+        bank_idx_arr = np.asarray(bank_idx_arr, dtype=int)
+        assert sample_idx_arr.shape == bank_idx_arr.shape, (
+            f"sample_idx_arr and bank_idx_arr must have same shape, "
+            f"got {sample_idx_arr.shape} vs {bank_idx_arr.shape}"
+        )
+
+        # Disable dt cache for multibank extrinsic usage
+        use_cached_dt_prev = self.intrinsic_sample_processor.use_cached_dt
+        update_cached_dt_prev = self.intrinsic_sample_processor.update_cached_dt
+        self.intrinsic_sample_processor.use_cached_dt = False
+        self.intrinsic_sample_processor.update_cached_dt = False
+
+        try:
+            self.log(
+                f"Getting {n_combine} MarginalizationInfo objects from {len(banks)} banks."
+            )
+
+            if save_marg_info and (save_marg_info_dir is None):
+                save_marg_info_dir = Path(".")
+            elif save_marg_info_dir is not None:
+                save_marg_info_dir = Path(save_marg_info_dir)
+
+            # Choose a safe batch size
+            batch_size = max(1024, 2 * int(n_combine))
+
+            # Split into sequential batches (no replacement - iterate through shuffled arrays)
+            n_total = len(sample_idx_arr)
+            n_batches = int(np.ceil(n_total / batch_size))
+
+            marg_info_i = []
+            used_bank_idx = []
+            used_sample_idx = []
+
+            with tqdm(
+                total=n_combine, desc="Marginalization objects", unit="obj"
+            ) as pbar:
+                for bi in range(n_batches):
+                    start = bi * batch_size
+                    end = min((bi + 1) * batch_size, n_total)
+
+                    batch_samples = sample_idx_arr[start:end]
+                    batch_banks = bank_idx_arr[start:end]
+
+                    mi_batch, used_b_batch, used_s_batch = (
+                        self.get_marg_info_batch_multibank(
+                            batch_samples,
+                            batch_banks,
+                            banks,
+                            waveform_dirs,
+                            min_marg_lnlike_for_sampling,
+                            single_marg_info_min_n_effective_prior,
+                        )
+                    )
+
+                    for mi, b, s in zip(mi_batch, used_b_batch, used_s_batch):
+                        marg_info_i.append(mi)
+                        used_bank_idx.append(b)
+                        used_sample_idx.append(s)
+                        pbar.update(1)
+                        if len(marg_info_i) >= n_combine:
+                            break
+
+                    pbar.set_postfix(
+                        {
+                            "batches": f"{bi + 1}/{n_batches}",
+                            "accepted": f"{len(marg_info_i)}/{n_combine}",
+                        }
+                    )
+
+                    if len(marg_info_i) >= n_combine:
+                        break
+
+            if len(marg_info_i) == 0:
+                raise RuntimeError(
+                    "No marginalization objects accepted. Try lowering thresholds or increasing candidate pool."
+                )
+
+            # Merge collected objects into one
+            marg_info = deepcopy(marg_info_i[0])
+            if len(marg_info_i) > 1:
+                marg_info.update_with_list(marg_info_i[1:])
+            self.log("MarginalizationInfo object created!")
+
+            # Optionally save the resulting MarginalizationInfo object and indices
+            if save_marg_info:
+                save_marg_info_dir.mkdir(parents=True, exist_ok=True)
+                with open(save_marg_info_dir / "marg_info.pkl", "wb") as f:
+                    pickle.dump(marg_info, f)
+                np.save(
+                    save_marg_info_dir / "used_bank_idx.npy",
+                    np.asarray(used_bank_idx, dtype=int),
+                )
+                np.save(
+                    save_marg_info_dir / "used_sample_idx.npy",
+                    np.asarray(used_sample_idx, dtype=int),
+                )
+                self.log(f"Saving MarginalizationInfo object to {save_marg_info_dir}.")
+
+            return marg_info
+
+        finally:
+            # Restore cache flags
+            self.intrinsic_sample_processor.use_cached_dt = use_cached_dt_prev
+            self.intrinsic_sample_processor.update_cached_dt = update_cached_dt_prev
+
     def draw_extrinsic_samples_from_indices(
         self,
         n_ext,
@@ -1047,21 +1319,15 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         Use the marginalization_info object to draw extrinsic samples.
         Either use passed marg_info, or create a new one.
         """
-        # load or creatre marg_info_i list
+        # Load or create marg_info
         if marg_info is None:
-            if isinstance(marg_info, (str, Path)):
-                with open(marg_info, "rb") as fp:
-                    marg_info = pickle.load(fp)
             if get_marg_info_kwargs is None:
                 get_marg_info_kwargs = self.DEFAULT_GET_MARG_INFO_KWARGS
             marg_info = self.get_marg_info(**get_marg_info_kwargs)
-
-        else:
-            if isinstance(marg_info, str):
-                marg_info = Path(marg_info)
-            if isinstance(marg_info, Path):
-                with open(marg_info, "rb") as f:
-                    marg_info = pickle.load(f)
+        elif isinstance(marg_info, (str, Path)):
+            marg_info_path = Path(marg_info)
+            with open(marg_info_path, "rb") as f:
+                marg_info = pickle.load(f)
         extrinsic_samples = pd.DataFrame(
             self.likelihood.coherent_score.gen_samples_from_marg_info(
                 marg_info, num=n_ext

@@ -184,6 +184,7 @@ def collect_int_samples_from_single_detectors(
     i_int_start: int = 0,
     max_incoherent_lnlike_drop: float = 20,
     preselected_indices: Union[NDArray[np.int_], List[int], str, Path, None] = None,
+    apply_threshold: bool = True,
 ) -> Tuple[NDArray[np.int_], NDArray[np.float64], NDArray[np.float64]]:
     """
     Perform n_det independent single-detector likelihood evaluations and
@@ -199,6 +200,9 @@ def collect_int_samples_from_single_detectors(
         - str or Path: path to .npy file containing indices
         - None: use standard range generation (default)
         When provided, n_int and i_int_start are ignored for index generation.
+    apply_threshold : bool, optional
+        If True (default), apply threshold filtering based on max_incoherent_lnlike_drop.
+        If False, return all indices and their likelihoods without filtering.
     """
     bank_folder = Path(bank_folder)
     with open(bank_folder / "bank_config.json", "r", encoding="utf-8") as f:
@@ -258,13 +262,14 @@ def collect_int_samples_from_single_detectors(
 
     incoherent_lnlikes = np.sum(lnlike_di, axis=0)
 
-    incoherent_threshold = incoherent_lnlikes.max() - max_incoherent_lnlike_drop
-
-    selected = incoherent_lnlikes >= incoherent_threshold
-
-    inds = intrinsic_indices[selected]
-    lnlike_di = lnlike_di[:, selected]
-    incoherent_lnlikes = incoherent_lnlikes[selected]
+    if apply_threshold:
+        incoherent_threshold = incoherent_lnlikes.max() - max_incoherent_lnlike_drop
+        selected = incoherent_lnlikes >= incoherent_threshold
+        inds = intrinsic_indices[selected]
+        lnlike_di = lnlike_di[:, selected]
+        incoherent_lnlikes = incoherent_lnlikes[selected]
+    else:
+        inds = intrinsic_indices
     return inds, lnlike_di, incoherent_lnlikes
 
 
@@ -859,78 +864,9 @@ def run(
 
     print(f"Running inference with {len(banks)} bank(s)")
 
-    # Generate extrinsic samples once globally (before bank loop)
-    if extrinsic_samples is not None:
-        print("Loading extrinsic samples from file...")
-        if isinstance(extrinsic_samples, (str, Path)):
-            extrinsic_samples_df = pd.read_feather(extrinsic_samples)
-            if "log_prior_weights" not in extrinsic_samples_df.columns:
-                if "weights" in extrinsic_samples_df.columns:
-                    extrinsic_samples_df["log_prior_weights"] = np.log(
-                        extrinsic_samples_df["weights"]
-                    )
-                else:
-                    extrinsic_samples_df["log_prior_weights"] = 0.0
-            extrinsic_samples_df.to_feather(rundir / "extrinsic_samples.feather")
-    else:
-        # Generate extrinsic samples using first bank (for initialization)
-        # The actual intrinsic indices used will be determined per-bank
-        # TODO: make the code use intrinsic samples from all the banks,
-        # mixted togather in some unbiased way.
-        # no reason to assume first bank is any better then the rest.
-        print("Generating extrinsic samples (global)...")
-        first_bank_path = list(banks.values())[0]
-        waveform_dir = first_bank_path / "waveforms"
-        bank_file_path = first_bank_path / "intrinsic_sample_bank.feather"
-        wfg = WaveformGenerator.from_event_data(event_data, approximant)
-        marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
-            event_data, wfg, par_dic_0, fbin, coherent_score=coherent_score_kwargs
-        )
-
-        ext_sample_generator = CoherentExtrinsicSamplesGenerator(
-            likelihood=marg_ext_like,
-            intrinsic_bank_file=bank_file_path,
-            waveform_dir=waveform_dir,
-            seed=seed,
-        )
-
-        # Generate extrinsic samples using first bank's intrinsic samples
-        # These will be shared across all banks
-        # We use a representative set of indices from the first bank
-
-        first_bank_file = first_bank_path / "intrinsic_sample_bank.feather"
-        # Load first bank to get representative indices
-        first_bank_df = pd.read_feather(first_bank_file)
-        # Use first n_int samples from first bank as representative
-        # Handle n_int being either int or dict
-        n_int_first = n_int[first_bank_id] if isinstance(n_int, dict) else n_int
-        representative_inds = np.arange(min(n_int_first, len(first_bank_df)))
-
-        get_marg_info_kwargs = {
-            "save_marg_info": True,
-            "save_marg_info_dir": rundir,
-            "n_combine": 16,
-            "indices": representative_inds,
-            "single_marg_info_min_n_effective_prior": 32,
-        }
-
-        (extrinsic_samples_df, response_dpe, timeshift_dbe) = (
-            ext_sample_generator.draw_extrinsic_samples_from_indices(
-                n_ext, get_marg_info_kwargs=get_marg_info_kwargs
-            )
-        )
-
-        extrinsic_samples_df.to_feather(rundir / "extrinsic_samples.feather")
-        np.save(arr=response_dpe, file=rundir / "response_dpe.npy")
-        np.save(arr=timeshift_dbe, file=rundir / "timeshift_dbe.npy")
-
     # Create banks subdirectory
     banks_dir = rundir / "banks"
     banks_dir.mkdir(exist_ok=True)
-
-    # Store per-bank results
-    bank_results = []
-    all_prob_samples = []
 
     # Handle preselected_indices: convert to dict if needed
     preselected_indices_dict = None
@@ -938,7 +874,6 @@ def run(
         if isinstance(preselected_indices, dict):
             preselected_indices_dict = preselected_indices
         else:
-            # If single value provided, apply to all banks (backward compatibility)
             preselected_indices_dict = {
                 bank_id: preselected_indices for bank_id in banks
             }
@@ -949,18 +884,15 @@ def run(
         if isinstance(inds_path, dict):
             inds_path_dict = {k: Path(v) for k, v in inds_path.items()}
         else:
-            # If single path provided, apply to all banks (backward compatibility)
             inds_path_dict = {bank_id: Path(inds_path) for bank_id in banks}
 
     # Handle n_int: convert to dict if needed
     if isinstance(n_int, dict):
         n_int_dict = n_int
-        # Validate that all keys in n_int exist in banks
         unknown_bank_ids = set(n_int_dict.keys()) - set(banks.keys())
         if unknown_bank_ids:
             raise ValueError(f"n_int contains unknown bank_id(s): {unknown_bank_ids}")
     else:
-        # If single value provided, apply to all banks
         n_int_dict = {bank_id: n_int for bank_id in banks}
 
     # Handle bank_logw_override: convert to dict if needed
@@ -968,14 +900,12 @@ def run(
     if bank_logw_override is not None:
         if isinstance(bank_logw_override, dict):
             bank_logw_override_dict = bank_logw_override
-            # Validate that all keys in bank_logw_override exist in banks
             unknown_bank_ids = set(bank_logw_override_dict.keys()) - set(banks.keys())
             if unknown_bank_ids:
                 raise ValueError(
                     f"bank_logw_override contains unknown bank_id(s): {unknown_bank_ids}"
                 )
         else:
-            # If single array provided, apply to all banks (backward compatibility)
             if len(banks) == 1:
                 bank_id = list(banks.keys())[0]
                 bank_logw_override_dict = {bank_id: bank_logw_override}
@@ -984,16 +914,21 @@ def run(
                     "bank_logw_override must be a dict when using multiple banks"
                 )
 
-    # Loop over banks
+    # ========================================================================
+    # PHASE 1: Pre-selection + Incoherent filtering (per bank, no threshold)
+    # ========================================================================
+    print("\n=== Phase 1: Incoherent filtering (per bank) ===")
+    filtered_inds_by_bank = {}
+    incoherent_lnlikes_by_bank = {}
+    lnlikes_di_by_bank = {}
+
     for bank_id, bank_path in banks.items():
         print(f"\nProcessing bank: {bank_id}")
         bank_rundir = banks_dir / bank_id
         bank_rundir.mkdir(exist_ok=True)
 
-        # Get n_int for this bank
         n_int_k = n_int_dict[bank_id]
 
-        # Collect intrinsic samples from single detectors for this bank
         if load_inds and inds_path_dict is not None:
             bank_inds_path = inds_path_dict.get(bank_id)
             if bank_inds_path is not None and bank_inds_path.exists():
@@ -1004,14 +939,11 @@ def run(
                     data = np.load(bank_inds_path)
                     inds = data["inds"]
                     incoherent_lnlikes = data.get("incoherent_lnlikes", None)
+                    lnlikes_di = data.get("lnlikes_di", None)
                 else:
                     inds = np.load(bank_inds_path)
                     incoherent_lnlikes = None
-                np.savez(
-                    bank_rundir / "intrinsic_samples.npz",
-                    inds=inds,
-                    incoherent_lnlikes=incoherent_lnlikes,
-                )
+                    lnlikes_di = None
             else:
                 raise FileNotFoundError(
                     f"inds_path for bank {bank_id} not found: {bank_inds_path}"
@@ -1026,38 +958,229 @@ def run(
                     event_data=event_data,
                     par_dic_0=par_dic_0,
                     single_detector_blocksize=single_detector_blocksize,
-                    n_int=n_int_k,  # Per-bank
+                    n_int=n_int_k,
                     n_phi=n_phi_incoherent,
                     n_t=n_t,
                     bank_folder=bank_path,
-                    i_int_start=0,  # Each bank starts at 0
+                    i_int_start=0,
                     max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
                     preselected_indices=preselected_indices_dict.get(bank_id)
                     if preselected_indices_dict
                     else None,
+                    apply_threshold=False,
                 )
             )
-            np.savez(
-                bank_rundir / "intrinsic_samples.npz",
-                inds=inds,
-                lnlikes_di=lnlikes_di,
-                incoherent_lnlikes=incoherent_lnlikes,
+
+        filtered_inds_by_bank[bank_id] = inds
+        incoherent_lnlikes_by_bank[bank_id] = incoherent_lnlikes
+        if lnlikes_di is not None:
+            lnlikes_di_by_bank[bank_id] = lnlikes_di
+        print(f"Bank {bank_id}: {len(inds)} intrinsic samples evaluated.")
+
+    # ========================================================================
+    # PHASE 2: Global cut (apply threshold based on global maximum)
+    # ========================================================================
+    print("\n=== Phase 2: Global cut ===")
+    # Find global maximum, handling None values and empty arrays
+    valid_maxima = [
+        np.max(lnlikes)
+        for lnlikes in incoherent_lnlikes_by_bank.values()
+        if lnlikes is not None and len(lnlikes) > 0
+    ]
+
+    final_filtered_inds_by_bank = {}
+    final_incoherent_lnlikes_by_bank = {}
+    final_lnlikes_di_by_bank = {}
+
+    if valid_maxima:
+        global_max_lnlike = max(valid_maxima)
+        global_threshold = global_max_lnlike - max_incoherent_lnlike_drop
+        print(f"Global maximum incoherent lnlike: {global_max_lnlike:.2f}")
+        print(f"Global threshold: {global_threshold:.2f}")
+    else:
+        print(
+            "Warning: No banks have valid incoherent likelihoods. Skipping global cut."
+        )
+
+    for bank_id in banks.keys():
+        inds = filtered_inds_by_bank[bank_id]
+        incoherent_lnlikes = incoherent_lnlikes_by_bank[bank_id]
+
+        if (
+            incoherent_lnlikes is not None
+            and len(incoherent_lnlikes) > 0
+            and valid_maxima
+        ):
+            selected = incoherent_lnlikes >= global_threshold
+            final_inds = inds[selected]
+            final_incoherent_lnlikes = incoherent_lnlikes[selected]
+            if bank_id in lnlikes_di_by_bank:
+                final_lnlikes_di = lnlikes_di_by_bank[bank_id][:, selected]
+            else:
+                final_lnlikes_di = None
+        else:
+            # No likelihoods or no valid maxima - set empty arrays and continue
+            # (treated as "no candidates for this bank")
+            final_inds = np.array([], dtype=np.int_)
+            final_incoherent_lnlikes = np.array([], dtype=np.float64)
+            if (
+                bank_id in lnlikes_di_by_bank
+                and lnlikes_di_by_bank[bank_id] is not None
+            ):
+                final_lnlikes_di = np.array([], dtype=np.float64).reshape(
+                    len(event_data.detector_names), 0
+                )
+            else:
+                final_lnlikes_di = None
+
+        final_filtered_inds_by_bank[bank_id] = final_inds
+        final_incoherent_lnlikes_by_bank[bank_id] = final_incoherent_lnlikes
+        if final_lnlikes_di is not None:
+            final_lnlikes_di_by_bank[bank_id] = final_lnlikes_di
+
+        bank_rundir = banks_dir / bank_id
+        np.savez(
+            bank_rundir / "intrinsic_samples.npz",
+            inds=final_inds,
+            lnlikes_di=final_lnlikes_di,
+            incoherent_lnlikes=final_incoherent_lnlikes,
+        )
+        print(
+            f"Bank {bank_id}: {len(final_inds)} intrinsic samples "
+            + (
+                "passed global threshold."
+                if incoherent_lnlikes is not None
+                and len(incoherent_lnlikes) > 0
+                and valid_maxima
+                else "(no likelihoods or skipped)."
             )
-        print(f"Bank {bank_id}: {len(inds)} intrinsic samples selected.")
+        )
 
-        # Get n_int for this bank (user-provided, assumed correct)
+    # Check if all banks ended up with zero candidates
+    total_filtered = sum(len(arr) for arr in final_filtered_inds_by_bank.values())
+    if total_filtered == 0:
+        raise ValueError(
+            "No intrinsic samples remain after incoherent selection; "
+            "cannot proceed to extrinsic/coherent steps."
+        )
+
+    # ========================================================================
+    # PHASE 3: Extrinsic sample generation (using filtered intrinsic samples)
+    # ========================================================================
+    print("\n=== Phase 3: Extrinsic sample generation ===")
+    if extrinsic_samples is not None:
+        print("Loading extrinsic samples from file...")
+        if isinstance(extrinsic_samples, (str, Path)):
+            extrinsic_samples_df = pd.read_feather(extrinsic_samples)
+            if "log_prior_weights" not in extrinsic_samples_df.columns:
+                if "weights" in extrinsic_samples_df.columns:
+                    extrinsic_samples_df["log_prior_weights"] = np.log(
+                        extrinsic_samples_df["weights"]
+                    )
+                else:
+                    extrinsic_samples_df["log_prior_weights"] = 0.0
+            extrinsic_samples_df.to_feather(rundir / "extrinsic_samples.feather")
+    else:
+        print("Generating extrinsic samples (global, multibank)...")
+        first_bank_path = list(banks.values())[0]
+        waveform_dir = first_bank_path / "waveforms"
+        bank_file_path = first_bank_path / "intrinsic_sample_bank.feather"
+        wfg = WaveformGenerator.from_event_data(event_data, approximant)
+        marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
+            event_data, wfg, par_dic_0, fbin, coherent_score=coherent_score_kwargs
+        )
+
+        # Note: intrinsic_bank_file and waveform_dir are not used in multibank
+        # get_marg_info_multibank; choosing first_bank_path is only for compatibility
+        ext_sample_generator = CoherentExtrinsicSamplesGenerator(
+            likelihood=marg_ext_like,
+            intrinsic_bank_file=bank_file_path,
+            waveform_dir=waveform_dir,
+            seed=seed,
+        )
+
+        # Build global shuffled arrays from filtered intrinsic samples
+        # Skip banks with zero filtered indices
+        banks_list = []
+        waveform_dirs_list = []
+        sample_idx_arrays = []
+        bank_idx_arrays = []
+
+        for bank_path_idx, (bank_id, bank_path) in enumerate(banks.items()):
+            filtered_inds = final_filtered_inds_by_bank[bank_id]
+            if len(filtered_inds) == 0:
+                continue
+
+            dense_idx = len(banks_list)  # dense id for included banks
+            bank_df = pd.read_feather(bank_path / "intrinsic_sample_bank.feather")
+
+            banks_list.append(bank_df)
+            waveform_dirs_list.append(bank_path / "waveforms")
+            sample_idx_arrays.append(filtered_inds)
+            bank_idx_arrays.append(np.full(len(filtered_inds), dense_idx, dtype=int))
+
+        # Check if any banks have candidates
+        if len(sample_idx_arrays) == 0:
+            raise ValueError(
+                "No intrinsic samples available for multibank extrinsic sampling "
+                "(all banks empty)."
+            )
+
+        # Concatenate all arrays
+        sample_idx_arr = np.concatenate(sample_idx_arrays)
+        bank_idx_arr = np.concatenate(bank_idx_arrays)
+
+        # Shuffle both arrays together (preserve pairing)
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(len(sample_idx_arr))
+        sample_idx_arr = sample_idx_arr[perm]
+        bank_idx_arr = bank_idx_arr[perm]
+
+        # Get MarginalizationInfo using multibank method
+        marg_info = ext_sample_generator.get_marg_info_multibank(
+            n_combine=16,
+            banks=banks_list,
+            waveform_dirs=waveform_dirs_list,
+            sample_idx_arr=sample_idx_arr,
+            bank_idx_arr=bank_idx_arr,
+            min_marg_lnlike_for_sampling=0.0,
+            single_marg_info_min_n_effective_prior=32,
+            save_marg_info=True,
+            save_marg_info_dir=rundir,
+        )
+
+        # Draw extrinsic samples from the merged MarginalizationInfo
+        (extrinsic_samples_df, response_dpe, timeshift_dbe) = (
+            ext_sample_generator.draw_extrinsic_samples_from_indices(
+                n_ext, marg_info=marg_info
+            )
+        )
+
+        extrinsic_samples_df.to_feather(rundir / "extrinsic_samples.feather")
+        np.save(arr=response_dpe, file=rundir / "response_dpe.npy")
+        np.save(arr=timeshift_dbe, file=rundir / "timeshift_dbe.npy")
+
+    # ========================================================================
+    # PHASE 4: Coherent inference (per bank)
+    # ========================================================================
+    print("\n=== Phase 4: Coherent inference (per bank) ===")
+    bank_results = []
+    all_prob_samples = []
+
+    for bank_id, bank_path in banks.items():
+        print(f"\nProcessing bank: {bank_id}")
+        bank_rundir = banks_dir / bank_id
+
+        inds = final_filtered_inds_by_bank[bank_id]
         n_int_k = n_int_dict[bank_id]
-        n_total_samples = n_phi * n_ext * n_int_k  # Total MC samples attempted
+        n_total_samples = n_phi * n_ext * n_int_k
 
-        # Prepare intrinsic_logw_lookup if bank_logw_override is provided
         intrinsic_logw_lookup = None
         if bank_logw_override_dict is not None and bank_id in bank_logw_override_dict:
             override_logw_full = np.asarray(bank_logw_override_dict[bank_id])
-            # inds are absolute bank indices after filtering - just subset the full bank weights
             override_logw = override_logw_full[inds]
             intrinsic_logw_lookup = (inds, override_logw)
 
-        # Run coherent inference for this bank
         (
             lnZ_k,
             lnZ_discarded_k,
@@ -1083,11 +1206,9 @@ def run(
             max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
         )
 
-        # Load prob_samples and add bank_id
         prob_samples_k = pd.read_feather(bank_rundir / "prob_samples.feather")
         prob_samples_k["bank_id"] = bank_id
 
-        # Store results
         bank_results.append(
             {
                 "bank_id": bank_id,
@@ -1098,10 +1219,15 @@ def run(
                 "n_effective_i_k": n_effective_i_k,
                 "n_effective_e_k": n_effective_e_k,
                 "n_distance_marginalizations_k": n_distance_marginalizations_k,
-                "n_inds_used": len(inds),  # Number of samples that passed threshold
+                "n_inds_used": len(inds),
             }
         )
         all_prob_samples.append(prob_samples_k)
+
+    # ========================================================================
+    # PHASE 5: Combine results
+    # ========================================================================
+    print("\n=== Phase 5: Combining results ===")
 
     # Combine evidences
     N_total = sum(r["N_k"] for r in bank_results)
