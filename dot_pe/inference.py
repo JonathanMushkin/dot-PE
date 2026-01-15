@@ -14,7 +14,6 @@ bank folder. It is performed in two steps:
 """
 
 import argparse
-import copy
 import cProfile
 import json
 import os
@@ -50,6 +49,7 @@ from .coherent_processing import (  # noqa: E402
     CoherentExtrinsicSamplesGenerator,
 )
 from .utils import (  # noqa: E402
+    extract_single_detector_event_data,
     get_event_data,
     inds_to_blocks,
     parse_bank_folders,
@@ -64,7 +64,7 @@ from .sample_processing import (  # noqa: E402
 
 
 def run_for_single_detector(
-    event_data: EventData,
+    event_data: Union[str, Path, EventData],
     det_name: str,
     par_dic_0: Dict,
     bank_folder: Union[str, Path],
@@ -87,30 +87,7 @@ def run_for_single_detector(
         inds = np.array(inds)
 
     # load and edit event data
-    if isinstance(event_data, Path):
-        event_data_path = event_data
-        event_data_1d = EventData.from_npz(filename=event_data_path)
-    else:
-        event_data_1d = copy.deepcopy(event_data)
-    indices = [event_data_1d.detector_names.index(det) for det in list(det_name)]
-
-    array_attributes = ["strain", "blued_strain", "wht_filter"]
-    for attr in array_attributes:
-        setattr(event_data_1d, attr, getattr(event_data_1d, attr)[indices])
-
-    tuple_attributes = [
-        "detector_names",
-    ]
-    for attr in tuple_attributes:
-        temp = tuple(np.take(getattr(event_data_1d, attr), indices))
-        setattr(event_data_1d, attr, temp)
-    if getattr(event_data_1d, "injection", None) is not None:
-        event_data_1d.injection["h_h"] = np.take(
-            event_data_1d.injection["h_h"], indices
-        ).tolist()
-        event_data_1d.injection["d_h"] = np.take(
-            event_data_1d.injection["d_h"], indices
-        ).tolist()
+    event_data_1d = extract_single_detector_event_data(event_data, det_name)
     wfg = WaveformGenerator.from_event_data(event_data_1d, approximant)
 
     likelihood_linfree = LinearFree(event_data_1d, wfg, par_dic_0, fbin)

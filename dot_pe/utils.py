@@ -165,6 +165,50 @@ def get_event_data(event: Union[str, Path, EventData]) -> EventData:
     return event_data
 
 
+def extract_single_detector_event_data(
+    event_data: Union[str, Path, EventData], det_name: str
+) -> EventData:
+    """
+    Extract event data for a single detector from multi-detector event data.
+
+    Parameters
+    ----------
+    event_data : Union[str, Path, EventData]
+        Event data (can be path or EventData object).
+    det_name : str
+        Detector name to extract.
+
+    Returns
+    -------
+    EventData
+        Event data filtered to contain only the specified detector.
+    """
+    import copy
+
+    event_data_loaded = get_event_data(event_data)
+    event_data_1d = copy.deepcopy(event_data_loaded)
+    indices = [event_data_1d.detector_names.index(det) for det in list(det_name)]
+
+    array_attributes = ["strain", "blued_strain", "wht_filter"]
+    for attr in array_attributes:
+        setattr(event_data_1d, attr, getattr(event_data_1d, attr)[indices])
+
+    tuple_attributes = ["detector_names"]
+    for attr in tuple_attributes:
+        temp = tuple(np.take(getattr(event_data_1d, attr), indices))
+        setattr(event_data_1d, attr, temp)
+
+    if getattr(event_data_1d, "injection", None) is not None:
+        event_data_1d.injection["h_h"] = np.take(
+            event_data_1d.injection["h_h"], indices
+        ).tolist()
+        event_data_1d.injection["d_h"] = np.take(
+            event_data_1d.injection["d_h"], indices
+        ).tolist()
+
+    return event_data_1d
+
+
 def compute_lnq(m1, m2):
     """Compute log mass ratio: ln(q) = ln(m2/m1)."""
     return np.log(m2 / m1)
