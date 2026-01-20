@@ -1444,10 +1444,10 @@ def aggregate_and_save_results(
 def run(
     event: Union[str, Path, EventData],
     bank_folder: Union[str, Path, List[Union[str, Path]], Tuple[Union[str, Path], ...]],
-    n_int: Union[int, List[int], Dict[str, int], None],
     n_ext: int,
     n_phi: int,
     n_t: int,
+    n_int: Union[int, List[int], Dict[str, int], None] = None,
     blocksize: int = 512,
     single_detector_blocksize: int = 512,
     i_int_start: int = 0,
