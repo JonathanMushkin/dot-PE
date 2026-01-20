@@ -697,7 +697,7 @@ def postprocess(
 def prepare_run_objects(
     event: Union[str, Path, EventData],
     bank_folder: Union[str, Path, List[Union[str, Path]], Tuple[Union[str, Path], ...]],
-    n_int: Union[int, Dict[str, int]],
+    n_int: Union[int, List[int], Dict[str, int], None],
     n_ext: int,
     n_phi: int,
     n_t: int,
@@ -872,13 +872,28 @@ def prepare_run_objects(
         else:
             inds_path_dict = {bank_id: Path(inds_path) for bank_id in banks}
 
-    if isinstance(n_int, dict):
+    # Standardize n_int to n_int_dict
+    if n_int is None or (isinstance(n_int, list) and len(n_int) == 0):
+        n_int_dict = {}
+        for bank_id, bank_path in banks.items():
+            bank_file_path = Path(bank_path) / "intrinsic_sample_bank.feather"
+            bank = IntrinsicSampleProcessor.load_bank(bank_file_path)
+            n_int_dict[bank_id] = len(bank)
+    elif isinstance(n_int, int) or (isinstance(n_int, list) and len(n_int) == 1):
+        value = n_int if isinstance(n_int, int) else n_int[0]
+        n_int_dict = {bank_id: value for bank_id in banks}
+    elif isinstance(n_int, list):
+        bank_ids = list(banks.keys())
+        if len(n_int) != len(bank_ids):
+            raise ValueError(
+                f"n_int list length ({len(n_int)}) must match number of banks ({len(bank_ids)})"
+            )
+        n_int_dict = {bank_id: n_int_val for bank_id, n_int_val in zip(bank_ids, n_int)}
+    elif isinstance(n_int, dict):
         n_int_dict = n_int
         unknown_bank_ids = set(n_int_dict.keys()) - set(banks.keys())
         if unknown_bank_ids:
             raise ValueError(f"n_int contains unknown bank_id(s): {unknown_bank_ids}")
-    else:
-        n_int_dict = {bank_id: n_int for bank_id in banks}
 
     bank_logw_override_dict = None
     if bank_logw_override is not None:
@@ -1429,10 +1444,10 @@ def aggregate_and_save_results(
 def run(
     event: Union[str, Path, EventData],
     bank_folder: Union[str, Path, List[Union[str, Path]], Tuple[Union[str, Path], ...]],
-    n_int: Union[int, Dict[str, int]],
     n_ext: int,
     n_phi: int,
     n_t: int,
+    n_int: Union[int, List[int], Dict[str, int], None] = None,
     blocksize: int = 512,
     single_detector_blocksize: int = 512,
     i_int_start: int = 0,
@@ -1610,7 +1625,15 @@ def parse_arguments() -> Dict:
         help="Path to the bank folder.",
     )
     parser.add_argument(
-        "--n_int", type=int, help="Number of intrinsic samples.", default=2**13
+        "--n_int",
+        type=int,
+        nargs="*",
+        help=(
+            "Number of intrinsic samples. Can be: int (all banks), "
+            "list of ints (one per bank in order), dict mapping bank_id to int, "
+            "or None/omitted to use full bank size."
+        ),
+        default=None,
     )
     parser.add_argument(
         "--i_int_start",
