@@ -1590,23 +1590,20 @@ def run_and_profile(**kwargs):
     Run the magic integral and profile the run.
     """
     profiler = cProfile.Profile()
+    rundir = None
     profiler.enable()
-
-    rundir = run(**kwargs)
-
-    profiler.disable()
-
-    # Save the printed profiler file & profiler report
-    profile_obj_path = Path(rundir) / "profile_output.prof"
-    profile_report_path = Path(rundir) / "profile_output.txt"
-
-    profiler.dump_stats(profile_obj_path)
-
-    with open(profile_report_path, "w", encoding="utf-8") as f:
-        ps = pstats.Stats(profiler, stream=f)
-        ps.strip_dirs().sort_stats(pstats.SortKey.CUMULATIVE).print_stats()
-
-    return rundir
+    try:
+        rundir = run(**kwargs)
+        return rundir
+    finally:
+        profiler.disable()
+        if rundir is not None:
+            profile_obj_path = Path(rundir) / "profile_output.prof"
+            profile_report_path = Path(rundir) / "profile_output.txt"
+            profiler.dump_stats(profile_obj_path)
+            with open(profile_report_path, "w", encoding="utf-8") as f:
+                ps = pstats.Stats(profiler, stream=f)
+                ps.strip_dirs().sort_stats(pstats.SortKey.CUMULATIVE).print_stats()
 
 
 def parse_arguments() -> Dict:
