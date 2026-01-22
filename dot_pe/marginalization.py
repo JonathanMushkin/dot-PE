@@ -22,9 +22,37 @@ class CoherentScoreSamplerFree(CoherentScoreHM):
     CoherentScoreHM with modifications for the sampler-free methods.
     """
 
-    def __init__(self, *args, **kwargs):
-        self.min_n_effective_prior = kwargs.pop("min_n_effective_prior", 0)
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        sky_dict,
+        m_arr,
+        lookup_table=None,
+        log2n_qmc: int = 11,
+        nphi=128,
+        seed=0,
+        n_qmc_sequences=128,
+        min_n_effective=50,
+        max_log2n_qmc: int = 15,
+        beta_temperature=0.5,
+        learning_rate=0.01,
+        min_n_effective_prior=0,
+        **kwargs,
+    ):
+        self.min_n_effective_prior = min_n_effective_prior
+        super().__init__(
+            sky_dict,
+            m_arr,
+            lookup_table=lookup_table,
+            log2n_qmc=log2n_qmc,
+            nphi=nphi,
+            seed=seed,
+            n_qmc_sequences=n_qmc_sequences,
+            min_n_effective=min_n_effective,
+            max_log2n_qmc=max_log2n_qmc,
+            beta_temperature=beta_temperature,
+            learning_rate=learning_rate,
+            **kwargs,
+        )
 
     def get_marginalization_info(
         self, d_h_timeseries, h_h, times, lnl_marginalized_threshold=-np.inf
