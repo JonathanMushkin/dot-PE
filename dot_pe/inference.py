@@ -63,6 +63,37 @@ from .sample_processing import (  # noqa: E402
 )
 
 
+def _create_single_detector_processor(
+    event_data: Union[str, Path, EventData],
+    det_name: str,
+    par_dic_0: Dict,
+    bank_folder: Union[str, Path],
+    fbin: NDArray[np.float64],
+    approximant: str,
+    n_phi: int,
+    m_arr: NDArray[np.int64],
+    single_detector_blocksize: int,
+    size_limit: int,
+) -> SingleDetectorProcessor:
+    """Create a SingleDetectorProcessor for a given detector."""
+    event_data_1d = extract_single_detector_event_data(event_data, det_name)
+    wfg = WaveformGenerator.from_event_data(event_data_1d, approximant)
+    likelihood_linfree = LinearFree(event_data_1d, wfg, par_dic_0, fbin)
+    bank_file_path = Path(bank_folder) / "intrinsic_sample_bank.feather"
+    waveform_dir = Path(bank_folder) / "waveforms"
+
+    return SingleDetectorProcessor(
+        bank_file_path,
+        waveform_dir,
+        n_phi,
+        m_arr,
+        likelihood_linfree,
+        size_limit=size_limit,
+        ext_block_size=single_detector_blocksize,
+        int_block_size=single_detector_blocksize,
+    )
+
+
 def run_for_single_detector(
     event_data: Union[str, Path, EventData],
     det_name: str,
@@ -77,6 +108,7 @@ def run_for_single_detector(
     m_arr: NDArray[np.int64] = np.array([2, 1, 3, 4]),
     n_t: int = 128,
     size_limit: int = 10**7,
+    sdp: Optional[SingleDetectorProcessor] = None,
 ) -> Union[NDArray[np.float64], Tuple[NDArray[np.float64], NDArray[np.complex128]]]:
     """
     Perform single detector likelihood evaluations and return the likelihoods.
@@ -86,24 +118,21 @@ def run_for_single_detector(
     if isinstance(inds, list):
         inds = np.array(inds)
 
-    # load and edit event data
-    event_data_1d = extract_single_detector_event_data(event_data, det_name)
-    wfg = WaveformGenerator.from_event_data(event_data_1d, approximant)
+    if sdp is None:
+        sdp = _create_single_detector_processor(
+            event_data,
+            det_name,
+            par_dic_0,
+            bank_folder,
+            fbin,
+            approximant,
+            n_phi,
+            m_arr,
+            single_detector_blocksize,
+            size_limit,
+        )
 
-    likelihood_linfree = LinearFree(event_data_1d, wfg, par_dic_0, fbin)
-    bank_file_path = Path(bank_folder) / "intrinsic_sample_bank.feather"
     waveform_dir = Path(bank_folder) / "waveforms"
-
-    sdp = SingleDetectorProcessor(
-        bank_file_path,
-        waveform_dir,
-        n_phi,
-        m_arr,
-        likelihood_linfree,
-        size_limit=size_limit,
-        ext_block_size=single_detector_blocksize,
-        int_block_size=single_detector_blocksize,
-    )
 
     if h_impb is None:
         return_h_impb = True
@@ -190,7 +219,22 @@ def collect_int_samples_from_single_detectors(
         fbin = np.array(bank_config["fbin"])
         approximant = bank_config["approximant"]
         m_arr = np.array(bank_config["m_arr"])
-    # do single detector pe for each detector
+
+    sdp_by_detector = {}
+    for det_name in event_data.detector_names:
+        sdp_by_detector[det_name] = _create_single_detector_processor(
+            event_data,
+            det_name,
+            par_dic_0,
+            bank_folder,
+            fbin,
+            approximant,
+            n_phi,
+            m_arr,
+            single_detector_blocksize,
+            size_limit=10**7,
+        )
+
     if preselected_indices is not None:
         # Handle different input types for preselected_indices
         if isinstance(preselected_indices, (str, Path)):
@@ -233,6 +277,7 @@ def collect_int_samples_from_single_detectors(
                 m_arr,
                 n_t,
                 size_limit=10**7,
+                sdp=sdp_by_detector[det_name],
             )
             if h_impb is None:
                 lnlike_di[d, batch_start:batch_end] = temp[0]
