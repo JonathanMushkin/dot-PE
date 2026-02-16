@@ -4,32 +4,26 @@ HPC parallelized single-detector processing for incoherent likelihood evaluation
 
 import multiprocessing as mp
 from pathlib import Path
-from typing import Dict, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 
 from dot_pe.inference import run_for_single_detector, _create_single_detector_processor
-from dot_pe.event_data import EventData
+from dot_pe.utils import get_event_data
+from cogwheel.data import EventData
 from .utils_hpc import init_worker, partition_indices, group_batches
 
+# Per-process cache set by init_single_detector_worker; read by _process_batch_group.
+_worker_state: Dict[str, Any] = {}
 
-def _process_batch_group(args):
+
+def init_single_detector_worker(init_args: Tuple) -> None:
     """
-    Worker function to process a group of batches for single-detector likelihood.
-
-    Parameters
-    ----------
-    args : tuple
-        (batch_group, event_path, par_dic_0, bank_folder, fbin, approximant,
-         n_phi, m_arr, single_detector_blocksize, n_t, detector_names)
-
-    Returns
-    -------
-    list
-        List of batch result dicts
+    Build event data and single-detector processors once per worker.
+    Called once per process by Pool(initializer=..., initargs=(init_args,)).
     """
+    init_worker()
     (
-        batch_group,
         event_path,
         par_dic_0,
         bank_folder,
@@ -40,17 +34,8 @@ def _process_batch_group(args):
         single_detector_blocksize,
         n_t,
         detector_names,
-    ) = args
-
-    # Initialize worker (disable nested threading)
-    init_worker()
-
-    # Load EventData from path (reload in worker to avoid serialization issues)
-    from dot_pe.utils import get_event_data
-
+    ) = init_args
     event_data = get_event_data(event_path)
-
-    # Create single detector processors (one per detector)
     sdp_by_detector = {}
     for det_name in detector_names:
         sdp_by_detector[det_name] = _create_single_detector_processor(
@@ -65,8 +50,28 @@ def _process_batch_group(args):
             single_detector_blocksize,
             size_limit=10**7,
         )
+    _worker_state["event_data"] = event_data
+    _worker_state["sdp_by_detector"] = sdp_by_detector
+    _worker_state["detector_names"] = detector_names
+    _worker_state["par_dic_0"] = par_dic_0
+    _worker_state["bank_folder"] = bank_folder
+    _worker_state["fbin"] = fbin
+    _worker_state["approximant"] = approximant
+    _worker_state["n_phi"] = n_phi
+    _worker_state["single_detector_blocksize"] = single_detector_blocksize
+    _worker_state["m_arr"] = m_arr
+    _worker_state["n_t"] = n_t
 
-    # Process all batches in this group
+
+def _process_batch_group(batch_group: List[np.ndarray]) -> List[Dict[str, Any]]:
+    """
+    Process a group of batches using cached event data and SDPs.
+    Expects init_single_detector_worker to have run first in this process.
+    """
+    event_data = _worker_state["event_data"]
+    sdp_by_detector = _worker_state["sdp_by_detector"]
+    detector_names = _worker_state["detector_names"]
+
     results = []
     for batch_indices in batch_group:
         batch_start = batch_indices[0] if len(batch_indices) > 0 else 0
@@ -79,16 +84,16 @@ def _process_batch_group(args):
             temp = run_for_single_detector(
                 event_data,
                 det_name,
-                par_dic_0,
-                bank_folder,
+                _worker_state["par_dic_0"],
+                _worker_state["bank_folder"],
                 batch_indices,
-                fbin,
+                _worker_state["fbin"],
                 h_impb,
-                approximant,
-                n_phi,
-                single_detector_blocksize,
-                m_arr,
-                n_t,
+                _worker_state["approximant"],
+                _worker_state["n_phi"],
+                _worker_state["single_detector_blocksize"],
+                _worker_state["m_arr"],
+                _worker_state["n_t"],
                 size_limit=10**7,
                 sdp=sdp_by_detector[det_name],
             )
@@ -161,7 +166,8 @@ def collect_int_samples_from_single_detectors_hpc(
     i_batch : int, optional
         Batch size for partitioning (default: single_detector_blocksize)
     batches_per_task : int
-        Number of batches per worker task (default: 1)
+        Number of batches per worker task (default: 1).
+        On 40–100+ cores, increase so each task is ~100–500 ms to reduce overhead.
 
     Returns
     -------
@@ -180,7 +186,6 @@ def collect_int_samples_from_single_detectors_hpc(
     # Get event path and detector names
     if isinstance(event_data, (str, Path)):
         event_path = Path(event_data)
-        from dot_pe.utils import get_event_data
         event_data_obj = get_event_data(event_path)
         detector_names = event_data_obj.detector_names
     else:
@@ -221,46 +226,41 @@ def collect_int_samples_from_single_detectors_hpc(
     if n_procs is None:
         n_procs = min(len(task_groups), mp.cpu_count() or 4)
 
-    # Get event path for worker serialization (EventData objects don't pickle well)
-    # If event_data is already a path, use it; otherwise we need to get the original path
-    # For now, assume event_data was loaded from a path and store that path
-    # In practice, the caller should pass the event path, not the EventData object
     if isinstance(event_data, (str, Path)):
         event_path = Path(event_data)
     else:
-        # Try to get path from event_data if it has one, otherwise raise error
-        # In HPC context, we should pass paths, not EventData objects
         raise ValueError(
             "For HPC multiprocessing, pass event as a path (str/Path), not EventData object. "
             "EventData objects cannot be pickled for multiprocessing."
         )
 
-    # Prepare arguments for workers
-    worker_args = [
-        (
-            task_group,
-            event_path,
-            par_dic_0,
-            bank_folder,
-            fbin,
-            approximant,
-            n_phi,
-            m_arr,
-            single_detector_blocksize,
-            n_t,
-            detector_names,
-        )
-        for task_group in task_groups
-    ]
+    init_args = (
+        event_path,
+        par_dic_0,
+        bank_folder,
+        fbin,
+        approximant,
+        n_phi,
+        m_arr,
+        single_detector_blocksize,
+        n_t,
+        detector_names,
+    )
 
-    # Process in parallel
-    lnlike_di = np.zeros((len(event_data.detector_names), len(intrinsic_indices)))
+    lnlike_di = np.zeros((len(detector_names), len(intrinsic_indices)))
     if n_procs > 1 and len(task_groups) > 1:
-        with mp.Pool(processes=n_procs, initializer=init_worker) as pool:
-            task_results = pool.map(_process_batch_group, worker_args)
+        with mp.Pool(
+            processes=n_procs,
+            initializer=init_single_detector_worker,
+            initargs=(init_args,),
+        ) as pool:
+            task_results = list(
+                pool.imap_unordered(_process_batch_group, task_groups, chunksize=1)
+            )
     else:
-        # Single process (no overhead)
-        task_results = [_process_batch_group(args) for args in worker_args]
+        _worker_state.clear()
+        init_single_detector_worker(init_args)
+        task_results = [_process_batch_group(tg) for tg in task_groups]
 
     # Combine results
     for task_result in task_results:

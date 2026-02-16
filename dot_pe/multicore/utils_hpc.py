@@ -9,7 +9,7 @@ import hashlib
 import os
 import platform
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -17,7 +17,8 @@ import numpy as np
 def init_worker():
     """
     Initialize worker process: disable nested BLAS/OpenMP threading.
-    Must be called before importing numpy/scipy in worker processes.
+    Sets env vars (for libraries that read them at import) and uses
+    threadpoolctl at runtime so already-loaded BLAS is also limited.
     """
     thread_vars = (
         "OMP_NUM_THREADS",
@@ -33,9 +34,15 @@ def init_worker():
             os.environ[var] = "FALSE"
         else:
             os.environ[var] = "1"
+    try:
+        import threadpoolctl
+        threadpoolctl.threadpool_limits(limits=1, user_api="blas")
+        threadpoolctl.threadpool_limits(limits=1, user_api="openmp")
+    except ImportError:
+        pass
 
 
-def get_machine_info() -> Dict[str, any]:
+def get_machine_info() -> Dict[str, Any]:
     """
     Introspect machine hardware (cores, cache sizes, memory).
     Returns dict with machine characteristics.

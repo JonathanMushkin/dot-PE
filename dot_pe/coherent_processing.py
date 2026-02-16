@@ -636,20 +636,23 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
 
         self.n_samples_discarded += n_discarded
 
-    def combine_prob_samples_with_next_block(self):
+    def combine_block_dict_into_prob_samples(self, block_dict):
         """
-        Combine the prob_samples dataframe with a likelihood block.
+        Combine the prob_samples dataframe with a likelihood block given as a dict.
+
+        The block_dict must contain the same keys as _next_block: i_k, e_k, o_k,
+        dh_k, hh_k, dist_marg_lnlike_k, bestfit_lnlike_k, bank_i_inds_k, bank_e_inds_k.
+        Used by the sequential combiner after HPC parallel block creation.
         """
-        # Guard against None or empty block
         if (
-            not self._next_block
-            or not isinstance(self._next_block, dict)
-            or "bestfit_lnlike_k" not in self._next_block
+            not block_dict
+            or not isinstance(block_dict, dict)
+            or "bestfit_lnlike_k" not in block_dict
         ):
             self.log("No valid block to combine with prob_samples")
             return
 
-        block = self._next_block
+        block = block_dict
         new_bestfit_lnlike_k = block["bestfit_lnlike_k"]
 
         # Assume prob_samples and the block are sorted by bestfit_lnlike.
@@ -736,6 +739,19 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
                     self.min_bestfit_lnlike_to_keep,
                 )
             )
+
+    def combine_prob_samples_with_next_block(self):
+        """
+        Combine the prob_samples dataframe with a likelihood block.
+        """
+        if (
+            not self._next_block
+            or not isinstance(self._next_block, dict)
+            or "bestfit_lnlike_k" not in self._next_block
+        ):
+            self.log("No valid block to combine with prob_samples")
+            return
+        self.combine_block_dict_into_prob_samples(self._next_block)
         self._next_block = {}
 
     def get_bestfit_and_marginalized_lnlike(self, par_dic):

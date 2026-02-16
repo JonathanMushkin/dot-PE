@@ -187,6 +187,72 @@ def run_test_with_cores(n_procs: int, artifacts_dir: Path, event_data_path: Path
         }
 
 
+def compare_rundirs_numerically(
+    rundir_hpc: Path,
+    rundir_seq: Path,
+    rtol: float = 1e-5,
+    atol: float = 1e-8,
+) -> dict:
+    """
+    Compare key outputs from an HPC run vs a sequential run for numerical equivalence.
+
+    Loads summary_results.json and samples.feather from both rundirs and checks
+    ln_evidence, n_effective, and sample column agreement within tolerance.
+    Use after running run_hpc() and inference.run() on the same inputs.
+
+    Returns
+    -------
+    dict
+        Keys: "match" (bool), "summary_diff" (dict), "samples_match" (bool), "message" (str).
+    """
+    out = {"match": True, "summary_diff": {}, "samples_match": True, "message": ""}
+    try:
+        sh = utils.read_json(rundir_hpc / "summary_results.json")
+        ss = utils.read_json(rundir_seq / "summary_results.json")
+    except Exception as e:
+        out["match"] = False
+        out["message"] = f"Cannot load summary: {e}"
+        return out
+
+    for key in ("ln_evidence", "n_effective", "n_effective_i", "n_effective_e"):
+        if key not in sh or key not in ss:
+            continue
+        a, b = float(sh[key]), float(ss[key])
+        diff = abs(a - b)
+        out["summary_diff"][key] = {"hpc": a, "seq": b, "diff": diff}
+        if not np.isclose(a, b, rtol=rtol, atol=atol):
+            out["match"] = False
+
+    try:
+        samples_hpc = pd.read_feather(rundir_hpc / "samples.feather")
+        samples_seq = pd.read_feather(rundir_seq / "samples.feather")
+    except Exception as e:
+        out["message"] = f"Cannot load samples: {e}"
+        return out
+
+    if set(samples_hpc.columns) != set(samples_seq.columns):
+        out["match"] = False
+        out["samples_match"] = False
+        out["message"] = "Sample columns differ"
+        return out
+    if len(samples_hpc) != len(samples_seq):
+        out["match"] = False
+        out["samples_match"] = False
+        out["message"] = f"Sample length differ: {len(samples_hpc)} vs {len(samples_seq)}"
+        return out
+
+    for col in samples_hpc.columns:
+        if not np.issubdtype(samples_hpc[col].dtype, np.number):
+            continue
+        if not np.allclose(
+            samples_hpc[col].values, samples_seq[col].values, rtol=rtol, atol=atol
+        ):
+            out["match"] = False
+            out["samples_match"] = False
+            out["message"] = out["message"] or f"Column {col} differs"
+    return out
+
+
 def main():
     """Main test function."""
     print("="*70)

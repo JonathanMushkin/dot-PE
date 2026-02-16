@@ -19,6 +19,10 @@ Create a dedicated “HPC mode” implementation in a new folder (e.g., hpc/ or 
 	•	coherent_processing_hpc.py
 	•	likelihood_calculating_hpc.py
 
+The HPC path must parallelize **both**:
+	•	Incoherent single-detector likelihood evaluation (already done in dot_pe/multicore).
+	•	**Coherent likelihood block creation** (create_likelihood_blocks / (i_block, e_block) pairs). Coherent block creation is typically ~half of runtime and must be parallelized for meaningful multi-core scaling.
+
 The existing code must remain untouched. The HPC path must be opt-in and directly comparable against the original implementation.
 
 Performance Target
@@ -27,6 +31,7 @@ The new implementation should:
 	•	Show improved wall-clock scaling when increasing from ~4 cores to 20–40+ cores.
 	•	Eliminate large cumulative lock/wait overhead.
 	•	Improve throughput per batch in coherent inference.
+	•	Parallelize coherent likelihood block creation (not only incoherent selection), since that phase is typically ~half of total runtime.
 
 Constraints
 	•	Preserve scientific correctness.

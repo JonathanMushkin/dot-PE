@@ -4,7 +4,7 @@ High-performance computing (HPC) multi-core parallelization for DOT-PE inference
 
 ## Overview
 
-This module provides process-level parallelized versions of the inference pipeline, designed to scale efficiently across many CPU cores. All implementations maintain API equivalence with the original `inference.run()` function.
+This module provides process-level parallelized versions of the inference pipeline, designed to scale efficiently across many CPU cores. Parallelism applies to **incoherent selection** (single-detector likelihood batches) and **coherent likelihood block creation** ((i_block, e_block) pairs). All implementations maintain API equivalence with the original `inference.run()` function.
 
 ## Design Principles
 
@@ -104,7 +104,7 @@ rundir = run_hpc(..., hpc_config=best_config)
 
 - **`inference_hpc.py`**: Main entry point (`run_hpc()`) - orchestrates the HPC pipeline
 - **`single_detector_hpc.py`**: Parallelized single-detector likelihood evaluation
-- **`coherent_processing_hpc.py`**: Parallelized coherent likelihood block processing (TODO: fully implemented)
+- **`coherent_processing_hpc.py`**: Parallelized coherent likelihood block processing
 - **`config.py`**: HPC configuration and autotuning utilities
 - **`utils_hpc.py`**: Worker initialization, machine introspection, batch partitioning
 
@@ -114,11 +114,11 @@ rundir = run_hpc(..., hpc_config=best_config)
    - Each worker processes groups of batches sequentially
    - Results are combined in the main process
 
-2. **Coherent Processing**: Parallelized across (i_block, e_block) pairs
-   - Each worker processes groups of block pairs
-   - Block files are written to disk, then combined sequentially
+2. **Coherent processing**: Parallelize (i_block, e_block) block creation; combine results sequentially in the main process.
+   - Workers create likelihood blocks and write block data to disk
+   - Main process loads blocks in (i_block, e_block) order and combines into prob_samples
 
-3. **Other Steps**: Currently use original implementations (cross-bank selection, extrinsic sampling, aggregation)
+3. **Other Steps**: Use original implementations (cross-bank selection, extrinsic sampling, aggregation)
 
 ## Configuration Caching
 
@@ -166,8 +166,7 @@ Monitor memory usage and adjust `i_batch` accordingly.
 ## Limitations
 
 1. **EventData Serialization**: For multiprocessing, pass `event` as a path (str/Path), not an EventData object
-2. **Coherent Block Processing**: Full parallelization of coherent processing is planned but not yet complete
-3. **Profiling**: `run_and_profile_hpc()` provides basic profiling; detailed multiprocessing profiling requires additional tools
+2. **Profiling**: `run_and_profile_hpc()` provides basic profiling; detailed multiprocessing profiling requires additional tools
 
 ## Migration from `inference.run()`
 
@@ -187,7 +186,6 @@ The only difference is that `event` should be a path (not EventData object) for 
 
 ## Future Work
 
-- [ ] Full parallelization of coherent block processing
 - [ ] Parallelization across banks
 - [ ] GPU acceleration support
 - [ ] Distributed memory (MPI) support for multi-node systems

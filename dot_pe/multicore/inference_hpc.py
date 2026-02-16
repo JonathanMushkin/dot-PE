@@ -5,8 +5,9 @@ Main entry point: run_hpc() - drop-in replacement for inference.run()
 with identical signature and outputs, optimized for 20-100+ core systems.
 """
 
+import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -18,11 +19,17 @@ from dot_pe.inference import (
     run_coherent_inference_per_bank,
     aggregate_and_save_results,
 )
-from dot_pe.event_data import EventData
-from dot_pe.utils import get_event_data
+from cogwheel.data import EventData
+from cogwheel.utils import exp_normalize
+from dot_pe.utils import inds_to_blocks, safe_logsumexp
+from dot_pe.base_sampler_free_sampling import get_n_effective_total_i_e
+from dot_pe.coherent_processing import CoherentLikelihoodProcessor
+from dot_pe.likelihood_calculating import LinearFree
+from cogwheel.waveform import WaveformGenerator
 
 from .single_detector_hpc import collect_int_samples_from_single_detectors_hpc
-from .config import HPCConfig, load_cached_config, autotune_hpc_config
+from .coherent_processing_hpc import create_likelihood_blocks_hpc
+from .config import HPCConfig, load_cached_config
 from .utils_hpc import get_machine_info
 
 
@@ -53,8 +60,6 @@ def select_intrinsic_samples_per_bank_incoherently_hpc(
     Uses multiprocessing to parallelize single-detector likelihood evaluation
     across banks and batches.
     """
-    from dot_pe.inference import select_intrinsic_samples_per_bank_incoherently
-
     # For now, use the original function but with HPC single-detector processing
     # In the future, we could parallelize across banks too
     candidate_inds_by_bank = {}
@@ -105,6 +110,221 @@ def select_intrinsic_samples_per_bank_incoherently_hpc(
         print(f"Bank {bank_id}: {len(inds)} intrinsic samples evaluated.")
 
     return candidate_inds_by_bank, lnlikes_by_bank, lnlikes_di_by_bank
+
+
+def run_coherent_inference_hpc(
+    event_data: EventData,
+    bank_rundir: Path,
+    top_rundir: Path,
+    par_dic_0: Dict,
+    bank_folder: Union[str, Path],
+    n_total_samples: int,
+    inds: np.ndarray,
+    n_ext: int,
+    n_phi: int,
+    m_arr: np.ndarray,
+    blocksize: int,
+    renormalize_log_prior_weights_i: bool = False,
+    intrinsic_logw_lookup=None,
+    size_limit: int = 10**7,
+    max_bestfit_lnlike_diff: float = 20,
+    event_data_path: Optional[Union[str, Path]] = None,
+    n_procs: Optional[int] = None,
+    pairs_per_task: int = 4,
+) -> Tuple[float, float, float, float, float, int]:
+    """
+    HPC parallelized coherent inference: same as run_coherent_inference but
+    uses create_likelihood_blocks_hpc for parallel block creation.
+    Requires event_data_path (str or Path) for worker processes; if None,
+    uses getattr(event_data, 'path', None).
+    """
+    bank_folder = Path(bank_folder)
+    waveform_dir = bank_folder / "waveforms"
+    bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
+    with open(bank_folder / "bank_config.json", "r", encoding="utf-8") as f:
+        bank_config = json.load(f)
+        fbin = np.array(bank_config["fbin"])
+        approximant = bank_config["approximant"]
+
+    wfg = WaveformGenerator.from_event_data(event_data, approximant)
+    likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
+
+    clp = CoherentLikelihoodProcessor(
+        bank_file_path,
+        waveform_dir,
+        n_phi,
+        m_arr,
+        likelihood_linfree,
+        size_limit=size_limit,
+        max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
+        renormalize_log_prior_weights_i=renormalize_log_prior_weights_i,
+        intrinsic_logw_lookup=intrinsic_logw_lookup,
+    )
+
+    i_blocks = inds_to_blocks(inds, blocksize)
+    e_blocks = inds_to_blocks(np.arange(n_ext), blocksize)
+    clp.load_extrinsic_samples_data(top_rundir)
+    clp.to_json(bank_rundir, overwrite=True)
+
+    path_for_workers = event_data_path or getattr(event_data, "path", None)
+    if path_for_workers is None:
+        raise ValueError(
+            "run_coherent_inference_hpc requires event_data_path or event_data.path for worker processes"
+        )
+
+    print(f"Creating {len(i_blocks)} x {len(e_blocks)} likelihood blocks (HPC)...")
+    _ = create_likelihood_blocks_hpc(
+        clp,
+        tempdir=bank_rundir,
+        i_blocks=i_blocks,
+        e_blocks=e_blocks,
+        event_data_path=path_for_workers,
+        top_rundir=top_rundir,
+        bank_folder=bank_folder,
+        par_dic_0=par_dic_0,
+        n_phi=n_phi,
+        m_arr=m_arr,
+        blocksize=blocksize,
+        n_ext=n_ext,
+        inds=inds,
+        size_limit=size_limit,
+        max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
+        renormalize_log_prior_weights_i=renormalize_log_prior_weights_i,
+        intrinsic_logw_lookup=intrinsic_logw_lookup,
+        n_procs=n_procs,
+        pairs_per_task=pairs_per_task,
+    )
+
+    clp.prob_samples["weights"] = exp_normalize(clp.prob_samples["ln_posterior"].values)
+    clp.prob_samples.to_feather(bank_rundir / "prob_samples.feather")
+
+    cache_path = bank_rundir / "intrinsic_sample_processor_cache.json"
+    cache_dict = {
+        int(k): float(v)
+        for k, v in clp.intrinsic_sample_processor.cached_dt_linfree_relative.items()
+    }
+    with open(cache_path, "w") as f:
+        json.dump(cache_dict, f)
+
+    ln_evidence = safe_logsumexp(clp.prob_samples["ln_posterior"].values) - np.log(
+        n_total_samples
+    )
+    ln_evidence_discarded = clp.logsumexp_discarded_ln_posterior - np.log(
+        n_total_samples
+    )
+    n_effective, n_effective_i, n_effective_e = get_n_effective_total_i_e(
+        clp.prob_samples, assume_normalized=False
+    )
+    return (
+        ln_evidence,
+        ln_evidence_discarded,
+        n_effective,
+        n_effective_i,
+        n_effective_e,
+        clp.n_distance_marginalizations,
+    )
+
+
+def run_coherent_inference_per_bank_hpc(
+    *,
+    banks: Dict[str, Path],
+    event_data: EventData,
+    event_path: Optional[Union[str, Path]],
+    rundir: Path,
+    banks_dir: Path,
+    par_dic_0: Dict,
+    selected_inds_by_bank: Dict[str, np.ndarray],
+    n_int_dict: Dict[str, int],
+    n_ext: int,
+    n_phi: int,
+    m_arr: np.ndarray,
+    blocksize: int,
+    size_limit: int,
+    max_bestfit_lnlike_diff: float,
+    bank_logw_override_dict: Optional[Dict],
+    n_procs: Optional[int] = None,
+    pairs_per_task: int = 4,
+) -> List[Dict[str, Any]]:
+    """Run coherent inference per bank using HPC parallel block creation."""
+    if event_path is None:
+        return run_coherent_inference_per_bank(
+            banks=banks,
+            event_data=event_data,
+            rundir=rundir,
+            banks_dir=banks_dir,
+            par_dic_0=par_dic_0,
+            selected_inds_by_bank=selected_inds_by_bank,
+            n_int_dict=n_int_dict,
+            n_ext=n_ext,
+            n_phi=n_phi,
+            m_arr=m_arr,
+            blocksize=blocksize,
+            size_limit=size_limit,
+            max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
+            bank_logw_override_dict=bank_logw_override_dict,
+        )
+
+    print("\n=== Coherent inference per bank (HPC) ===")
+    bank_results = []
+    for bank_id, bank_path in banks.items():
+        print(f"\nProcessing bank: {bank_id}")
+        bank_rundir = banks_dir / bank_id
+        inds = selected_inds_by_bank[bank_id]
+        n_int_k = n_int_dict[bank_id]
+        n_total_samples = n_phi * n_ext * n_int_k
+
+        intrinsic_logw_lookup = None
+        if bank_logw_override_dict is not None and bank_id in bank_logw_override_dict:
+            override_logw_full = np.asarray(bank_logw_override_dict[bank_id])
+            override_logw = override_logw_full[inds]
+            intrinsic_logw_lookup = (inds, override_logw)
+
+        (
+            lnZ_k,
+            lnZ_discarded_k,
+            n_effective_k,
+            n_effective_i_k,
+            n_effective_e_k,
+            n_distance_marginalizations_k,
+        ) = run_coherent_inference_hpc(
+            event_data=event_data,
+            bank_rundir=bank_rundir,
+            top_rundir=rundir,
+            par_dic_0=par_dic_0,
+            bank_folder=bank_path,
+            n_total_samples=n_total_samples,
+            inds=inds,
+            n_ext=n_ext,
+            n_phi=n_phi,
+            m_arr=m_arr,
+            blocksize=blocksize,
+            renormalize_log_prior_weights_i=False,
+            intrinsic_logw_lookup=intrinsic_logw_lookup,
+            size_limit=size_limit,
+            max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
+            event_data_path=event_path,
+            n_procs=n_procs,
+            pairs_per_task=pairs_per_task,
+        )
+
+        prob_samples_k = pd.read_feather(bank_rundir / "prob_samples.feather")
+        prob_samples_k["bank_id"] = bank_id
+
+        bank_results.append(
+            {
+                "bank_id": bank_id,
+                "lnZ_k": lnZ_k,
+                "lnZ_discarded_k": lnZ_discarded_k,
+                "N_k": n_total_samples,
+                "n_effective_k": n_effective_k,
+                "n_effective_i_k": n_effective_i_k,
+                "n_effective_e_k": n_effective_e_k,
+                "n_distance_marginalizations_k": n_distance_marginalizations_k,
+                "n_inds_used": len(inds),
+            }
+        )
+
+    return bank_results
 
 
 def run_hpc(
@@ -190,7 +410,7 @@ def run_hpc(
     if batches_per_task is not None:
         hpc_config.batches_per_task = batches_per_task
 
-    print(f"\n=== HPC Multi-core Inference ===")
+    print("\n=== HPC Multi-core Inference ===")
     print(f"HPC Config: n_procs={hpc_config.n_procs}, i_batch={hpc_config.i_batch}, "
           f"batches_per_task={hpc_config.batches_per_task}")
 
@@ -286,11 +506,14 @@ def run_hpc(
         extrinsic_samples=extrinsic_samples,
     )
 
-    # Step 5: Coherent inference per bank (same as original for now)
-    # TODO: Add HPC parallelization for coherent block processing
-    per_bank_results = run_coherent_inference_per_bank(
+    # Step 5: Coherent inference per bank (HPC parallel block creation)
+    event_path = (
+        event if isinstance(event, (str, Path)) else getattr(ctx["event_data"], "path", None)
+    )
+    per_bank_results = run_coherent_inference_per_bank_hpc(
         banks=ctx["banks"],
         event_data=ctx["event_data"],
+        event_path=event_path,
         rundir=ctx["rundir"],
         banks_dir=ctx["banks_dir"],
         par_dic_0=ctx["par_dic_0"],
@@ -303,6 +526,8 @@ def run_hpc(
         size_limit=size_limit,
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
         bank_logw_override_dict=ctx["bank_logw_override_dict"],
+        n_procs=hpc_config.n_procs,
+        pairs_per_task=getattr(hpc_config, "pairs_per_task", 4),
     )
 
     # Step 6: Aggregate and save (same as original)
@@ -323,7 +548,7 @@ def run_and_profile_hpc(
     *args,
     hpc_config: Optional[HPCConfig] = None,
     **kwargs
-) -> Tuple[Path, any]:
+) -> Tuple[Path, Any]:
     """
     HPC version of inference.run_and_profile().
 
