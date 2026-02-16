@@ -21,7 +21,7 @@ from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS
 from . import likelihood_calculating, sample_processing
 from .base_sampler_free_sampling import get_top_n_indices_two_pointer, Loggable
 
-# Cache for phasors in get_response_over_distance_and_lnlike_optimized (key: (n_phi, tuple(m_arr)))
+# Cache for phasors in get_response_over_distance_and_lnlike (key: (n_phi, tuple(m_arr)))
 _phasor_cache = {}
 
 
@@ -585,118 +585,6 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         m_arr,
     ):
         """
-        Returns
-        -------
-        r_iotp : numpy.ndarray
-            detector_response / distance per intrinsic sample (i),
-            orbital phase (o), timeshift (t), and polarization (p).
-
-        lnlike_iot : numpy.ndarray
-            Likelihood using specified intrinsic sample (i), orbital
-            phase (o), timeshift (t).
-        """
-        # shapes
-        i, m, p, b = h_impb.shape
-        t = timeshift_dbt.shape[-1]
-
-        # temporary shapes, applied to improve runtime
-        x = i * m * p
-        y = i * t * p
-        z = i * t * n_phi
-
-        phi_grid_o = np.linspace(0, 2 * np.pi, n_phi, endpoint=False)  # o
-        m_inds, mprime_inds = zip(*itertools.combinations_with_replacement(range(m), 2))
-        dh_phasor_mo = np.exp(-1j * np.outer(m_arr, phi_grid_o))  # mo
-        hh_phasor_Mo = np.exp(
-            1j * np.outer(m_arr[m_inds,] - m_arr[mprime_inds,], phi_grid_o)
-        )  # mo
-
-        #########
-        # <d|h>
-        #########
-        # complex inner product per i, mode, polarization, timeshift
-        h_impb_conj = h_impb.conj()
-        dh_impb = dh_weights_dmpb[0] * asd_drift_d[0] ** -2 * h_impb_conj
-        dh_xb = dh_impb.reshape(x, b)
-        timeshift_conj_bt = timeshift_dbt[0].conj()
-        dh_xt = dh_xb @ timeshift_conj_bt
-        dh_impt = dh_xt.reshape(i, m, p, t)
-        # apply orbital phase, sum over modes
-        dh_itpm = np.moveaxis(dh_impt, (1, 3), (3, 1))
-        dh_ym = dh_itpm.reshape(y, m)
-        dh_yo = dh_ym @ dh_phasor_mo
-        dh_itpo = dh_yo.real.reshape(i, t, p, n_phi)
-        dh_iotp = np.moveaxis(dh_itpo, 3, 1)
-
-        #########
-        # <h|h>
-        #########
-        # complex inner proct per i, mode-pair, and polarization-pair
-        hh_weights_drift_Mppb = hh_weights_dmppb[0] * asd_drift_d[0] ** -2
-        h_iMpb = h_impb[:, m_inds]
-        h_iMpb_conj = h_impb_conj[:, mprime_inds]
-        hh_iMpp = np.einsum(
-            "MpPb, iMpb, iMPb -> iMpP",
-            hh_weights_drift_Mppb,
-            h_iMpb,
-            h_iMpb_conj,
-            optimize=True,
-        )
-
-        # apply orbital phase, and sum over modes
-        hh_ippM = np.moveaxis(hh_iMpp, (2, 3, 1), (1, 2, 3))
-        hh_ippo = hh_ippM @ hh_phasor_Mo
-        hh_iopp = np.moveaxis(hh_ippo.real, (1, 2, 3), (2, 3, 1))
-
-        # inverse the matrix
-        hh_det_iopp_reciptocal = 1 / (
-            hh_iopp[..., 0, 0] * hh_iopp[..., 1, 1]
-            - hh_iopp[..., 0, 1] * hh_iopp[..., 1, 0]
-        )
-
-        hh_inv_iopp = np.empty_like(hh_iopp)
-        hh_inv_iopp[..., 0, 0] = hh_iopp[..., 1, 1] * hh_det_iopp_reciptocal
-        hh_inv_iopp[..., 0, 1] = -hh_iopp[..., 0, 1] * hh_det_iopp_reciptocal
-        hh_inv_iopp[..., 1, 0] = -hh_iopp[..., 1, 0] * hh_det_iopp_reciptocal
-        hh_inv_iopp[..., 1, 1] = hh_iopp[..., 0, 0] * hh_det_iopp_reciptocal
-
-        ########################
-        # Optimal solutions
-        ########################
-
-        # r[j,k] is the optimal response/distance of the j-th (i,o,t)
-        # tuple.
-
-        dh_zp = dh_iotp.reshape(z, p)
-        hh_inv_zpp = np.reshape(
-            hh_inv_iopp[:, :, None, ...].repeat(repeats=t, axis=2), (z, p, p)
-        )
-
-        r_zp = np.einsum("zpP, zP -> zp", hh_inv_zpp, dh_zp, optimize=True)
-        lnlike_z = 0.5 * np.einsum("zp, zp-> z", r_zp, dh_zp, optimize=True)
-
-        # reshape
-        r_iotp = r_zp.reshape((i, n_phi, t, p))
-        lnlike_iot = lnlike_z.reshape((i, n_phi, t))
-
-        return r_iotp, lnlike_iot
-
-    @classmethod
-    def get_response_over_distance_and_lnlike_optimized(
-        cls,
-        dh_weights_dmpb,
-        hh_weights_dmppb,
-        h_impb,
-        timeshift_dbt,
-        asd_drift_d,
-        n_phi,
-        m_arr,
-    ):
-        """
-        Same API and numerical behavior as get_response_over_distance_and_lnlike,
-        for performance comparison. Avoids the large (z, p, p) allocation by using
-        broadcasting einsum over (i, o, t) and enforces C-contiguity before matmuls.
-
         Returns
         -------
         r_iotp : numpy.ndarray
