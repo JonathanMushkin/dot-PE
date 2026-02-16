@@ -21,6 +21,24 @@ from cogwheel.utils import JSONMixin, DIR_PERMISSIONS, FILE_PERMISSIONS
 from . import likelihood_calculating, sample_processing
 from .base_sampler_free_sampling import get_top_n_indices_two_pointer, Loggable
 
+# Cache for phasors in get_response_over_distance_and_lnlike_optimized (key: (n_phi, tuple(m_arr)))
+_phasor_cache = {}
+
+
+def _get_phasors(n_phi, m_arr):
+    """Return (dh_phasor_mo, hh_phasor_Mo) for orbital phase, cached by (n_phi, m_arr)."""
+    key = (n_phi, tuple(m_arr))
+    if key not in _phasor_cache:
+        phi_grid_o = np.linspace(0, 2 * np.pi, n_phi, endpoint=False)
+        m = len(m_arr)
+        m_inds, mprime_inds = zip(*itertools.combinations_with_replacement(range(m), 2))
+        dh_phasor_mo = np.exp(-1j * np.outer(m_arr, phi_grid_o))
+        hh_phasor_Mo = np.exp(
+            1j * np.outer(m_arr[list(m_inds)] - m_arr[list(mprime_inds)], phi_grid_o)
+        )
+        _phasor_cache[key] = (dh_phasor_mo, hh_phasor_Mo)
+    return _phasor_cache[key]
+
 
 class SingleDetectorProcessor(JSONMixin, Loggable):
     """
@@ -661,6 +679,99 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         r_iotp = r_zp.reshape((i, n_phi, t, p))
         lnlike_iot = lnlike_z.reshape((i, n_phi, t))
 
+        return r_iotp, lnlike_iot
+
+    @classmethod
+    def get_response_over_distance_and_lnlike_optimized(
+        cls,
+        dh_weights_dmpb,
+        hh_weights_dmppb,
+        h_impb,
+        timeshift_dbt,
+        asd_drift_d,
+        n_phi,
+        m_arr,
+    ):
+        """
+        Same API and numerical behavior as get_response_over_distance_and_lnlike,
+        for performance comparison. Avoids the large (z, p, p) allocation by using
+        broadcasting einsum over (i, o, t) and enforces C-contiguity before matmuls.
+
+        Returns
+        -------
+        r_iotp : numpy.ndarray
+            Shape (i, n_phi, t, p). Detector response / distance.
+        lnlike_iot : numpy.ndarray
+            Shape (i, n_phi, t). Likelihood per (i, o, t).
+        """
+        i, m, p, b = h_impb.shape
+        t = timeshift_dbt.shape[-1]
+        x = i * m * p
+        y = i * t * p
+
+        # Reuse drift scaling to avoid repeated work
+        drift_inv2 = asd_drift_d[0] ** -2
+
+        # Phasors (cached by n_phi and m_arr)
+        dh_phasor_mo, hh_phasor_Mo = _get_phasors(n_phi, m_arr)
+        dh_phasor_mo = np.ascontiguousarray(dh_phasor_mo)
+        hh_phasor_Mo = np.ascontiguousarray(hh_phasor_Mo)
+
+        m_inds, mprime_inds = zip(*itertools.combinations_with_replacement(range(m), 2))
+
+        #########
+        # <d|h>
+        #########
+        h_impb_conj = h_impb.conj()
+        dh_impb = dh_weights_dmpb[0] * drift_inv2 * h_impb_conj
+        # C-contiguous for BLAS matmul (x, b) @ (b, t)
+        dh_xb = np.ascontiguousarray(dh_impb.reshape(x, b))
+        timeshift_conj_bt = np.ascontiguousarray(timeshift_dbt[0].conj())
+        dh_xt = dh_xb @ timeshift_conj_bt
+        dh_impt = dh_xt.reshape(i, m, p, t)
+        dh_itpm = np.moveaxis(dh_impt, (1, 3), (3, 1))
+        # C-contiguous for BLAS (y, m) @ (m, o)
+        dh_ym = np.ascontiguousarray(dh_itpm.reshape(y, m))
+        dh_yo = dh_ym @ dh_phasor_mo
+        dh_itpo = dh_yo.real.reshape(i, t, p, n_phi)
+        dh_iotp = np.moveaxis(dh_itpo, 3, 1)
+
+        #########
+        # <h|h>
+        #########
+        hh_weights_drift_Mppb = hh_weights_dmppb[0] * drift_inv2
+        h_iMpb = h_impb[:, m_inds]
+        h_iMpb_conj = h_impb_conj[:, mprime_inds]
+        hh_iMpp = np.einsum(
+            "MpPb, iMpb, iMPb -> iMpP",
+            hh_weights_drift_Mppb,
+            h_iMpb,
+            h_iMpb_conj,
+            optimize=True,
+        )
+        hh_ippM = np.moveaxis(hh_iMpp, (2, 3, 1), (1, 2, 3))
+        # C-contiguous for BLAS (i,p,p,M) @ (M,o)
+        hh_ippM = np.ascontiguousarray(hh_ippM)
+        hh_ippo = hh_ippM @ hh_phasor_Mo
+        hh_iopp = np.moveaxis(hh_ippo.real, (1, 2, 3), (2, 3, 1))
+
+        # 2x2 inverse per (i, o)
+        hh_det_iopp_reciptocal = 1 / (
+            hh_iopp[..., 0, 0] * hh_iopp[..., 1, 1]
+            - hh_iopp[..., 0, 1] * hh_iopp[..., 1, 0]
+        )
+        hh_inv_iopp = np.empty_like(hh_iopp)
+        hh_inv_iopp[..., 0, 0] = hh_iopp[..., 1, 1] * hh_det_iopp_reciptocal
+        hh_inv_iopp[..., 0, 1] = -hh_iopp[..., 0, 1] * hh_det_iopp_reciptocal
+        hh_inv_iopp[..., 1, 0] = -hh_iopp[..., 1, 0] * hh_det_iopp_reciptocal
+        hh_inv_iopp[..., 1, 1] = hh_iopp[..., 0, 0] * hh_det_iopp_reciptocal
+
+        ########################
+        # Optimal solutions: no (z, p, p) allocation; broadcast over (i, o, t)
+        ########################
+        # r[i,o,t,:] = hh_inv_iopp[i,o,:,:] @ dh_iotp[i,o,t,:]; contract over P
+        r_iotp = np.einsum("iopP,iotP->iotp", hh_inv_iopp, dh_iotp, optimize=True)
+        lnlike_iot = 0.5 * (r_iotp * dh_iotp).sum(axis=-1)
         return r_iotp, lnlike_iot
 
     def get_response_over_distance_and_lnlike_for_bank_samples(
