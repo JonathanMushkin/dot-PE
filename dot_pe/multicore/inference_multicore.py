@@ -1,7 +1,7 @@
 """
-HPC multi-core parallelized inference pipeline.
+Multicore parallelized inference pipeline.
 
-Main entry point: run_hpc() - drop-in replacement for inference.run()
+Main entry point: run_multicore() - drop-in replacement for inference.run()
 with identical signature and outputs, optimized for 20-100+ core systems.
 """
 
@@ -27,13 +27,13 @@ from dot_pe.coherent_processing import CoherentLikelihoodProcessor
 from dot_pe.likelihood_calculating import LinearFree
 from cogwheel.waveform import WaveformGenerator
 
-from .single_detector_hpc import collect_int_samples_from_single_detectors_hpc
-from .coherent_processing_hpc import create_likelihood_blocks_hpc
-from .config import HPCConfig, load_cached_config
-from .utils_hpc import get_machine_info
+from .single_detector_multicore import collect_int_samples_from_single_detectors_multicore
+from .coherent_processing_multicore import create_likelihood_blocks_multicore
+from .config import MulticoreConfig, load_cached_config
+from .utils_multicore import get_machine_info
 
 
-def select_intrinsic_samples_per_bank_incoherently_hpc(
+def select_intrinsic_samples_per_bank_incoherently_multicore(
     *,
     banks: Dict[str, Path],
     event_data: Union[EventData, str, Path],
@@ -48,20 +48,18 @@ def select_intrinsic_samples_per_bank_incoherently_hpc(
     load_inds: bool,
     inds_path_dict: Optional[Dict[str, Path]],
     banks_dir: Path,
-    hpc_config: HPCConfig,
+    multicore_config: MulticoreConfig,
 ) -> Tuple[
     Dict[str, np.ndarray],
     Optional[Dict[str, np.ndarray]],
     Optional[Dict[str, np.ndarray]],
 ]:
     """
-    HPC parallelized version of select_intrinsic_samples_per_bank_incoherently.
+    Multicore parallelized version of select_intrinsic_samples_per_bank_incoherently.
 
     Uses multiprocessing to parallelize single-detector likelihood evaluation
     across banks and batches.
     """
-    # For now, use the original function but with HPC single-detector processing
-    # In the future, we could parallelize across banks too
     candidate_inds_by_bank = {}
     lnlikes_by_bank = {}
     lnlikes_di_by_bank = {}
@@ -83,8 +81,7 @@ def select_intrinsic_samples_per_bank_incoherently_hpc(
             print(f"Collecting intrinsic samples for bank {bank_id}...")
             n_phi_incoherent = n_phi_incoherent if n_phi_incoherent is not None else n_phi
 
-            # Use HPC parallelized version
-            inds, lnlikes_di, incoherent_lnlikes = collect_int_samples_from_single_detectors_hpc(
+            inds, lnlikes_di, incoherent_lnlikes = collect_int_samples_from_single_detectors_multicore(
                 event_data=event_data,
                 par_dic_0=par_dic_0,
                 single_detector_blocksize=single_detector_blocksize,
@@ -98,9 +95,9 @@ def select_intrinsic_samples_per_bank_incoherently_hpc(
                 if preselected_indices_dict
                 else None,
                 apply_threshold=False,
-                n_procs=hpc_config.n_procs,
-                i_batch=hpc_config.i_batch,
-                batches_per_task=hpc_config.batches_per_task,
+                n_procs=multicore_config.n_procs,
+                i_batch=multicore_config.i_batch,
+                batches_per_task=multicore_config.batches_per_task,
             )
 
         candidate_inds_by_bank[bank_id] = inds
@@ -112,7 +109,7 @@ def select_intrinsic_samples_per_bank_incoherently_hpc(
     return candidate_inds_by_bank, lnlikes_by_bank, lnlikes_di_by_bank
 
 
-def run_coherent_inference_hpc(
+def run_coherent_inference_multicore(
     event_data: EventData,
     bank_rundir: Path,
     top_rundir: Path,
@@ -124,6 +121,7 @@ def run_coherent_inference_hpc(
     n_phi: int,
     m_arr: np.ndarray,
     blocksize: int,
+    e_blocksize: Optional[int] = None,
     renormalize_log_prior_weights_i: bool = False,
     intrinsic_logw_lookup=None,
     size_limit: int = 10**7,
@@ -133,8 +131,8 @@ def run_coherent_inference_hpc(
     pairs_per_task: int = 4,
 ) -> Tuple[float, float, float, float, float, int]:
     """
-    HPC parallelized coherent inference: same as run_coherent_inference but
-    uses create_likelihood_blocks_hpc for parallel block creation.
+    Multicore parallelized coherent inference: same as run_coherent_inference but
+    uses create_likelihood_blocks_multicore for parallel block creation.
     Requires event_data_path (str or Path) for worker processes; if None,
     uses getattr(event_data, 'path', None).
     """
@@ -161,19 +159,20 @@ def run_coherent_inference_hpc(
         intrinsic_logw_lookup=intrinsic_logw_lookup,
     )
 
+    e_sz = blocksize if e_blocksize is None else e_blocksize
     i_blocks = inds_to_blocks(inds, blocksize)
-    e_blocks = inds_to_blocks(np.arange(n_ext), blocksize)
+    e_blocks = inds_to_blocks(np.arange(n_ext), e_sz)
     clp.load_extrinsic_samples_data(top_rundir)
     clp.to_json(bank_rundir, overwrite=True)
 
     path_for_workers = event_data_path or getattr(event_data, "path", None)
     if path_for_workers is None:
         raise ValueError(
-            "run_coherent_inference_hpc requires event_data_path or event_data.path for worker processes"
+            "run_coherent_inference_multicore requires event_data_path or event_data.path for worker processes"
         )
 
-    print(f"Creating {len(i_blocks)} x {len(e_blocks)} likelihood blocks (HPC)...")
-    _ = create_likelihood_blocks_hpc(
+    print(f"Creating {len(i_blocks)} x {len(e_blocks)} likelihood blocks (multicore)...")
+    _ = create_likelihood_blocks_multicore(
         clp,
         tempdir=bank_rundir,
         i_blocks=i_blocks,
@@ -185,6 +184,7 @@ def run_coherent_inference_hpc(
         n_phi=n_phi,
         m_arr=m_arr,
         blocksize=blocksize,
+        e_blocksize=e_sz,
         n_ext=n_ext,
         inds=inds,
         size_limit=size_limit,
@@ -197,6 +197,12 @@ def run_coherent_inference_hpc(
 
     clp.prob_samples["weights"] = exp_normalize(clp.prob_samples["ln_posterior"].values)
     clp.prob_samples.to_feather(bank_rundir / "prob_samples.feather")
+
+    # Multicore path: main process never ran create_a_likelihood_block, so its cache is empty.
+    # Populate cache for every intrinsic index in prob_samples so postprocess can look them up.
+    waveform_dir = bank_folder / "waveforms"
+    unique_i = np.unique(clp.prob_samples["i"].values)
+    clp.intrinsic_sample_processor.load_amp_and_phase(waveform_dir, unique_i)
 
     cache_path = bank_rundir / "intrinsic_sample_processor_cache.json"
     cache_dict = {
@@ -225,7 +231,7 @@ def run_coherent_inference_hpc(
     )
 
 
-def run_coherent_inference_per_bank_hpc(
+def run_coherent_inference_per_bank_multicore(
     *,
     banks: Dict[str, Path],
     event_data: EventData,
@@ -239,13 +245,14 @@ def run_coherent_inference_per_bank_hpc(
     n_phi: int,
     m_arr: np.ndarray,
     blocksize: int,
-    size_limit: int,
-    max_bestfit_lnlike_diff: float,
-    bank_logw_override_dict: Optional[Dict],
+    e_blocksize: Optional[int] = None,
+    size_limit: int = 10**7,
+    max_bestfit_lnlike_diff: float = 20,
+    bank_logw_override_dict: Optional[Dict] = None,
     n_procs: Optional[int] = None,
     pairs_per_task: int = 4,
 ) -> List[Dict[str, Any]]:
-    """Run coherent inference per bank using HPC parallel block creation."""
+    """Run coherent inference per bank using multicore parallel block creation."""
     if event_path is None:
         return run_coherent_inference_per_bank(
             banks=banks,
@@ -259,12 +266,13 @@ def run_coherent_inference_per_bank_hpc(
             n_phi=n_phi,
             m_arr=m_arr,
             blocksize=blocksize,
+            e_blocksize=e_blocksize,
             size_limit=size_limit,
             max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
             bank_logw_override_dict=bank_logw_override_dict,
         )
 
-    print("\n=== Coherent inference per bank (HPC) ===")
+    print("\n=== Coherent inference per bank (multicore) ===")
     bank_results = []
     for bank_id, bank_path in banks.items():
         print(f"\nProcessing bank: {bank_id}")
@@ -286,7 +294,7 @@ def run_coherent_inference_per_bank_hpc(
             n_effective_i_k,
             n_effective_e_k,
             n_distance_marginalizations_k,
-        ) = run_coherent_inference_hpc(
+        ) = run_coherent_inference_multicore(
             event_data=event_data,
             bank_rundir=bank_rundir,
             top_rundir=rundir,
@@ -298,6 +306,7 @@ def run_coherent_inference_per_bank_hpc(
             n_phi=n_phi,
             m_arr=m_arr,
             blocksize=blocksize,
+            e_blocksize=e_blocksize,
             renormalize_log_prior_weights_i=False,
             intrinsic_logw_lookup=intrinsic_logw_lookup,
             size_limit=size_limit,
@@ -327,7 +336,7 @@ def run_coherent_inference_per_bank_hpc(
     return bank_results
 
 
-def run_hpc(
+def run_multicore(
     event: Union[str, Path, EventData],
     bank_folder: Union[str, Path, List[Union[str, Path]], Tuple[Union[str, Path], ...]],
     n_ext: int,
@@ -335,6 +344,7 @@ def run_hpc(
     n_t: int,
     n_int: Union[int, List[int], Dict[str, int], None] = None,
     blocksize: int = 512,
+    e_blocksize: Optional[int] = None,
     single_detector_blocksize: int = 512,
     i_int_start: int = 0,
     seed: int = None,
@@ -350,6 +360,7 @@ def run_hpc(
     max_bestfit_lnlike_diff: float = 20,
     mchirp_guess: float = None,
     extrinsic_samples: Union[str, Path] = None,
+    marg_info_path: Optional[Union[str, Path]] = None,
     n_phi_incoherent: int = None,
     preselected_indices: Union[np.ndarray, List[int], str, Path, None] = None,
     bank_logw_override: Union[
@@ -360,61 +371,60 @@ def run_hpc(
         None,
     ] = None,
     coherent_posterior_kwargs: Dict = {},
-    hpc_config: Optional[HPCConfig] = None,
+    multicore_config: Optional[MulticoreConfig] = None,
     n_procs: Optional[int] = None,
     i_batch: Optional[int] = None,
     batches_per_task: Optional[int] = None,
+    hpc_config: Optional[MulticoreConfig] = None,  # backward compat alias
 ) -> Path:
     """
-    HPC parallelized version of inference.run().
+    Multicore parallelized version of inference.run().
 
     Identical signature and outputs to inference.run(), but uses multiprocessing
     to parallelize computation across multiple cores. Optimized for 20-100+ core systems.
 
     Additional Parameters
     ---------------------
-    hpc_config : Optional[HPCConfig]
-        HPC configuration. If None, will attempt to load from cache or use defaults.
+    multicore_config : Optional[MulticoreConfig]
+        Multicore configuration. If None, will attempt to load from shared cache or use defaults.
     n_procs : Optional[int]
-        Number of worker processes (overrides hpc_config.n_procs if provided)
+        Number of worker processes (overrides multicore_config.n_procs if provided)
     i_batch : Optional[int]
-        Batch size for intrinsic samples (overrides hpc_config.i_batch if provided)
+        Batch size for intrinsic samples (overrides multicore_config.i_batch if provided)
     batches_per_task : Optional[int]
-        Batches per worker task (overrides hpc_config.batches_per_task if provided)
+        Batches per worker task (overrides multicore_config.batches_per_task if provided)
 
     Returns
     -------
     Path
         Path to rundir (identical to inference.run())
     """
-    # Load or create HPC config
-    if hpc_config is None:
+    multicore_config = multicore_config or hpc_config
+    # Load or create multicore config (from shared cache if available)
+    if multicore_config is None:
         cached_config = load_cached_config()
         if cached_config is None:
-            # Use defaults based on machine info
             machine_info = get_machine_info()
             cpu_count = machine_info.get("cpu_count", 4)
-            hpc_config = HPCConfig(
+            multicore_config = MulticoreConfig(
                 n_procs=n_procs or min(cpu_count, 32),
                 i_batch=i_batch or single_detector_blocksize,
                 batches_per_task=batches_per_task or 1,
             )
         else:
-            hpc_config = cached_config
+            multicore_config = cached_config
 
-    # Override config with explicit parameters if provided
     if n_procs is not None:
-        hpc_config.n_procs = n_procs
+        multicore_config.n_procs = n_procs
     if i_batch is not None:
-        hpc_config.i_batch = i_batch
+        multicore_config.i_batch = i_batch
     if batches_per_task is not None:
-        hpc_config.batches_per_task = batches_per_task
+        multicore_config.batches_per_task = batches_per_task
 
-    print("\n=== HPC Multi-core Inference ===")
-    print(f"HPC Config: n_procs={hpc_config.n_procs}, i_batch={hpc_config.i_batch}, "
-          f"batches_per_task={hpc_config.batches_per_task}")
+    print("\n=== Multicore Inference ===")
+    print(f"Multicore Config: n_procs={multicore_config.n_procs}, i_batch={multicore_config.i_batch}, "
+          f"batches_per_task={multicore_config.batches_per_task}")
 
-    # Step 1: Prepare shared objects (same as original)
     ctx = prepare_run_objects(
         event=event,
         bank_folder=bank_folder,
@@ -423,6 +433,7 @@ def run_hpc(
         n_phi=n_phi,
         n_t=n_t,
         blocksize=blocksize,
+        e_blocksize=e_blocksize,
         single_detector_blocksize=single_detector_blocksize,
         i_int_start=i_int_start,
         seed=seed,
@@ -444,25 +455,23 @@ def run_hpc(
         coherent_posterior_kwargs=coherent_posterior_kwargs,
     )
 
-    # Step 2: Incoherent selection per bank (HPC parallelized)
-    # Convert event to path if it's an EventData object (for multiprocessing)
-    event_for_hpc = event
+    # Step 2: Incoherent selection per bank (multicore parallelized)
+    event_for_multicore = event
     if isinstance(event, EventData):
-        # Try to get path from event_data, or use event_dir
         event_path = getattr(ctx["event_data"], "path", None)
         if event_path is None and event_dir:
             event_path = Path(event_dir)
         elif event_path is None:
             raise ValueError(
-                "For HPC multiprocessing, pass event as a path (str/Path), not EventData object. "
+                "For multicore multiprocessing, pass event as a path (str/Path), not EventData object. "
                 "Or ensure event_data has a 'path' attribute or event_dir is provided."
             )
-        event_for_hpc = event_path
+        event_for_multicore = event_path
 
     candidate_inds_by_bank, lnlikes_by_bank, lnlikes_di_by_bank = (
-        select_intrinsic_samples_per_bank_incoherently_hpc(
+        select_intrinsic_samples_per_bank_incoherently_multicore(
             banks=ctx["banks"],
-            event_data=event_for_hpc,  # Pass path, not EventData object
+            event_data=event_for_multicore,
             par_dic_0=ctx["par_dic_0"],
             n_int_dict=ctx["n_int_dict"],
             single_detector_blocksize=single_detector_blocksize,
@@ -474,11 +483,11 @@ def run_hpc(
             load_inds=load_inds,
             inds_path_dict=ctx["inds_path_dict"],
             banks_dir=ctx["banks_dir"],
-            hpc_config=hpc_config,
+            multicore_config=multicore_config,
         )
     )
 
-    # Step 3: Cross-bank selection (same as original - not parallelized)
+    # Step 3: Cross-bank selection (same as original)
     selected_inds_by_bank, selected_lnlikes_by_bank, selected_lnlikes_di_by_bank = (
         select_intrinsic_samples_across_banks_by_incoherent_likelihood(
             banks=ctx["banks"],
@@ -491,7 +500,7 @@ def run_hpc(
         )
     )
 
-    # Step 4: Draw extrinsic samples (same as original - not parallelized)
+    # Step 4: Draw extrinsic samples (same as original; load from marg_info_path if set)
     extrinsic_samples_df, response_dpe, timeshift_dbe = draw_extrinsic_samples(
         banks=ctx["banks"],
         event_data=ctx["event_data"],
@@ -504,13 +513,14 @@ def run_hpc(
         n_ext=n_ext,
         rundir=ctx["rundir"],
         extrinsic_samples=extrinsic_samples,
+        marg_info_path=marg_info_path,
     )
 
-    # Step 5: Coherent inference per bank (HPC parallel block creation)
+    # Step 5: Coherent inference per bank (multicore parallel block creation)
     event_path = (
         event if isinstance(event, (str, Path)) else getattr(ctx["event_data"], "path", None)
     )
-    per_bank_results = run_coherent_inference_per_bank_hpc(
+    per_bank_results = run_coherent_inference_per_bank_multicore(
         banks=ctx["banks"],
         event_data=ctx["event_data"],
         event_path=event_path,
@@ -523,11 +533,12 @@ def run_hpc(
         n_phi=n_phi,
         m_arr=ctx["m_arr"],
         blocksize=blocksize,
+        e_blocksize=e_blocksize,
         size_limit=size_limit,
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
         bank_logw_override_dict=ctx["bank_logw_override_dict"],
-        n_procs=hpc_config.n_procs,
-        pairs_per_task=getattr(hpc_config, "pairs_per_task", 4),
+        n_procs=multicore_config.n_procs,
+        pairs_per_task=getattr(multicore_config, "pairs_per_task", 4),
     )
 
     # Step 6: Aggregate and save (same as original)
@@ -544,16 +555,17 @@ def run_hpc(
     )
 
 
-def run_and_profile_hpc(
+def run_and_profile_multicore(
     *args,
-    hpc_config: Optional[HPCConfig] = None,
+    multicore_config: Optional[MulticoreConfig] = None,
+    hpc_config: Optional[MulticoreConfig] = None,
     **kwargs
 ) -> Tuple[Path, Any]:
     """
-    HPC version of inference.run_and_profile().
+    Multicore version of inference.run_and_profile().
 
     Note: Profiling with multiprocessing can be complex. This is a placeholder
-    that calls run_hpc() and returns a basic profile. For detailed profiling,
+    that calls run_multicore() and returns a basic profile. For detailed profiling,
     use the original inference.run_and_profile() or profile individual components.
     """
     import cProfile
@@ -564,7 +576,7 @@ def run_and_profile_hpc(
     profiler.enable()
 
     try:
-        rundir = run_hpc(*args, hpc_config=hpc_config, **kwargs)
+        rundir = run_multicore(*args, multicore_config=multicore_config or hpc_config, **kwargs)
     finally:
         profiler.disable()
 

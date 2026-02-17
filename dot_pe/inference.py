@@ -310,6 +310,7 @@ def run_coherent_inference(
     n_phi: int,
     m_arr: NDArray[np.int_],
     blocksize: int,
+    e_blocksize: Optional[int] = None,
     renormalize_log_prior_weights_i: bool = False,
     intrinsic_logw_lookup=None,
     size_limit: int = 10**7,
@@ -365,8 +366,9 @@ def run_coherent_inference(
         intrinsic_logw_lookup=intrinsic_logw_lookup,
     )
 
+    e_sz = blocksize if e_blocksize is None else e_blocksize
     i_blocks = inds_to_blocks(inds, blocksize)
-    e_blocks = inds_to_blocks(np.arange(n_ext), blocksize)
+    e_blocks = inds_to_blocks(np.arange(n_ext), e_sz)
     # Load extrinsic samples data from top-level rundir (shared)
     clp.load_extrinsic_samples_data(top_rundir)
     # Save CLP to bank-specific rundir
@@ -778,7 +780,8 @@ def prepare_run_objects(
         pd.Series,
         None,
     ],
-    coherent_posterior_kwargs: Dict,
+    e_blocksize: Optional[int] = None,
+    coherent_posterior_kwargs: Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """Prepare shared objects for inference run."""
     print("Setting paths & loading configurations...")
@@ -817,6 +820,7 @@ def prepare_run_objects(
                 "n_phi": int(n_phi),
                 "n_t": int(n_t),
                 "blocksize": int(blocksize),
+                "e_blocksize": int(blocksize if e_blocksize is None else e_blocksize),
                 "single_detector_blocksize": int(single_detector_blocksize),
                 "i_int_start": int(i_int_start),
                 "seed": int(seed) if seed is not None else None,
@@ -1174,11 +1178,15 @@ def draw_extrinsic_samples(
     n_ext: int,
     rundir: Path,
     extrinsic_samples: Union[str, Path, None],
+    marg_info_path: Optional[Union[str, Path]] = None,
     n_combine: int = 16,
     min_marg_lnlike_for_sampling: float = 0.0,
     single_marg_info_min_n_effective_prior: float = 32.0,
 ) -> Tuple[pd.DataFrame, NDArray, NDArray]:
-    """Draw extrinsic samples from intrinsic candidates or load from file."""
+    """Draw extrinsic samples from intrinsic candidates or load from file.
+    If marg_info_path is set, load MarginalizationInfo from that file and draw
+    n_ext samples (skip recomputing the 16 MarginalizationInfo objects).
+    """
     print("\n=== Extrinsic sample generation ===")
     if extrinsic_samples is not None:
         print("Loading extrinsic samples from file...")
@@ -1206,7 +1214,6 @@ def draw_extrinsic_samples(
                 np.save(arr=timeshift_dbe, file=timeshift_dbe_path)
             return extrinsic_samples_df, response_dpe, timeshift_dbe
 
-    print("Generating extrinsic samples (global, multibank)...")
     first_bank_path = list(banks.values())[0]
     waveform_dir = first_bank_path / "waveforms"
     bank_file_path = first_bank_path / "intrinsic_sample_bank.feather"
@@ -1214,9 +1221,6 @@ def draw_extrinsic_samples(
     marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
         event_data, wfg, par_dic_0, fbin, coherent_score=coherent_score_kwargs
     )
-
-    # Note: intrinsic_bank_file and waveform_dir are not used in multibank
-    # get_marg_info_multibank; choosing first_bank_path is only for compatibility
     ext_sample_generator = CoherentExtrinsicSamplesGenerator(
         likelihood=marg_ext_like,
         intrinsic_bank_file=bank_file_path,
@@ -1224,55 +1228,65 @@ def draw_extrinsic_samples(
         seed=seed,
     )
 
-    banks_list = []
-    waveform_dirs_list = []
-    sample_idx_arrays = []
-    bank_idx_arrays = []
+    if marg_info_path is not None:
+        print("Loading MarginalizationInfo from file (skip recomputing)...")
+        marg_info_path = Path(marg_info_path)
+        (extrinsic_samples_df, response_dpe, timeshift_dbe) = (
+            ext_sample_generator.draw_extrinsic_samples_from_indices(
+                n_ext, marg_info=marg_info_path
+            )
+        )
+    else:
+        print("Generating extrinsic samples (global, multibank)...")
+        banks_list = []
+        waveform_dirs_list = []
+        sample_idx_arrays = []
+        bank_idx_arrays = []
 
-    for bank_id, bank_path in banks.items():
-        filtered_inds = selected_inds_by_bank[bank_id]
-        if len(filtered_inds) == 0:
-            continue
+        for bank_id, bank_path in banks.items():
+            filtered_inds = selected_inds_by_bank[bank_id]
+            if len(filtered_inds) == 0:
+                continue
 
-        dense_idx = len(banks_list)
-        bank_df = pd.read_feather(bank_path / "intrinsic_sample_bank.feather")
+            dense_idx = len(banks_list)
+            bank_df = pd.read_feather(bank_path / "intrinsic_sample_bank.feather")
 
-        banks_list.append(bank_df)
-        waveform_dirs_list.append(bank_path / "waveforms")
-        sample_idx_arrays.append(filtered_inds)
-        bank_idx_arrays.append(np.full(len(filtered_inds), dense_idx, dtype=int))
+            banks_list.append(bank_df)
+            waveform_dirs_list.append(bank_path / "waveforms")
+            sample_idx_arrays.append(filtered_inds)
+            bank_idx_arrays.append(np.full(len(filtered_inds), dense_idx, dtype=int))
 
-    if len(sample_idx_arrays) == 0:
-        raise ValueError(
-            "No intrinsic samples available for multibank extrinsic sampling "
-            "(all banks empty)."
+        if len(sample_idx_arrays) == 0:
+            raise ValueError(
+                "No intrinsic samples available for multibank extrinsic sampling "
+                "(all banks empty)."
+            )
+
+        sample_idx_arr = np.concatenate(sample_idx_arrays)
+        bank_idx_arr = np.concatenate(bank_idx_arrays)
+
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(len(sample_idx_arr))
+        sample_idx_arr = sample_idx_arr[perm]
+        bank_idx_arr = bank_idx_arr[perm]
+
+        marg_info = ext_sample_generator.get_marg_info_multibank(
+            n_combine=n_combine,
+            banks=banks_list,
+            waveform_dirs=waveform_dirs_list,
+            sample_idx_arr=sample_idx_arr,
+            bank_idx_arr=bank_idx_arr,
+            min_marg_lnlike_for_sampling=min_marg_lnlike_for_sampling,
+            single_marg_info_min_n_effective_prior=single_marg_info_min_n_effective_prior,
+            save_marg_info=True,
+            save_marg_info_dir=rundir,
         )
 
-    sample_idx_arr = np.concatenate(sample_idx_arrays)
-    bank_idx_arr = np.concatenate(bank_idx_arrays)
-
-    rng = np.random.default_rng(seed)
-    perm = rng.permutation(len(sample_idx_arr))
-    sample_idx_arr = sample_idx_arr[perm]
-    bank_idx_arr = bank_idx_arr[perm]
-
-    marg_info = ext_sample_generator.get_marg_info_multibank(
-        n_combine=n_combine,
-        banks=banks_list,
-        waveform_dirs=waveform_dirs_list,
-        sample_idx_arr=sample_idx_arr,
-        bank_idx_arr=bank_idx_arr,
-        min_marg_lnlike_for_sampling=min_marg_lnlike_for_sampling,
-        single_marg_info_min_n_effective_prior=single_marg_info_min_n_effective_prior,
-        save_marg_info=True,
-        save_marg_info_dir=rundir,
-    )
-
-    (extrinsic_samples_df, response_dpe, timeshift_dbe) = (
-        ext_sample_generator.draw_extrinsic_samples_from_indices(
-            n_ext, marg_info=marg_info
+        (extrinsic_samples_df, response_dpe, timeshift_dbe) = (
+            ext_sample_generator.draw_extrinsic_samples_from_indices(
+                n_ext, marg_info=marg_info
+            )
         )
-    )
 
     extrinsic_samples_df.to_feather(rundir / "extrinsic_samples.feather")
     np.save(arr=response_dpe, file=rundir / "response_dpe.npy")
@@ -1294,8 +1308,9 @@ def run_coherent_inference_per_bank(
     n_phi: int,
     m_arr: NDArray[np.int_],
     blocksize: int,
-    size_limit: int,
-    max_bestfit_lnlike_diff: float,
+    e_blocksize: Optional[int] = None,
+    size_limit: int = 10**7,
+    max_bestfit_lnlike_diff: float = 20,
     bank_logw_override_dict: Optional[Dict],
 ) -> List[Dict[str, Any]]:
     """Run coherent inference for each bank."""
@@ -1336,6 +1351,7 @@ def run_coherent_inference_per_bank(
             n_phi=n_phi,
             m_arr=m_arr,
             blocksize=blocksize,
+            e_blocksize=e_blocksize,
             renormalize_log_prior_weights_i=False,
             intrinsic_logw_lookup=intrinsic_logw_lookup,
             size_limit=size_limit,
@@ -1494,6 +1510,7 @@ def run(
     n_t: int,
     n_int: Union[int, List[int], Dict[str, int], None] = None,
     blocksize: int = 512,
+    e_blocksize: Optional[int] = None,
     single_detector_blocksize: int = 512,
     i_int_start: int = 0,
     seed: int = None,
@@ -1548,6 +1565,7 @@ def run(
         n_phi_incoherent=n_phi_incoherent,
         preselected_indices=preselected_indices,
         bank_logw_override=bank_logw_override,
+        e_blocksize=e_blocksize,
         coherent_posterior_kwargs=coherent_posterior_kwargs,
     )
 
@@ -1611,6 +1629,7 @@ def run(
         n_phi=n_phi,
         m_arr=ctx["m_arr"],
         blocksize=blocksize,
+        e_blocksize=e_blocksize,
         size_limit=size_limit,
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
         bank_logw_override_dict=ctx["bank_logw_override_dict"],
@@ -1709,6 +1728,12 @@ def parse_arguments() -> Dict:
         type=int,
         help="Block size for coherent likelihood evaluation.",
         default=512,
+    )
+    parser.add_argument(
+        "--e_blocksize",
+        type=int,
+        default=None,
+        help="Block size for extrinsic dimension in coherent likelihood blocks. If None, uses blocksize.",
     )
     parser.add_argument(
         "--single_detector_blocksize",

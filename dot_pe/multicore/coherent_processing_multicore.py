@@ -1,5 +1,5 @@
 """
-HPC parallelized coherent likelihood block processing.
+Multicore parallelized coherent likelihood block processing.
 
 Workers create (i_block, e_block) likelihood blocks with a fixed threshold,
 write block data to disk. Main process loads blocks in order and combines
@@ -19,7 +19,7 @@ from dot_pe.coherent_processing import CoherentLikelihoodProcessor
 from dot_pe.likelihood_calculating import LinearFree
 from dot_pe.utils import get_event_data, inds_to_blocks
 
-from .utils_hpc import init_worker, partition_block_pairs
+from .utils_multicore import init_worker, partition_block_pairs
 
 # Per-process cache set by init_coherent_worker; read by _worker_create_blocks_and_save.
 _coherent_worker_state: Dict[str, Any] = {}
@@ -39,6 +39,7 @@ def init_coherent_worker(init_args: Tuple) -> None:
         n_phi,
         m_arr,
         blocksize,
+        e_blocksize,
         n_ext,
         inds,
         size_limit,
@@ -77,7 +78,7 @@ def init_coherent_worker(init_args: Tuple) -> None:
     clp.min_bestfit_lnlike_to_keep = initial_min_bestfit_lnlike_to_keep
 
     i_blocks = inds_to_blocks(inds, blocksize)
-    e_blocks = inds_to_blocks(np.arange(n_ext), blocksize)
+    e_blocks = inds_to_blocks(np.arange(n_ext), e_blocksize)
 
     _coherent_worker_state["clp"] = clp
     _coherent_worker_state["i_blocks"] = i_blocks
@@ -150,7 +151,7 @@ def _worker_create_blocks_and_save(
     return (result_files, n_distance_marginalizations_delta)
 
 
-def create_likelihood_blocks_hpc(
+def create_likelihood_blocks_multicore(
     clp: Any,
     tempdir: Path,
     i_blocks: List[np.ndarray],
@@ -163,6 +164,7 @@ def create_likelihood_blocks_hpc(
     n_phi: int = 50,
     m_arr: Optional[np.ndarray] = None,
     blocksize: int = 512,
+    e_blocksize: Optional[int] = None,
     n_ext: int = 0,
     inds: Optional[np.ndarray] = None,
     size_limit: int = 10**7,
@@ -194,7 +196,7 @@ def create_likelihood_blocks_hpc(
         event_data_path = getattr(event_data, "path", None)
     if event_data_path is None or top_rundir is None or bank_folder is None:
         raise ValueError(
-            "create_likelihood_blocks_hpc requires event_data_path, top_rundir, bank_folder (and par_dic_0, inds, n_ext, m_arr) for workers"
+            "create_likelihood_blocks_multicore requires event_data_path, top_rundir, bank_folder (and par_dic_0, inds, n_ext, m_arr) for workers"
         )
     if inds is None:
         inds = np.concatenate(i_blocks)
@@ -202,6 +204,7 @@ def create_likelihood_blocks_hpc(
         m_arr = clp.m_arr
 
     initial_min = clp.min_bestfit_lnlike_to_keep
+    e_sz = blocksize if e_blocksize is None else e_blocksize
 
     init_args = (
         str(event_data_path),
@@ -211,6 +214,7 @@ def create_likelihood_blocks_hpc(
         n_phi,
         m_arr,
         blocksize,
+        e_sz,
         n_ext,
         inds,
         size_limit,

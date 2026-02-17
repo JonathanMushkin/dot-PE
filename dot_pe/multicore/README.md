@@ -1,6 +1,6 @@
-# HPC Multi-core Parallelization
+# Multicore Parallelization
 
-High-performance computing (HPC) multi-core parallelization for DOT-PE inference, optimized for 20-100+ core systems.
+Multi-core parallelization for DOT-PE inference, optimized for 20-100+ core systems.
 
 ## Overview
 
@@ -11,18 +11,20 @@ This module provides process-level parallelized versions of the inference pipeli
 1. **Process-level parallelism**: Uses `multiprocessing.Pool` for true parallelism (avoids GIL limitations)
 2. **Disabled nested threading**: Worker processes disable BLAS/OpenMP threading (`OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`) to prevent thread contention
 3. **Tunable batch sizes**: Configurable `i_batch` (intrinsic batch size) and `batches_per_task` (batches per worker) for optimal load balancing
-4. **Autotuning**: Machine-specific configuration caching based on hardware signature
-5. **API equivalence**: `run_hpc()` has identical signature and outputs to `inference.run()`
+4. **Autotuning**: Machine-specific configuration cached in shared config (see Configuration Caching)
+5. **API equivalence**: `run_multicore()` has identical signature and outputs to `inference.run()`
+
+**Task granularity (40–100+ cores):** For good load balance and to amortize IPC/scheduling overhead, tune so each task takes roughly **~100–500 ms** wall time: increase `batches_per_task` (incoherent phase) and `pairs_per_task` (coherent phase) until tasks are in that range. Defaults are conservative; on large core counts, raising these reduces overhead.
 
 ## Usage
 
 ### Basic Usage
 
 ```python
-from dot_pe.multicore import run_hpc
+from dot_pe.multicore import run_multicore
 
 # Drop-in replacement for inference.run()
-rundir = run_hpc(
+rundir = run_multicore(
     event="path/to/event.npz",
     bank_folder="path/to/bank",
     n_ext=1000,
@@ -33,24 +35,24 @@ rundir = run_hpc(
 )
 ```
 
-### With Custom HPC Configuration
+### With Custom Multicore Configuration
 
 ```python
-from dot_pe.multicore import run_hpc, HPCConfig
+from dot_pe.multicore import run_multicore, MulticoreConfig
 
-config = HPCConfig(
+config = MulticoreConfig(
     n_procs=32,           # Number of worker processes
     i_batch=512,          # Intrinsic batch size
     batches_per_task=4,   # Batches per worker task
 )
 
-rundir = run_hpc(
+rundir = run_multicore(
     event="path/to/event.npz",
     bank_folder="path/to/bank",
     n_ext=1000,
     n_phi=100,
     n_t=128,
-    hpc_config=config,
+    multicore_config=config,
 )
 ```
 
@@ -59,7 +61,7 @@ rundir = run_hpc(
 You can also override config values directly:
 
 ```python
-rundir = run_hpc(
+rundir = run_multicore(
     event="path/to/event.npz",
     bank_folder="path/to/bank",
     n_ext=1000,
@@ -76,7 +78,7 @@ rundir = run_hpc(
 To find optimal configuration for your machine:
 
 ```python
-from dot_pe.multicore import autotune_hpc_config
+from dot_pe.multicore import autotune_multicore_config
 
 # Define a benchmark workload function
 def benchmark_workload(n_procs, i_batch, batches_per_task):
@@ -86,7 +88,7 @@ def benchmark_workload(n_procs, i_batch, batches_per_task):
     return throughput, peak_memory_gb
 
 # Autotune
-best_config = autotune_hpc_config(
+best_config = autotune_multicore_config(
     benchmark_workload,
     candidate_n_procs=[8, 16, 32, 64],
     candidate_i_batch=[256, 512, 1024, 2048],
@@ -95,18 +97,18 @@ best_config = autotune_hpc_config(
 )
 
 # Use the best config
-rundir = run_hpc(..., hpc_config=best_config)
+rundir = run_multicore(..., multicore_config=best_config)
 ```
 
 ## Architecture
 
 ### Module Structure
 
-- **`inference_hpc.py`**: Main entry point (`run_hpc()`) - orchestrates the HPC pipeline
-- **`single_detector_hpc.py`**: Parallelized single-detector likelihood evaluation
-- **`coherent_processing_hpc.py`**: Parallelized coherent likelihood block processing
-- **`config.py`**: HPC configuration and autotuning utilities
-- **`utils_hpc.py`**: Worker initialization, machine introspection, batch partitioning
+- **`inference_multicore.py`**: Main entry point (`run_multicore()`) - orchestrates the multicore pipeline
+- **`single_detector_multicore.py`**: Parallelized single-detector likelihood evaluation
+- **`coherent_processing_multicore.py`**: Parallelized coherent likelihood block processing
+- **`config.py`**: Multicore configuration and autotuning (shared config cache)
+- **`utils_multicore.py`**: Worker initialization, machine introspection, batch partitioning
 
 ### Parallelization Strategy
 
@@ -120,17 +122,17 @@ rundir = run_hpc(..., hpc_config=best_config)
 
 3. **Other Steps**: Use original implementations (cross-bank selection, extrinsic sampling, aggregation)
 
-## Configuration Caching
+## Configuration Caching (shared config)
 
-HPC configurations are automatically cached per machine based on hardware signature (CPU model, core count, cache sizes, BLAS backend). Cached configs are stored in `~/.cache/dotpe/hpc_config_<signature>.json`.
+Multicore configurations are automatically cached per machine (shared across runs) based on hardware signature (CPU model, core count, cache sizes, BLAS backend). Cached configs are stored in `~/.cache/dotpe/multicore_config_<signature>.json`.
 
-To clear cache and retune:
+To clear shared cache and retune:
 
 ```python
-from dot_pe.multicore.config import get_config_cache_path
+from dot_pe.multicore.config import get_shared_config_cache_path
 import os
 
-cache_path = get_config_cache_path()
+cache_path = get_shared_config_cache_path()
 if cache_path.exists():
     os.remove(cache_path)
 ```
@@ -151,7 +153,7 @@ if cache_path.exists():
 ### Process Count
 
 - **`n_procs`**: Should match available CPU cores (or slightly less to leave headroom)
-  - On HPC systems: use `n_procs=64` or higher
+  - On large systems: use `n_procs=64` or higher
   - On workstations: use `n_procs=min(cpu_count, 32)`
 
 ### Memory
@@ -166,7 +168,7 @@ Monitor memory usage and adjust `i_batch` accordingly.
 ## Limitations
 
 1. **EventData Serialization**: For multiprocessing, pass `event` as a path (str/Path), not an EventData object
-2. **Profiling**: `run_and_profile_hpc()` provides basic profiling; detailed multiprocessing profiling requires additional tools
+2. **Profiling**: `run_and_profile_multicore()` provides basic profiling; detailed multiprocessing profiling requires additional tools
 
 ## Migration from `inference.run()`
 
@@ -177,9 +179,9 @@ The API is identical, so migration is straightforward:
 from dot_pe.inference import run
 rundir = run(event=..., bank_folder=..., ...)
 
-# After (HPC)
-from dot_pe.multicore import run_hpc
-rundir = run_hpc(event=..., bank_folder=..., ...)
+# After (multicore)
+from dot_pe.multicore import run_multicore
+rundir = run_multicore(event=..., bank_folder=..., ...)
 ```
 
 The only difference is that `event` should be a path (not EventData object) for optimal performance.

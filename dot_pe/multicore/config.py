@@ -1,5 +1,5 @@
 """
-HPC configuration and autotuning for multi-core parallelization.
+Multicore configuration and autotuning for multi-core parallelization.
 """
 
 import json
@@ -9,12 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from .utils_hpc import get_machine_signature, init_worker
+from .utils_multicore import get_machine_signature, init_worker
 
 
 @dataclass
-class HPCConfig:
-    """HPC parallelization configuration."""
+class MulticoreConfig:
+    """Multicore parallelization configuration."""
 
     n_procs: int
     i_batch: int
@@ -33,7 +33,7 @@ class HPCConfig:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "HPCConfig":
+    def from_dict(cls, d: dict) -> "MulticoreConfig":
         """Create from dictionary."""
         return cls(
             n_procs=d["n_procs"],
@@ -44,55 +44,55 @@ class HPCConfig:
         )
 
 
-def get_config_cache_dir() -> Path:
-    """Return directory for cached HPC configs."""
+def get_shared_config_cache_dir() -> Path:
+    """Return directory for shared (cached) multicore configs."""
     cache_dir = Path.home() / ".cache" / "dotpe"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
 
-def get_config_cache_path() -> Path:
-    """Return path to cached config for current machine."""
+def get_shared_config_cache_path() -> Path:
+    """Return path to shared cached config for current machine."""
     signature = get_machine_signature()
-    return get_config_cache_dir() / f"hpc_config_{signature}.json"
+    return get_shared_config_cache_dir() / f"multicore_config_{signature}.json"
 
 
-def load_cached_config() -> Optional[HPCConfig]:
+def load_cached_config() -> Optional[MulticoreConfig]:
     """
-    Load cached HPC config for current machine, if available.
+    Load shared cached multicore config for current machine, if available.
 
     Returns
     -------
-    Optional[HPCConfig]
+    Optional[MulticoreConfig]
         Cached config or None if not found/invalid
     """
-    cache_path = get_config_cache_path()
+    cache_path = get_shared_config_cache_path()
     if not cache_path.exists():
         return None
     try:
         with open(cache_path, "r") as f:
             d = json.load(f)
-        return HPCConfig.from_dict(d)
+        return MulticoreConfig.from_dict(d)
     except Exception:
         return None
 
 
-def save_config(config: HPCConfig) -> None:
-    """Save HPC config to cache for current machine."""
-    cache_path = get_config_cache_path()
+def save_config(config: MulticoreConfig) -> None:
+    """Save multicore config to shared cache for current machine."""
+    cache_path = get_shared_config_cache_path()
     with open(cache_path, "w") as f:
         json.dump(config.to_dict(), f, indent=2)
 
 
-def autotune_hpc_config(
+def autotune_multicore_config(
     benchmark_workload,
     candidate_n_procs: Optional[List[int]] = None,
     candidate_i_batch: Optional[List[int]] = None,
     candidate_batches_per_task: Optional[List[int]] = None,
     max_memory_gb_per_worker: Optional[float] = None,
-) -> HPCConfig:
+) -> MulticoreConfig:
     """
-    Autotune HPC configuration by benchmarking candidate configs.
+    Autotune multicore configuration by benchmarking candidate configs.
 
     Parameters
     ----------
@@ -110,7 +110,7 @@ def autotune_hpc_config(
 
     Returns
     -------
-    HPCConfig
+    MulticoreConfig
         Best configuration found
     """
     import os
@@ -126,7 +126,7 @@ def autotune_hpc_config(
     best_config = None
     best_throughput = -1.0
 
-    print("Autotuning HPC configuration...")
+    print("Autotuning multicore configuration...")
     total_candidates = len(candidate_n_procs) * len(candidate_i_batch) * len(candidate_batches_per_task)
     print(f"Testing {total_candidates} candidate configurations...")
 
@@ -152,7 +152,7 @@ def autotune_hpc_config(
                         continue
                     if throughput > best_throughput:
                         best_throughput = throughput
-                        best_config = HPCConfig(
+                        best_config = MulticoreConfig(
                             n_procs=n_procs, i_batch=i_batch, batches_per_task=batches_per_task
                         )
                         print(

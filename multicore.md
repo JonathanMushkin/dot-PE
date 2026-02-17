@@ -14,16 +14,16 @@ The new implementation must:
 
 Scope
 
-Create a dedicated “HPC mode” implementation in a new folder (e.g., hpc/ or dotpe_hpc/) containing:
-	•	inference_hpc.py
-	•	coherent_processing_hpc.py
-	•	likelihood_calculating_hpc.py
+Create a dedicated “multicore” implementation in dot_pe/multicore/ containing:
+	•	inference_multicore.py
+	•	coherent_processing_multicore.py
+	•	(single-detector and likelihood utilities as needed)
 
-The HPC path must parallelize **both**:
+The multicore path must parallelize **both**:
 	•	Incoherent single-detector likelihood evaluation (already done in dot_pe/multicore).
 	•	**Coherent likelihood block creation** (create_likelihood_blocks / (i_block, e_block) pairs). Coherent block creation is typically ~half of runtime and must be parallelized for meaningful multi-core scaling.
 
-The existing code must remain untouched. The HPC path must be opt-in and directly comparable against the original implementation.
+The existing code must remain untouched. The multicore path must be opt-in and directly comparable against the original implementation.
 
 Performance Target
 
@@ -39,7 +39,7 @@ Constraints
 	•	Avoid introducing new heavy dependencies.
 	•	Favor clarity and deterministic behavior over excessive abstraction.
 
-Updated HPC Design Principle (for Cursor)
+Updated Multicore Design Principle (for Cursor)
 
 There is no “correct” i_batch
 
@@ -58,7 +58,7 @@ The optimal value depends on:
 
 ⸻
 
-What HPC mode must do
+What multicore mode must do
 	1.	Expose i_batch as a runtime parameter.
 	2.	Allow values as small as ~100.
 	3.	Allow values as large as memory allows.
@@ -96,7 +96,7 @@ Large batches:
 
 ⸻
 
-Therefore: HPC code must support
+Therefore: multicore code must support
 	•	--i-batch
 	•	--batches-per-task
 	•	--i-tile (optional internal tiling to cap peak memory)
@@ -117,11 +117,11 @@ Instead:
 	•	Ensure no algorithm explodes memory for large i_batch.
 	•	Make batch sizing a first-class runtime parameter.
 
-Add: Autotuning and machine-adaptive execution (HPC mode)
+Add: Autotuning and machine-adaptive execution (multicore mode)
 
 Goal
 
-HPC mode should be able to choose good runtime parameters automatically on a new machine (core count, cache sizes, memory bandwidth effects) by running a very short benchmark and caching the result per host.
+Multicore mode should be able to choose good runtime parameters automatically on a new machine (core count, cache sizes, memory bandwidth effects) by running a very short benchmark and caching the result per host (shared config).
 
 What must be auto-tuned (first-class knobs)
 
@@ -133,7 +133,7 @@ Treat these as runtime parameters, not hardcoded assumptions:
 
 Non-negotiable constraint during tuning and running
 
-In HPC mode, disable nested BLAS/OpenMP threading inside workers:
+In multicore mode, disable nested BLAS/OpenMP threading inside workers:
 	•	set in worker initializer (before importing numpy/scipy if possible):
 	•	MKL_NUM_THREADS=1
 	•	OMP_NUM_THREADS=1
@@ -154,7 +154,7 @@ Use this only to pick candidate configs. Do not rely on cache math alone.
 
 Microbenchmark-based autotuning (required)
 
-Implement autotune_hpc_config(...):
+Implement autotune_multicore_config(...):
 	•	Inputs: a small representative workload slice (one bank, a few batches)
 	•	Candidate grids (keep small; seconds total):
 	•	n_procs: [min(4, cores), min(8, cores), min(16, cores), min(32, cores)]
@@ -164,18 +164,18 @@ Implement autotune_hpc_config(...):
 	•	Warmup: run 1–2 warmup iterations per candidate to avoid first-call effects.
 	•	Choose the best config subject to a safety cap on peak memory per worker (avoid paging/OOM).
 
-Caching tuned results
+Caching tuned results (shared config)
 
 Cache the chosen config to disk, keyed by a stable machine signature:
 	•	CPU model + core count + cache sizes + BLAS backend (MKL/OpenBLAS)
 Store as JSON under something like:
-	•	~/.cache/dotpe/hpc_config_<signature>.json
+	•	~/.cache/dotpe/multicore_config_<signature>.json  (shared config cache)
 
 CLI behavior
 
-HPC entrypoint should support:
-	•	--hpc auto (default): use cached config if present; otherwise run autotune then run inference
-	•	--hpc manual: user provides --n-procs --i-batch --batches-per-task ...
+Multicore entrypoint should support:
+	•	--multicore auto (default): use shared cached config if present; otherwise run autotune then run inference
+	•	--multicore manual: user provides --n-procs --i-batch --batches-per-task ...
 	•	--autotune-only: prints recommended config and exits
 
 Additional pitfalls to avoid

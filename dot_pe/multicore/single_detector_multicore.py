@@ -1,5 +1,5 @@
 """
-HPC parallelized single-detector processing for incoherent likelihood evaluation.
+Multicore parallelized single-detector processing for incoherent likelihood evaluation.
 """
 
 import multiprocessing as mp
@@ -11,7 +11,7 @@ import numpy as np
 from dot_pe.inference import run_for_single_detector, _create_single_detector_processor
 from dot_pe.utils import get_event_data
 from cogwheel.data import EventData
-from .utils_hpc import init_worker, partition_indices, group_batches
+from .utils_multicore import init_worker, partition_indices, group_batches
 
 # Per-process cache set by init_single_detector_worker; read by _process_batch_group.
 _worker_state: Dict[str, Any] = {}
@@ -115,7 +115,7 @@ def _process_batch_group(batch_group: List[np.ndarray]) -> List[Dict[str, Any]]:
     return results
 
 
-def collect_int_samples_from_single_detectors_hpc(
+def collect_int_samples_from_single_detectors_multicore(
     event_data: Union[EventData, str, Path],
     par_dic_0: Dict,
     single_detector_blocksize: int,
@@ -132,7 +132,7 @@ def collect_int_samples_from_single_detectors_hpc(
     batches_per_task: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    HPC parallelized version of collect_int_samples_from_single_detectors.
+    Multicore parallelized version of collect_int_samples_from_single_detectors.
 
     Uses multiprocessing to parallelize batch processing across workers.
     Each worker processes groups of batches sequentially to minimize overhead.
@@ -193,7 +193,7 @@ def collect_int_samples_from_single_detectors_hpc(
         event_path = getattr(event_data, "path", None)
         if event_path is None:
             raise ValueError(
-                "For HPC multiprocessing, pass event as a path (str/Path), not EventData object."
+                "For multicore multiprocessing, pass event as a path (str/Path), not EventData object."
             )
         detector_names = event_data.detector_names
 
@@ -230,7 +230,7 @@ def collect_int_samples_from_single_detectors_hpc(
         event_path = Path(event_data)
     else:
         raise ValueError(
-            "For HPC multiprocessing, pass event as a path (str/Path), not EventData object. "
+            "For multicore multiprocessing, pass event as a path (str/Path), not EventData object. "
             "EventData objects cannot be pickled for multiprocessing."
         )
 

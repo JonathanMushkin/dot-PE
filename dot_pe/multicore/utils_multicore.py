@@ -1,5 +1,5 @@
 """
-Utilities for HPC multi-core parallelization:
+Utilities for multicore parallelization:
 - Worker initialization (disable nested threading)
 - Machine introspection (cores, cache, memory)
 - Batch partitioning utilities
