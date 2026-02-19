@@ -1311,6 +1311,35 @@ def run_coherent_inference_per_bank(
         n_int_k = n_int_dict[bank_id]
         n_total_samples = n_phi * n_ext * n_int_k
 
+        if len(inds) == 0:
+            bank_rundir.mkdir(parents=True, exist_ok=True)
+            empty_prob_samples = pd.DataFrame(
+                columns=CoherentLikelihoodProcessor.PROB_SAMPLES_COLS
+            ).astype(
+                {
+                    k: v
+                    for k, v in zip(
+                        CoherentLikelihoodProcessor.PROB_SAMPLES_COLS,
+                        CoherentLikelihoodProcessor.PROB_SAMPLES_COLS_DTYPES,
+                    )
+                }
+            )
+            empty_prob_samples.to_feather(bank_rundir / "prob_samples.feather")
+            bank_results.append(
+                {
+                    "bank_id": bank_id,
+                    "lnZ_k": -np.inf,
+                    "lnZ_discarded_k": -np.inf,
+                    "N_k": n_total_samples,
+                    "n_effective_k": 0.0,
+                    "n_effective_i_k": 0.0,
+                    "n_effective_e_k": 0.0,
+                    "n_distance_marginalizations_k": 0,
+                    "n_inds_used": 0,
+                }
+            )
+            continue
+
         intrinsic_logw_lookup = None
         if bank_logw_override_dict is not None and bank_id in bank_logw_override_dict:
             override_logw_full = np.asarray(bank_logw_override_dict[bank_id])
@@ -1400,11 +1429,18 @@ def aggregate_and_save_results(
 
     combined_prob_samples = pd.concat(all_prob_samples, ignore_index=True)
 
+    if len(combined_prob_samples) == 0:
+        raise ValueError(
+            "No prob_samples to combine; all banks may have zero selected indices"
+        )
+
     for r in per_bank_results:
         mask = combined_prob_samples["bank_id"] == r["bank_id"]
-        combined_prob_samples.loc[mask, "ln_weight_unnormalized"] = (
-            combined_prob_samples.loc[mask, "ln_posterior"] - np.log(r["N_k"])
-        )
+        n_k = r["N_k"]
+        if mask.any() and n_k > 0:
+            combined_prob_samples.loc[mask, "ln_weight_unnormalized"] = (
+                combined_prob_samples.loc[mask, "ln_posterior"] - np.log(n_k)
+            )
 
     combined_prob_samples["weights"] = exp_normalize(
         combined_prob_samples["ln_weight_unnormalized"].values
@@ -1430,17 +1466,29 @@ def aggregate_and_save_results(
     print(f"Samples saved to:\n {samples_path}")
 
     total_weight = combined_prob_samples["weights"].sum()
-    n_effective_total = 1.0 / (
-        (combined_prob_samples["weights"] ** 2).sum() / total_weight
-    )
+    if total_weight <= 0:
+        n_effective_total = 0.0
+    else:
+        n_effective_total = 1.0 / (
+            (combined_prob_samples["weights"] ** 2).sum() / total_weight
+        )
 
-    n_effective_i_total = np.average(
-        [r["n_effective_i_k"] for r in per_bank_results],
-        weights=[r["N_k"] for r in per_bank_results],
+    n_eff_weights = [r["N_k"] for r in per_bank_results]
+    n_effective_i_total = (
+        np.average(
+            [r["n_effective_i_k"] for r in per_bank_results],
+            weights=n_eff_weights,
+        )
+        if sum(n_eff_weights) > 0
+        else 0.0
     )
-    n_effective_e_total = np.average(
-        [r["n_effective_e_k"] for r in per_bank_results],
-        weights=[r["N_k"] for r in per_bank_results],
+    n_effective_e_total = (
+        np.average(
+            [r["n_effective_e_k"] for r in per_bank_results],
+            weights=n_eff_weights,
+        )
+        if sum(n_eff_weights) > 0
+        else 0.0
     )
 
     summary_dict = {
@@ -1468,17 +1516,26 @@ def aggregate_and_save_results(
     }
 
     if getattr(event_data, "injection", None) is not None:
-        first_bank_id = list(banks.keys())[0]
-        clp_path = banks_dir / first_bank_id / "CoherentLikelihoodProcessor.json"
-        clp = read_json(clp_path)
-        inj_par_dic = event_data.injection["par_dic"]
-        bestfit_lnlike, lnl_marginalized = clp.get_bestfit_and_marginalized_lnlike(
-            inj_par_dic
-        )
-        summary_dict["injection"] = {
-            "bestfit_lnlike": bestfit_lnlike,
-            "lnl_marginalized": lnl_marginalized,
-        }
+        clp_path = None
+        for bank_id in banks.keys():
+            candidate = banks_dir / bank_id / "CoherentLikelihoodProcessor.json"
+            if candidate.exists():
+                clp_path = candidate
+                break
+        if clp_path is None:
+            warnings.warn(
+                "No CoherentLikelihoodProcessor.json found; skipping injection comparison"
+            )
+        else:
+            clp = read_json(clp_path)
+            inj_par_dic = event_data.injection["par_dic"]
+            bestfit_lnlike, lnl_marginalized = clp.get_bestfit_and_marginalized_lnlike(
+                inj_par_dic
+            )
+            summary_dict["injection"] = {
+                "bestfit_lnlike": bestfit_lnlike,
+                "lnl_marginalized": lnl_marginalized,
+            }
 
     with open(rundir / "summary_results.json", "w", encoding="utf-8") as f:
         json.dump(summary_dict, f, indent=4)
