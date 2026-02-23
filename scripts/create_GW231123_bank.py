@@ -17,6 +17,7 @@ dot_pe_path = "/home/projects/barakz/jonatahm/dot-pe"
 sys.path.append(dot_pe_path)
 
 from dot_pe import sample_banks, config
+from dot_pe.utils import validate_q_bounds
 
 
 def create_bank(
@@ -27,6 +28,7 @@ def create_bank(
     mchirp_min=100,
     mchirp_max=200,
     q_min=0.2,
+    q_max=1.0,
     f_ref=30.0,
     inc_faceon_factor=1,
     use_limited_fbin=False,
@@ -51,6 +53,8 @@ def create_bank(
         Maximum chirp mass
     q_min : float
         Minimum mass ratio
+    q_max : float
+        Maximum mass ratio (default: 1.0)
     f_ref : float
         Reference frequency
     inc_faceon_factor : float
@@ -70,11 +74,13 @@ def create_bank(
     print(f"Using {n_pool} processes with blocksize {blocksize}")
     print(f"Chirp mass range: {mchirp_min} - {mchirp_max}")
 
-    sample_banks.main(
+    bank_main = sample_banks.main
+    bank_main(
         bank_size=bank_size,
         q_min=q_min,
         m_min=mchirp_min,
         m_max=mchirp_max,
+        q_max=q_max,
         inc_faceon_factor=inc_faceon_factor,
         f_ref=f_ref,
         fbin=fbin,
@@ -128,6 +134,12 @@ def main():
         "--q-min", type=float, default=0.2, help="Minimum mass ratio (default: 0.2)"
     )
     parser.add_argument(
+        "--q-max",
+        type=float,
+        default=1.0,
+        help="Maximum mass ratio, must satisfy q_min < q_max <= 1.0 (default: 1.0)",
+    )
+    parser.add_argument(
         "--f-ref", type=float, default=30.0, help="Reference frequency (default: 30.0)"
     )
     parser.add_argument(
@@ -147,6 +159,7 @@ def main():
     )
 
     args = parser.parse_args()
+    validate_q_bounds(args.q_min, args.q_max)
 
     try:
         create_bank(
@@ -157,6 +170,7 @@ def main():
             mchirp_min=args.mchirp_min,
             mchirp_max=args.mchirp_max,
             q_min=args.q_min,
+            q_max=args.q_max,
             f_ref=args.f_ref,
             use_limited_fbin=args.limited_fbin,
             resume=args.resume,

@@ -44,11 +44,13 @@ class ConditionalPriorSampler:
         mchirp_range: tuple[float, float],
         q_min: float,
         f_ref: float,
+        q_max: float = 1.0,
         aligned_spin: bool = False,
         seed: Optional[int] = None,
     ):
         self.mchirp_range = mchirp_range
         self.q_min = q_min
+        self.q_max = q_max
         self.f_ref = f_ref
         self.aligned_spin = aligned_spin
         self.seed = seed
@@ -338,6 +340,7 @@ class ConditionalPriorSampler:
         data = {
             "mchirp_range": list(self.mchirp_range),
             "q_min": self.q_min,
+            "q_max": self.q_max,
             "f_ref": self.f_ref,
             "aligned_spin": self.aligned_spin,
             "seed": self.seed,
@@ -369,6 +372,7 @@ class ConditionalPriorSampler:
             mchirp_range=tuple(data["mchirp_range"]),
             q_min=data["q_min"],
             f_ref=data["f_ref"],
+            q_max=data.get("q_max", 1.0),
             aligned_spin=data.get("aligned_spin", False),
             seed=data.get("seed"),
         )

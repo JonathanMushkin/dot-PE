@@ -24,9 +24,9 @@ if __name__ == "__main__":
         sys.path.insert(0, str(project_root))
 
 from cogwheel import data
-from cogwheel.gw_prior.mass import UniformDetectorFrameMassesPrior
 from cogwheel.gw_prior.spin import UniformEffectiveSpinPrior
 from dot_pe import inference, waveform_banks
+from dot_pe.mass_prior import get_mass_prior
 from dot_pe.zoom.conditional_sampling import ConditionalPriorSampler
 from dot_pe.zoom.zoom import Zoomer
 from dot_pe.utils import load_intrinsic_samples_from_rundir
@@ -53,9 +53,10 @@ def fit_zoomer(
 
     mchirp_range = prior_kwargs["mchirp_range"]
     q_min = prior_kwargs["q_min"]
+    q_max = prior_kwargs.get("q_max", 1.0)
     bounds = {
         0: (mchirp_range[0], mchirp_range[1]),
-        1: (np.log(q_min), 0.0),
+        1: (np.log(q_min), np.log(q_max)),
         2: (-1.0, 1.0),
     }
 
@@ -102,9 +103,11 @@ def draw_from_zoomer(
     df["lnq"] = lnq
     df["chieff"] = chieff
 
-    mass_prior = UniformDetectorFrameMassesPrior(
+    q_max = getattr(cond_sampler, "q_max", 1.0)
+    mass_prior = get_mass_prior(
         mchirp_range=cond_sampler.mchirp_range,
         q_min=cond_sampler.q_min,
+        q_max=q_max,
     )
     aligned_spin_prior = UniformEffectiveSpinPrior()
 
@@ -218,6 +221,7 @@ def main() -> None:
     prior_kwargs = {
         "mchirp_range": tuple(mchirp_range),
         "q_min": bank_config.get("q_min"),
+        "q_max": bank_config.get("q_max", 1.0),
         "f_ref": bank_config.get("f_ref"),
     }
 
@@ -240,6 +244,7 @@ def main() -> None:
     samples_path = bank_output_dir / "intrinsic_sample_bank.feather"
     new_bank.to_feather(samples_path)
 
+    bank_config.setdefault("q_max", 1.0)
     bank_config.update({"bank_size": len(new_bank)})
     json.dump(bank_config, open(bank_output_dir / "bank_config.json", "w"), indent=2)
     print(f"Created bank at {samples_path}")

@@ -22,6 +22,14 @@ from cogwheel import gw_utils
 from cogwheel.utils import read_json
 
 
+def validate_q_bounds(q_min: float, q_max: float) -> None:
+    """Raise ValueError if q_min >= q_max or q_max > 1."""
+    if q_min >= q_max:
+        raise ValueError(f"q_min ({q_min}) must be strictly less than q_max ({q_max})")
+    if q_max > 1.0:
+        raise ValueError(f"q_max ({q_max}) must be <= 1.0")
+
+
 def is_dtype_supported(device: Device, dtype: torch.dtype) -> bool:
     try:
         _ = torch.empty(1, dtype=dtype, device=device)
@@ -322,12 +330,14 @@ def validate_bank_configs(bank_paths: List[Path]) -> Dict:
         with open(config_path, "r", encoding="utf-8") as f:
             configs.append(json.load(f))
 
-    # Get first config as reference
+    # Get first config as reference (missing q_max interpreted as 1.0)
     ref_config = configs[0]
     ref_approximant = ref_config["approximant"]
     ref_fbin = np.array(ref_config["fbin"])
     ref_f_ref = ref_config["f_ref"]
     ref_m_arr = np.array(ref_config["m_arr"])
+    ref_q_min = ref_config.get("q_min")
+    ref_q_max = ref_config.get("q_max", 1.0)
 
     # Validate against reference
     for i, config in enumerate(configs[1:], start=1):
@@ -352,6 +362,18 @@ def validate_bank_configs(bank_paths: List[Path]) -> Dict:
         if not np.array_equal(np.array(config["m_arr"]), ref_m_arr):
             errors.append(
                 f"m_arr mismatch: bank {i} has different m_arr than reference"
+            )
+
+        if ref_q_min is not None and config.get("q_min") != ref_q_min:
+            errors.append(
+                f"q_min mismatch: bank {i} has {config.get('q_min')}, "
+                f"expected {ref_q_min}"
+            )
+
+        if config.get("q_max", 1.0) != ref_q_max:
+            errors.append(
+                f"q_max mismatch: bank {i} has {config.get('q_max', 1.0)}, "
+                f"expected {ref_q_max}"
             )
 
         if errors:
