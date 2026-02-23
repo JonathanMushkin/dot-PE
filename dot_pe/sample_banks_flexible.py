@@ -15,12 +15,15 @@ from scipy.stats import qmc
 from cogwheel.gw_prior import UniformDiskInplaneSpinsIsotropicInclinationPrior
 from cogwheel.gw_prior import UniformEffectiveSpinPrior
 from cogwheel.gw_prior.mass import UniformDetectorFrameMassesPrior
+
+from .mass_prior import get_mass_prior, UniformDetectorFrameMassesPriorWithQMax
 from cogwheel.gw_utils import m1m2_to_mchirp, mchirpeta_to_m1m2, q_to_eta
 from cogwheel.utils import NumpyEncoder
 from cogwheel.prior import Prior, CombinedPrior
 
 from . import waveform_banks
 from .config import DEFAULT_F_REF
+from .utils import validate_q_bounds
 
 
 class DefaultPhysicalPrior(CombinedPrior):
@@ -36,6 +39,30 @@ class DefaultPhysicalPrior(CombinedPrior):
         UniformEffectiveSpinPrior,
         UniformDiskInplaneSpinsIsotropicInclinationPrior,
     ]
+
+
+class DefaultPhysicalPriorWithQMax(CombinedPrior):
+    """
+    Same as DefaultPhysicalPrior but uses UniformDetectorFrameMassesPriorWithQMax
+    for masses when q_max < 1.
+    """
+
+    prior_classes = [
+        UniformDetectorFrameMassesPriorWithQMax,
+        UniformEffectiveSpinPrior,
+        UniformDiskInplaneSpinsIsotropicInclinationPrior,
+    ]
+
+
+def _get_default_physical_prior(mchirp_range, q_min, q_max, f_ref):
+    """Return DefaultPhysicalPrior or DefaultPhysicalPriorWithQMax depending on q_max."""
+    if q_max >= 1.0:
+        return DefaultPhysicalPrior(
+            mchirp_range=mchirp_range, q_min=q_min, f_ref=f_ref
+        )
+    return DefaultPhysicalPriorWithQMax(
+        mchirp_range=mchirp_range, q_min=q_min, q_max=q_max, f_ref=f_ref
+    )
 
 
 class LogUniformMassBiasedInclinationDrawingPrior(Prior):
@@ -72,15 +99,16 @@ class LogUniformMassBiasedInclinationDrawingPrior(Prior):
     folded_reflected_params = ["costheta_jn"]
     conditioned_on = ["f_ref"]
 
-    def __init__(self, m_min, m_max, q_min, inc_faceon_factor):
+    def __init__(self, m_min, m_max, q_min, inc_faceon_factor, q_max=1.0):
         self.m_min = m_min
         self.m_max = m_max
         self.q_min = q_min
+        self.q_max = q_max
         self.inc_faceon_factor = inc_faceon_factor
 
         # Set mass ranges
         self.range_dic["logmchirp"] = (np.log(m_min), np.log(m_max))
-        self.range_dic["logq"] = (np.log(q_min), 0)  # log(q) from log(q_min) to 0
+        self.range_dic["logq"] = (np.log(q_min), np.log(q_max))
 
         # Initialize spin prior
         self.spin_prior = UniformEffectiveSpinPrior()
@@ -200,6 +228,7 @@ class LogUniformMassBiasedInclinationDrawingPrior(Prior):
             "m_min": self.m_min,
             "m_max": self.m_max,
             "q_min": self.q_min,
+            "q_max": self.q_max,
             "inc_faceon_factor": self.inc_faceon_factor,
         }
 
@@ -224,12 +253,13 @@ class IntrinsicSamplesGenerator:
             physical_prior if physical_prior is not None else drawing_prior
         )
 
-    def draw_lnmchirp_lnq_uniform(self, q_min, mchirp_min, mchirp_max, u=None, n=None):
+    def draw_lnmchirp_lnq_uniform(
+        self, q_min, q_max, mchirp_min, mchirp_max, u=None, n=None
+    ):
         """
         Draw (m1,m2) samples from a distribution that is uniform in lnq and
-        ln(mchirp), and them with weights relative to the uniform-mass prior
+        ln(mchirp), and weight them relative to the uniform-mass prior
         with the same constraints.
-
         """
         if u is None:
             if n is None:
@@ -239,19 +269,19 @@ class IntrinsicSamplesGenerator:
                 )
             u = qmc.Halton(d=2).random(n).T
 
-        mass_prior = UniformDetectorFrameMassesPrior(
-            mchirp_range=(mchirp_min, mchirp_max), q_min=q_min
+        mass_prior = get_mass_prior(
+            mchirp_range=(mchirp_min, mchirp_max), q_min=q_min, q_max=q_max
         )
 
         ln_mchirp = np.log(mchirp_min) + u[0] * np.log(mchirp_max / mchirp_min)
         mchirp = np.exp(ln_mchirp)
 
-        lnq = np.log(q_min) + u[1] * np.log(1 / q_min)
+        lnq = np.log(q_min) + u[1] * np.log(q_max / q_min)
 
         m1 = mchirp * (1 + np.exp(lnq)) ** (1 / 5) / np.exp(lnq) ** (3 / 5)
         m2 = m1 * np.exp(lnq)
 
-        area = np.log(mchirp_max / mchirp_min) * np.log(1 / q_min)
+        area = np.log(mchirp_max / mchirp_min) * np.log(q_max / q_min)
         log_jacobian = -ln_mchirp  # log(det|d(log_mchirp,lnq)/(dmchirp,lnq)|
         # make units match (mchirp, lnq) with mass_prior
         fiducial_log_prior = np.log(1 / area) + log_jacobian
@@ -260,24 +290,28 @@ class IntrinsicSamplesGenerator:
 
         return m1, m2, log_prior_weights
 
-    def draw_m1m2_loguniform(self, q_min, m_min, m_max, u=None, n=None):
+    def draw_m1m2_loguniform(
+        self, q_min, q_max, m_min, m_max, u=None, n=None
+    ):
         """
         draw n-samples of component masses m1,m2, uniform in logarithmic
         space, under the constraints (m_min <= m <= m_max) and
-        (m2/m1 >= q_min)
+        (q_min <= m2/m1 <= q_max)
 
         Parameters
         ----------
-        q_min : float,
-            minimal m2/m1 allowed.
-        m_min : float,
+        q_min : float
+            minimal m2/m1 allowed
+        q_max : float
+            maximal m2/m1 allowed (<= 1)
+        m_min : float
             minimal mass for both m1 and m2
-        m_max : float,
+        m_max : float
             maximal mass for both m1 and m2
         u : array-like, optional
             random variable input of shape (2,n) for drawing. default None
         n : int, optional
-            number of samples to draw. defalut None
+            number of samples to draw. default None
 
         Returns
         -------
@@ -286,7 +320,6 @@ class IntrinsicSamplesGenerator:
         log_prior_weights : 1d-array, weights for each sample relative
                             to the uniform-mass prior with same
                             constraints
-
         """
         if u is None:
             if n is None:
@@ -298,22 +331,28 @@ class IntrinsicSamplesGenerator:
 
         # m1 is uniform in log space between min and max values
         logm1 = np.log(m_min) + u[0] * np.log(m_max / m_min)
-        # m2 is uniform in log space between being m1*q_min and m1
-        logm2 = logm1 + (1 - u[1]) * np.log(q_min)
+        # m2 is uniform in log space between m1*q_min and m1*q_max
+        logm2 = logm1 + np.log(q_min) + u[1] * np.log(q_max / q_min)
         m1, m2 = np.exp(logm1), np.exp(logm2)
 
         mchirp = m1m2_to_mchirp(m1, m2)
         lnq = np.log(m2 / m1)
-        # the
         mchirp_min = m1m2_to_mchirp(m_min, m_min * q_min)
         mchirp_max = m1m2_to_mchirp(m_max, m_max)
-        mass_prior = UniformDetectorFrameMassesPrior(
-            mchirp_range=(mchirp_min, mchirp_max), q_min=q_min
+        mass_prior = get_mass_prior(
+            mchirp_range=(mchirp_min, mchirp_max), q_min=q_min, q_max=q_max
         )
 
         # find weight = pdf(m1,m2) / pdf_pseudo(m1,m2).
         pseudo_prior_pdf = (
-            1 / (np.log(m_max / m_min)) * 1 / np.log(1 / q_min) * 1 / m1 * 1 / m2
+            1
+            / (np.log(m_max / m_min))
+            * 1
+            / np.log(q_max / q_min)
+            * 1
+            / m1
+            * 1
+            / m2
         )  # normalized expression
         # prior has units of 1/mchirp / lnq,
         # our pseudo prior has units of 1/m1 / m2
@@ -450,6 +489,7 @@ class IntrinsicSamplesGenerator:
         self,
         n,
         q_min,
+        q_max,
         m_min,
         m_max,
         inc_faceon_factor,
@@ -460,7 +500,7 @@ class IntrinsicSamplesGenerator:
         Draw intrinsic samples, with importance sampling.
         The samples are drawn under:
         - log(m1) is uniform between log(m_min) and log(m_max)
-        - log(m2) is uniform in log(m1*q_min) and log(m1)
+        - log(m2) is uniform in log(m1*q_min) and log(m1*q_max)
         - theta_jn prefers face-on / back-on orientation
         Samples are re-wegithed according to the Physical prior:
         - m1,m2 from mass.UniformDetectorFrameMassesPrior
@@ -477,7 +517,9 @@ class IntrinsicSamplesGenerator:
         intrinsic_samples : pandas.DataFrame
         """
         u = qmc.Halton(d=9, seed=seed).random(n).T
-        m1, m2, lw_m = self.draw_m1m2_loguniform(q_min, m_min, m_max, u[:2])
+        m1, m2, lw_m = self.draw_m1m2_loguniform(
+            q_min, q_max, m_min, m_max, u[:2]
+        )
         s1z, s2z = self.draw_s1z_s2z(m1, m2, u=u[2:4,])
         iota, s1x_n, s1y_n, s1z, s2x_n, s2y_n, s2z, lw_ipsi = (
             self.draw_inplane_spins_weighted_inclination(
@@ -514,13 +556,12 @@ class IntrinsicSamplesGenerator:
         return intrinsic_samples
 
     def draw_intrinsic_samples_uniform_in_lnmchrip_lnq(
-        self, n, q_min, m_min, m_max, inc_faceon_factor, f_ref, seed=None
+        self, n, q_min, q_max, m_min, m_max, inc_faceon_factor, f_ref, seed=None
     ):
         """
         Draw intrinsic samples, with importance sampling.
         The samples are drawn under:
-        - log(m1) is uniform between log(m_min) and log(m_max)
-        - log(m2) is uniform in log(m1*q_min) and log(m1)
+        - log(mchirp) uniform, log(q) uniform in [ln(q_min), ln(q_max)]
         - theta_jn prefers face-on / back-on orientation
         Samples are re-wegithed according to the Physical prior:
         - m1,m2 from mass.UniformDetectorFrameMassesPrior
@@ -537,7 +578,11 @@ class IntrinsicSamplesGenerator:
         intrinsic_samples : pandas.DataFrame
         """
         u = qmc.Halton(d=9, seed=seed).random(n).T
-        m1, m2, lw_m = self.draw_lnmchirp_lnq_uniform(q_min, m_min, m_max, u[:2])
+        mchirp_min = m1m2_to_mchirp(m_min, m_min * q_min)
+        mchirp_max = m1m2_to_mchirp(m_max, m_max)
+        m1, m2, lw_m = self.draw_lnmchirp_lnq_uniform(
+            q_min, q_max, mchirp_min, mchirp_max, u[:2]
+        )
         s1z, s2z = self.draw_s1z_s2z(m1, m2, u=u[2:4])
         iota, s1x_n, s1y_n, s1z, s2x_n, s2y_n, s2z, lw_ipsi = (
             self.draw_inplane_spins_weighted_inclination(
@@ -627,12 +672,15 @@ class IntrinsicSamplesGenerator:
         mchirp_max,
         f_ref,
         *,
+        q_max=1.0,
         n_samples=None,
         u=None,
         draw_method="mc",
     ):
-        mass_prior = UniformDetectorFrameMassesPrior(
-            mchirp_range=(mchirp_min, mchirp_max), q_min=q_min
+        mass_prior = get_mass_prior(
+            mchirp_range=(mchirp_min, mchirp_max),
+            q_min=q_min,
+            q_max=q_max,
         )
 
         if u is None and n_samples is not None and draw_method is not None:
@@ -762,6 +810,7 @@ def create_physical_prior_bank(
     m_max,
     f_ref,
     fbin,
+    q_max=1.0,
     n_blocks=None,
     n_pool=1,
     blocksize=4096,
@@ -780,14 +829,19 @@ def create_physical_prior_bank(
         bank_dir.mkdir(parents=True)
     # create the generator
     generator = IntrinsicSamplesGenerator(
-        LogUniformMassBiasedInclinationDrawingPrior(m_min, m_max, q_min, 2)
+        LogUniformMassBiasedInclinationDrawingPrior(
+            m_min, m_max, q_min, 2, q_max=q_max
+        )
     )
     # draw samples
+    mchirp_min = m1m2_to_mchirp(m_min, m_min * q_min)
+    mchirp_max = m1m2_to_mchirp(m_max, m_max)
     intrinsic_samples = generator.draw_physical_prior_samples(
         q_min,
-        m_min,
-        m_max,
+        mchirp_min,
+        mchirp_max,
         f_ref,
+        q_max=q_max,
         n_samples=bank_size,
     )
 
@@ -800,6 +854,7 @@ def create_physical_prior_bank(
         json.dump(
             {
                 "q_min": q_min,
+                "q_max": q_max,
                 "min_mchirp": m_min,
                 "max_mchirp": m_max,
                 "f_ref": f_ref,
@@ -841,7 +896,9 @@ def main(
     inc_faceon_factor,
     f_ref,
     fbin,
+    q_max=1.0,
     n_blocks=None,
+    resume=True,
     n_pool=1,
     blocksize=4096,
     i_start=0,
@@ -860,16 +917,23 @@ def main(
 
     # Create drawing prior
     drawing_prior = LogUniformMassBiasedInclinationDrawingPrior(
-        m_min=m_min, m_max=m_max, q_min=q_min, inc_faceon_factor=inc_faceon_factor
+        m_min=m_min,
+        m_max=m_max,
+        q_min=q_min,
+        q_max=q_max,
+        inc_faceon_factor=inc_faceon_factor,
     )
 
     # Create physical prior
     mchirp_min = m1m2_to_mchirp(m_min, m_min * q_min)
     mchirp_max = m1m2_to_mchirp(m_max, m_max)
 
-    # Create default physical prior using cogwheel priors
-    physical_prior = DefaultPhysicalPrior(
-        mchirp_range=(mchirp_min, mchirp_max), q_min=q_min, f_ref=f_ref
+    # Create default physical prior
+    physical_prior = _get_default_physical_prior(
+        mchirp_range=(mchirp_min, mchirp_max),
+        q_min=q_min,
+        q_max=q_max,
+        f_ref=f_ref,
     )
 
     # create the generator
@@ -889,6 +953,7 @@ def main(
         json.dump(
             {
                 "q_min": q_min,
+                "q_max": q_max,
                 "min_mchirp": m_min,
                 "max_mchirp": m_max,
                 "f_ref": f_ref,
@@ -942,6 +1007,12 @@ def parse_args():
         required=True,
         help="Minimal value of m2/m1 (q < 1 always)",
     )
+    parser.add_argument(
+        "--q_max",
+        type=float,
+        default=1.0,
+        help="Maximal value of m2/m1, must satisfy q_min < q_max <= 1.0 (default: 1.0)",
+    )
     parser.add_argument("--m_min", type=float, required=True, help="Minimal mass of m1")
     parser.add_argument("--m_max", type=float, required=True, help="Maximal mass of m1")
     parser.add_argument("--inc_faceon_factor", type=float, default=2)
@@ -974,4 +1045,5 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+    validate_q_bounds(args["q_min"], args["q_max"])
     main(**args)

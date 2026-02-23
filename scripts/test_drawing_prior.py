@@ -34,9 +34,17 @@ def test_drawing_prior():
 
     # Generate samples using original method
     generator_original = sample_banks.IntrinsicSamplesGenerator()
+    q_max = 1.0
     samples_original = (
         generator_original.draw_intrinsic_samples_uniform_in_lnmchrip_lnq(
-            n_samples, q_min, m_min, m_max, inc_faceon_factor, f_ref, seed
+            n_samples,
+            q_min,
+            q_max,
+            m_min,
+            m_max,
+            inc_faceon_factor,
+            f_ref,
+            seed,
         )
     )
 
@@ -58,7 +66,7 @@ def test_drawing_prior():
     for i in range(n_samples):
         # Use the same logic as the original draw_lnmchirp_lnq_uniform method
         logmchirp = np.log(m_min) + u[i, 0] * np.log(m_max / m_min)
-        logq = np.log(q_min) + u[i, 1] * np.log(1 / q_min)
+        logq = np.log(q_min) + u[i, 1] * np.log(q_max / q_min)
 
         # Use the same biased inclination sampling as the original code
         inc_factor = (inc_faceon_factor - 1) / (inc_faceon_factor + 1)

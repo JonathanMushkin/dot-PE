@@ -38,8 +38,17 @@ class PowerLawChirpMassPrior(Prior):
     ALPHA = -1.7  # P(M_c) ∝ M_c^{ALPHA}
     TRANSFORM_POWER = -0.7  # mchirp_p = mchirp^{TRANSFORM_POWER}
 
-    def __init__(self, *, mchirp_range, q_min=0.05, symmetrize_lnq=False, **kwargs):
+    def __init__(
+        self,
+        *,
+        mchirp_range,
+        q_min=0.05,
+        q_max=1.0,
+        symmetrize_lnq=False,
+        **kwargs,
+    ):
         lnq_min = np.log(q_min)
+        lnq_max = -lnq_min * symmetrize_lnq if symmetrize_lnq else np.log(q_max)
 
         mchirp_min, mchirp_max = mchirp_range
         mchirp_p_min = min(
@@ -51,11 +60,12 @@ class PowerLawChirpMassPrior(Prior):
 
         self.range_dic = {
             "mchirp_p": (mchirp_p_min, mchirp_p_max),
-            "lnq": (lnq_min, -lnq_min * symmetrize_lnq),
+            "lnq": (lnq_min, lnq_max),
         }
 
         self._mchirp_range = mchirp_range
         self._q_min = q_min
+        self._q_max = q_max
         self._symmetrize_lnq = symmetrize_lnq
 
         super().__init__(**kwargs)
@@ -106,6 +116,7 @@ class PowerLawChirpMassPrior(Prior):
         return {
             "mchirp_range": self._mchirp_range,
             "q_min": self._q_min,
+            "q_max": self._q_max,
             "symmetrize_lnq": self._symmetrize_lnq,
         }
 
