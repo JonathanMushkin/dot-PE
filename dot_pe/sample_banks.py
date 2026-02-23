@@ -458,12 +458,13 @@ class IntrinsicSamplesGenerator:
         mchirp_max,
         f_ref,
         *,
+        q_max=1.0,
         n_samples=None,
         u=None,
         draw_method="mc",
     ):
-        mass_prior = UniformDetectorFrameMassesPrior(
-            mchirp_range=(mchirp_min, mchirp_max), q_min=q_min
+        mass_prior = get_mass_prior(
+            mchirp_range=(mchirp_min, mchirp_max), q_min=q_min, q_max=q_max
         )
 
         if u is None and n_samples is not None and draw_method is not None:
@@ -512,6 +513,7 @@ def create_physical_prior_bank(
     m_max,
     f_ref,
     fbin,
+    q_max=1.0,
     n_blocks=None,
     n_pool=1,
     blocksize=4096,
@@ -536,6 +538,7 @@ def create_physical_prior_bank(
         m_min,
         m_max,
         f_ref,
+        q_max=q_max,
         n_samples=bank_size,
     )
 
@@ -548,6 +551,7 @@ def create_physical_prior_bank(
         json.dump(
             {
                 "q_min": q_min,
+                "q_max": q_max,
                 "min_mchirp": m_min,
                 "max_mchirp": m_max,
                 "f_ref": f_ref,
