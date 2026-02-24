@@ -216,7 +216,7 @@ def _compute_evidence_per_bank_slim(
 
     bank = intrinsic_sample_processor.load_bank(
         bank_file_path,
-        full_intrinsic_indices=inds,
+        indices=inds,
         renormalize_log_prior_weights=False,
     )
     full_log_prior_weights_i = bank["log_prior_weights"].values
@@ -364,6 +364,8 @@ def compute_evidence_on_noise(
     use_event_psd: bool = True,
     asd_funcs: Optional[List[str]] = None,
     seed: Optional[int] = None,
+    selected_inds_by_bank: Optional[Dict[str, NDArray[np.int_]]] = None,
+    use_selected_inds: bool = False,
 ) -> Tuple[float, float]:
     """
     Compute Bayesian evidence on Gaussian noise using setup from a completed rundir.
@@ -389,6 +391,13 @@ def compute_evidence_on_noise(
         ASD functions when creating noise with use_event_psd=False.
     seed : int, optional
         Random seed when creating noise (only used if event_data_noise is None).
+    selected_inds_by_bank : dict, optional
+        Explicit {bank_id: inds}. If provided, selection is skipped and these
+        indices are used.
+    use_selected_inds : bool
+        If True, load selection from intrinsic_samples.npz (as in inference.run).
+        If False (default), use entire bank. Ignored when selected_inds_by_bank
+        is provided.
 
     Returns
     -------
@@ -438,21 +447,36 @@ def compute_evidence_on_noise(
     n_phi = int(run_kwargs["n_phi"])
     blocksize = int(run_kwargs["blocksize"])
 
-    banks_dir = rundir / "banks"
-    if not banks_dir.exists():
-        raise FileNotFoundError(f"banks directory not found in {rundir}")
-
-    # Load selected intrinsic indices per bank
-    selected_inds_by_bank = {}
-    for bank_id, bank_path in banks.items():
-        bank_rundir = banks_dir / bank_id
-        inds_path = bank_rundir / "intrinsic_samples.npz"
-        if not inds_path.exists():
-            raise FileNotFoundError(
-                f"intrinsic_samples.npz not found for bank {bank_id} in {rundir}"
+    # Intrinsic indices: explicit override, load selection, or use entire bank
+    if selected_inds_by_bank is not None:
+        # Caller passed indices; validate bank_ids match
+        for bank_id in banks:
+            if bank_id not in selected_inds_by_bank:
+                raise ValueError(
+                    f"selected_inds_by_bank missing bank_id {bank_id}"
+                )
+    else:
+        banks_dir = rundir / "banks"
+        selected_inds_by_bank = {}
+        for bank_id, bank_path in banks.items():
+            bank_df = pd.read_feather(
+                bank_path / "intrinsic_sample_bank.feather"
             )
-        data = np.load(inds_path)
-        selected_inds_by_bank[bank_id] = data["inds"]
+            n_int = len(bank_df)
+            if use_selected_inds:
+                if not banks_dir.exists():
+                    raise FileNotFoundError(
+                        f"banks directory not found in {rundir} "
+                        "(required when use_selected_inds=True)"
+                    )
+                inds_path = banks_dir / bank_id / "intrinsic_samples.npz"
+                if not inds_path.exists():
+                    raise FileNotFoundError(
+                        f"intrinsic_samples.npz not found for bank {bank_id}"
+                    )
+                selected_inds_by_bank[bank_id] = np.load(inds_path)["inds"]
+            else:
+                selected_inds_by_bank[bank_id] = np.arange(n_int)
 
     # Verify extrinsic samples exist in rundir
     extrinsic_samples_path = rundir / "extrinsic_samples.feather"

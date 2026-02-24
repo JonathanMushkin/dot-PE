@@ -36,6 +36,11 @@ def main():
         action="store_true",
         help="Use cogwheel ASD models instead of event PSD (when creating noise)",
     )
+    parser.add_argument(
+        "--use-selected-inds",
+        action="store_true",
+        help="Load selection from intrinsic_samples.npz (default: use entire bank)",
+    )
     args = parser.parse_args()
 
     ln_evidence, ln_evidence_discarded = compute_evidence_on_noise(
@@ -43,6 +48,7 @@ def main():
         event_data_noise=args.noise,
         event_path=args.event,
         use_event_psd=not args.no_event_psd,
+        use_selected_inds=args.use_selected_inds,
         seed=args.seed,
     )
     print(f"ln_evidence = {ln_evidence:.6f}")
