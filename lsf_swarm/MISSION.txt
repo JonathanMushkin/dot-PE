@@ -1,0 +1,46 @@
+Mission setup and goal:
+
+i have a package at called dot-pe that is used to do parameter estimation for Gravitational Waves transient events. it is called dot-pe and is saved here:
+
+/Users/jonatahm/Work/GW/dot-pe-future
+
+the core of the calculation is a large number of matrix multiplications, using arrays that is loaded from files. this can trivially parallelized. Sadly, I/O bandwidth hinders making it faster using the several cores of a single machine. My goal is to split the time consuming matrix multiplications across several cores on a strong HPC server either using multi-processing / multi-threading, or even more brutally by submitting a few (~20?) short-term jobs. Namely, the server i have accessible is a LSF server.
+
+the goal of this is to make a working proof-of-concept that can finish the same job using a fraction of the time. 
+
+
+Sources:
+This working mode was partly implemented in this very dense code
+/Users/jonatahm/Work/GW/dotpe-nrsur/ 
+namely in it, un the nrsur subfolder. 
+The difference is that is uses SLURM, which is similar but not identical to LSF.
+
+there are good examples on how to use LSF codes with our codes and info in the 
+/Users/jonatahm/Work/GW/o4-pe-project/main/pe
+
+An example on how the code is currently working with a bank of 2^20 intrinsic samples can be found  here:
+/Users/jonatahm/Work/GW/o4a-pe-project/main/pe/artifacts/pe_runs/GW230702_162025/run_3
+namely, it has a profiler output, saved both as .prof and .txt files
+
+algorithm:
+the idea that i have is to slit the infernece.run() code into a linear part (setup), than replace the "for loop" that happens in the incoherent likelihood evaluation with some "swarm setup" to do many small LSF jobs / threads. maybe some commonly-accessed data must be saved to a temp folder for the purpose of making it work. than the results are combined and passed to the next "serial" stage, which is drawing extrinsic samples. 
+When the extrinsic samples exist, the intrinsic samples and extrinsic samples can be combined coherently through as series of mostly matrix multiplications, again done by a "swarm", with needed shared data and potential re-combinations done at the end. 
+then there is some standardization stage that could might as well be serieal.
+
+
+Code info:
+
+The code must be run on a linux server (this machine a is a macos) that uses LSF, and the environment must dot-pe. 
+
+queue information from LSF server can be found here:
+/Users/jonatahm/bqueues.txt
+try to stick to the physics-medium for the "whole run", and use physics-short, short and risk for the "fast matrix multiplications".
+
+
+Instructions:
+only write the code in the the dot-pe-future , only write code in a dedicated lsf_swarm folder, and stay in the lsf_swarm branch. do not alter any other code from the given references. 
+
+make the code "concise", and do not branch out too much. do not be over-defensive, over-abstracted, and include many layers of warppers. 
+assume number of available cores is between 8 and 20.
+
+LSF job cannot run on this macos machine, and I will not give you premission to log in to my lsf server (yet). given working scripts, i'll pull from the server, do test runs, and report back with the results.
