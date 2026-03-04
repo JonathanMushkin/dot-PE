@@ -744,3 +744,60 @@ Note: Phase C missing mp/4w for small/2048 — omitted (not in original plan).
 | 2026-03-04 23:22 | 2028 | mp | large | 2048 | full | 20 | pending | — |
 
 | 2026-03-04 23:22 | 2029 | swarm | large | 2048 | full | - | pending | — |
+
+| 2026-03-04 23:40 | 2047 | mp | small | 512 | full | 4 | pending | — |
+
+| 2026-03-04 23:40 | 2048 | mp | large | 2048 | full | 8 | pending | — |
+
+| 2026-03-04 23:40 | 2049 | mp | large | 2048 | full | 20 | pending | — |
+
+---
+## SESSION NOTES 2026-03-04 23:40 IST
+
+### Results so far (successful runs)
+| bank  | n_ext | mode   | n_workers | wall_s | ln_evidence | n_effective |
+|-------|-------|--------|-----------|--------|-------------|-------------|
+| small | 128   | serial | —         | 193    | 5.347       | 31.1        |
+| small | 128   | mp     | 4         | 185    | 5.347       | 31.1        |
+| small | 128   | swarm  | —         | 235    | 5.347       | 31.1        |
+| small | 512   | serial | —         | 597    | 3.689       | 1376.7      |
+| small | 512   | mp     | 8         | 541    | 3.689       | 1377.1      |
+| small | 512   | swarm  | —         | 889    | 3.689       | 1377.1      |
+| small | 2048  | serial | —         | 628    | 3.552       | 5492.6      |
+| small | 2048  | mp     | 8         | 579    | 3.552       | 5493.4      |
+| small | 2048  | swarm  | —         | 718    | 3.552       | 5493.4      |
+| large | 2048  | serial | —         | 3167   | 3.328       | 177187.5    |
+
+### Memory formula iterations
+Formula went through 3 wrong versions before converging:
+1. `n_ext/128 * 3072 * 1.2` — wrong: n_ext doesn't matter
+2. mode+bank flat values with `+ n_workers * 2000 (small) / 8000 (large)` — wrong: small doesn't scale with n_workers; large scales much faster
+3. Final: small-mp flat 30 GB; large-mp = 15 + n_workers × 10 GB
+
+### Memory peaks observed
+| mode   | bank  | n_workers | peak_MB | formula_MB | result |
+|--------|-------|-----------|---------|------------|--------|
+| serial | small | 1         | 9206    | 13000      | OK     |
+| serial | large | 1         | 10473   | 15000      | OK     |
+| swarm  | small | 1         | 16771   | 22000      | OK     |
+| swarm  | large | 1         | running | 90000      | ?      |
+| mp     | small | 4         | >21000  | 30000      | retry  |
+| mp     | small | 8         | 23787   | 30000      | OK     |
+| mp     | large | 8         | >79000  | 95000      | retry  |
+| mp     | large | 20        | >175000 | 215000     | retry  |
+
+### Currently running/pending (23:40 IST)
+| job  | mode  | bank  | n_workers | status  |
+|------|-------|-------|-----------|---------|
+| 2029 | swarm | large | —         | RUN     |
+| 2047 | mp    | small | 4         | RUN     |
+| 2048 | mp    | large | 8         | RUN     |
+| 2049 | mp    | large | 20        | PEND    |
+
+### compare.py fixes
+- Regex now correctly parses `_wN_` suffix → n_workers column added
+- Wall time falls back to LSF "Run time" for serial (successful jobs only)
+
+### On next login
+1. `bjobs -noheader 2029 2047 2048 2049`
+2. `python experiments/compare.py`

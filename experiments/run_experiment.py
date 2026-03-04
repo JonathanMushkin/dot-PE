@@ -50,21 +50,24 @@ def _mem_per_slot_mb(mode, bank, n_ext, n_slots=1):
     """Memory per LSF slot in MB.
 
     Calibrated from benchmark runs (n_ext has negligible effect on memory):
-      serial/small: 9206–9270 MB observed  → request 13000 MB
-      serial/large: 10473 MB observed       → request 15000 MB
-      swarm/small:  16364 MB observed       → request 22000 MB
-      swarm/large:  >58982 MB (OOM)         → request 90000 MB (conservative)
-      mp/8w/small:  25112 MB total observed → model: serial_base + n_workers * 2000
-      mp/large:     >58976 MB (OOM)         → model: serial_base + n_workers * 8000
+      serial/small: 9206-9270 MB observed  -> 13000 MB requested
+      serial/large: 10473 MB observed      -> 15000 MB requested
+      swarm/small:  16771 MB observed      -> 22000 MB requested
+      swarm/large:  unknown (OOM at 90GB)  -> 90000 MB (conservative)
+      mp/small: COW-dominated, total ~24 GB constant regardless of n_workers -> 30000 MB
+      mp/large: per-worker dominated (~8750 MB/worker):
+        mp/8w OOM at 79000; mp/20w OOM at 175000 (ratio matches n_workers)
+        -> 15000 + n_workers * 10000 MB
     """
     if mode == "serial":
         total = 13000 if bank == "small" else 15000
     elif mode == "swarm":
         total = 22000 if bank == "small" else 90000
     else:  # mp
-        base = 13000 if bank == "small" else 15000
-        overhead_per_worker = 2000 if bank == "small" else 8000
-        total = base + n_slots * overhead_per_worker
+        if bank == "small":
+            total = 30000  # COW: constant regardless of n_workers
+        else:
+            total = 15000 + n_slots * 10000  # per-worker dominated for large bank
     return max(1024, total // n_slots)
 
 
