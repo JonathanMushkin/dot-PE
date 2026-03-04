@@ -332,14 +332,14 @@ def validate_bank_configs(bank_paths: List[Path]) -> Dict:
 
     # Get first config as reference (missing q_max interpreted as 1.0)
     ref_config = configs[0]
+    ref_config.setdefault("q_max", 1.0)
     ref_approximant = ref_config["approximant"]
     ref_fbin = np.array(ref_config["fbin"])
     ref_f_ref = ref_config["f_ref"]
     ref_m_arr = np.array(ref_config["m_arr"])
-    ref_q_min = ref_config.get("q_min")
-    ref_q_max = ref_config.get("q_max", 1.0)
 
-    # Validate against reference
+    # Validate against reference (q_min/q_max are intentionally not checked:
+    # regular banks and low-q banks have non-overlapping q ranges by design)
     for i, config in enumerate(configs[1:], start=1):
         errors = []
 
@@ -362,18 +362,6 @@ def validate_bank_configs(bank_paths: List[Path]) -> Dict:
         if not np.array_equal(np.array(config["m_arr"]), ref_m_arr):
             errors.append(
                 f"m_arr mismatch: bank {i} has different m_arr than reference"
-            )
-
-        if ref_q_min is not None and config.get("q_min") != ref_q_min:
-            errors.append(
-                f"q_min mismatch: bank {i} has {config.get('q_min')}, "
-                f"expected {ref_q_min}"
-            )
-
-        if config.get("q_max", 1.0) != ref_q_max:
-            errors.append(
-                f"q_max mismatch: bank {i} has {config.get('q_max', 1.0)}, "
-                f"expected {ref_q_max}"
             )
 
         if errors:
