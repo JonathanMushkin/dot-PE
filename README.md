@@ -39,94 +39,65 @@ Create mock event data and two banks (small for correctness checks, large for
 timing benchmarks) with a single idempotent script:
 
 ```bash
-python test_data/setup.py --n-pool 4
+python test_data/setup.py --n-pool 4 --base-dir artifacts/banks
 ```
 
 This creates:
 
 ```
-test_data/
+artifacts/banks/
 ├── event/tutorial_event.npz    — gaussian noise, HLV, IMRPhenomXPHM injection
-├── bank_small/                 — 4 096 samples  (fast smoke-test)
+├── bank_small/                 — 4 096 (2^12) samples  (fast smoke-test)
 └── bank_large/                 — 262 144 (2^18) samples  (timing benchmark)
 ```
 
 Re-running the script is safe — each artifact is skipped if already present.
 The event and banks are shared by both `MP/` and `lsf_swarm/` benchmarks.
-The setup follows `notebooks/03_run_inference/03_run_inference.ipynb` exactly.
 
 ---
 
-### MP (multiprocessing, single node)
+### Running benchmarks
 
-`MP/run_mp.py` — drop-in for `inference.run()`.
-
-**Smoke-test** (small bank, should finish in a few minutes):
-
-```bash
-python MP/run_mp.py \
-    --event  test_data/event/tutorial_event.npz \
-    --bank   test_data/bank_small \
-    --rundir /tmp/mp_smoke \
-    --n-ext 512 --n-phi 50 --n-workers 4
-```
-
-**Timing benchmark** (large bank, single LSF node):
+All three modes (serial, MP, swarm) are submitted via a single script that
+handles LSF queue selection, memory sizing, and output directory naming:
 
 ```bash
-bsub -q physics-medium -n 16 -R "span[hosts=1]" \
-     -o mp_%J.out -e mp_%J.err \
-     python MP/run_mp.py \
-         --event  test_data/event/tutorial_event.npz \
-         --bank   test_data/bank_large \
-         --n-ext 4096 --n-phi 100 --n-workers 16
+python experiments/run_experiment.py --mode <serial|mp|swarm> \
+    --bank <small|large> --n-ext <N> [--n-workers <W>]
 ```
 
-After the run, check `<rundir>/run_N/summary_results.json` and the printed
-`Total wall-clock time` line.
+To run all phases unattended inside a tmux session:
+
+```bash
+tmux new -s benchmark
+bash experiments/auto_run.sh --skip-banks
+# Ctrl+B D to detach
+```
+
+`auto_run.sh` runs Phases A–D sequentially, waits for each job, and appends
+results to `experiments/PROGRESS.md`. See that file for the full phase
+definitions and session history.
+
+After jobs complete, compare results:
+
+```bash
+python experiments/compare.py
+```
+
+Experiment outputs land in timestamped subdirectories under `artifacts/experiments/`.
 
 ---
 
-### LSF swarm (multi-node)
+### Parallelization modes
 
-`lsf_swarm/run_swarm.py` — orchestrator that submits short worker jobs.
-Must itself run inside an LSF job (physics-medium) so it can call `bsub`.
+| Mode | Entry point | Description |
+|------|-------------|-------------|
+| `serial` | `dot_pe/inference.py` | Single-process baseline |
+| `mp` | `MP/run_mp.py` | `multiprocessing.Pool`, single node |
+| `swarm` | `lsf_swarm/run_swarm.py` | LSF job array, multi-node |
 
-**Smoke-test**:
-
-```bash
-bsub -q physics-medium -n 1 -W 60 \
-     -o swarm_%J.out -e swarm_%J.err \
-     python lsf_swarm/run_swarm.py \
-         --event  test_data/event/tutorial_event.npz \
-         --bank   test_data/bank_small \
-         --rundir /tmp/swarm_smoke \
-         --n-ext 512 --n-phi 50
-```
-
-**Timing benchmark** (large bank):
-
-```bash
-bsub -q physics-medium -n 1 -W 120 \
-     -o swarm_%J.out -e swarm_%J.err \
-     python lsf_swarm/run_swarm.py \
-         --event  test_data/event/tutorial_event.npz \
-         --bank   test_data/bank_large \
-         --rundir /tmp/swarm_bench \
-         --n-ext 4096 --n-phi 100
-```
-
-The run is resumable: if it fails, re-run the same command — completed stages
-are skipped via `swarm_setup/stage_N.done` marker files.
-
----
-
-### What to report after a test run
-
-1. `n_workers` (MP) or `--max-concurrent` (swarm) used
-2. **Total wall-clock time** — printed as `Total wall-clock time: X s` at end
-3. Contents of `<rundir>/run_N/summary_results.json`
-4. Any errors or warnings
+The swarm orchestrator is resumable — if it fails, resubmit the same command
+and completed stages (marked by `stage_N.done` files) are skipped.
 
 ## Reference
 

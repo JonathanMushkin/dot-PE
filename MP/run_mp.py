@@ -604,6 +604,8 @@ def main():
     p.add_argument("--max-incoherent-lnlike-drop", type=float, default=20.0)
     p.add_argument("--max-bestfit-lnlike-diff",    type=float, default=20.0)
     p.add_argument("--no-draw-subset", action="store_false", dest="draw_subset")
+    p.add_argument("--extrinsic-samples", default=None,
+                   help="Path to cached extrinsic_samples_data.pkl to skip re-drawing")
     args = p.parse_args()
 
     run(
@@ -622,6 +624,7 @@ def main():
         max_incoherent_lnlike_drop=args.max_incoherent_lnlike_drop,
         max_bestfit_lnlike_diff=args.max_bestfit_lnlike_diff,
         draw_subset=args.draw_subset,
+        extrinsic_samples=args.extrinsic_samples,
     )
 
 

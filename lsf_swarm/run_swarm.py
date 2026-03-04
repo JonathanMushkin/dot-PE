@@ -94,6 +94,7 @@ from dot_pe.utils import inds_to_blocks, safe_logsumexp
 # ─────────────────────────────────────────────────────────────────────────────
 
 _WORKER_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _bsub(job_name, n_jobs, worker_cmd, rundir, queue="physics-short",
@@ -116,6 +117,10 @@ def _bsub(job_name, n_jobs, worker_cmd, rundir, queue="physics-short",
 #BSUB -o {logs_dir}/{job_name}_%J_%I.out
 #BSUB -e {logs_dir}/{job_name}_%J_%I.err
 
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate dot-pe
+
+export PYTHONPATH={_PROJECT_ROOT}:$PYTHONPATH
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
@@ -156,12 +161,12 @@ def _wait_for_job(job_id, poll_interval=30):
               f"sleeping {poll_interval} s...", flush=True)
         time.sleep(poll_interval)
 
-    # Check for failures
+    # Check for failures via bhist (more reliable than bjobs -a for fast jobs)
     result = subprocess.run(
-        ["bjobs", "-noheader", "-a", str(job_id)],
+        ["bhist", "-l", str(job_id)],
         capture_output=True, text=True,
     )
-    n_failed = sum(1 for l in result.stdout.splitlines() if "EXIT" in l)
+    n_failed = sum(1 for l in result.stdout.splitlines() if "Exited with exit code" in l)
     if n_failed:
         raise RuntimeError(f"Job {job_id}: {n_failed} tasks exited with error — check logs")
 
@@ -295,7 +300,7 @@ def run(
     if not _stage_done(swarm_dir, 2):
         print(f"\n=== Stage 2: incoherent swarm ({n_incoh_jobs} jobs) ===")
         worker_cmd = (
-            f"python {_WORKER_DIR}/worker_incoherent.py "
+            f"{sys.executable} {_WORKER_DIR}/worker_incoherent.py "
             f"--rundir {rundir} --block-id $LSB_JOBINDEX"
         )
         job_id = _bsub(
@@ -391,7 +396,7 @@ def run(
     if not _stage_done(swarm_dir, 4):
         print(f"\n=== Stage 4: coherent swarm ({n_coh_jobs} i_blocks) ===")
         worker_cmd = (
-            f"python {_WORKER_DIR}/worker_coherent.py "
+            f"{sys.executable} {_WORKER_DIR}/worker_coherent.py "
             f"--rundir {rundir} --i-block-idx $LSB_JOBINDEX"
         )
         job_id = _bsub(

@@ -83,3 +83,6 @@ Thumbs.db
 # Notebook-generated artifacts
 .ipynb_checkpoints/
 **/artifacts/
+
+# Benchmark runner logs
+experiments/auto_run.log
