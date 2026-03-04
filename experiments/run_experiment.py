@@ -46,17 +46,26 @@ _WALL_LIMITS = {
 }
 
 
-def _mem_per_slot_mb(n_ext, n_slots=1):
+def _mem_per_slot_mb(mode, bank, n_ext, n_slots=1):
     """Memory per LSF slot in MB.
 
-    Calibrated from smoke test: n_ext=128 (serial, 1 slot) → 2852 MB actual peak.
-    Memory scales roughly linearly with n_ext (extrinsic pass dominates).
-    Bank size (small vs large) has negligible effect — waveforms are loaded in blocks.
-    For MP (fork): total ≈ serial; per-slot = total / n_slots.
-    20 % safety headroom applied.
+    Calibrated from benchmark runs (n_ext has negligible effect on memory):
+      serial/small: 9206–9270 MB observed  → request 13000 MB
+      serial/large: 10473 MB observed       → request 15000 MB
+      swarm/small:  16364 MB observed       → request 22000 MB
+      swarm/large:  >58982 MB (OOM)         → request 90000 MB (conservative)
+      mp/8w/small:  25112 MB total observed → model: serial_base + n_workers * 2000
+      mp/large:     >58976 MB (OOM)         → model: serial_base + n_workers * 8000
     """
-    total_mb = max(4096, int(n_ext / 128 * 3072 * 1.2))
-    return max(1024, total_mb // n_slots)
+    if mode == "serial":
+        total = 13000 if bank == "small" else 15000
+    elif mode == "swarm":
+        total = 22000 if bank == "small" else 90000
+    else:  # mp
+        base = 13000 if bank == "small" else 15000
+        overhead_per_worker = 2000 if bank == "small" else 8000
+        total = base + n_slots * overhead_per_worker
+    return max(1024, total // n_slots)
 
 
 def _make_rundir(mode, bank, n_ext, n_workers=None):
@@ -81,7 +90,7 @@ def _build_script_serial(args, rundir, bank_path, event_path, log_path):
     queue = args.queue or _DEFAULT_QUEUE["serial"]
     n_int_flag = f"--n_int {args.n_int}" if args.n_int else ""
     ext_flag = f"--extrinsic_samples {args.extrinsic_samples}" if args.extrinsic_samples else ""
-    mem = _mem_per_slot_mb(args.n_ext, n_slots=1)
+    mem = _mem_per_slot_mb("serial", args.bank, args.n_ext, n_slots=1)
 
     script = f"""\
 #!/bin/bash
@@ -116,7 +125,7 @@ def _build_script_mp(args, rundir, bank_path, event_path, log_path):
     queue = args.queue or _DEFAULT_QUEUE["mp"]
     n_workers = args.n_workers or 8
     n_int_flag = f"--n-int {args.n_int}" if args.n_int else ""
-    mem = _mem_per_slot_mb(args.n_ext, n_slots=n_workers)
+    mem = _mem_per_slot_mb("mp", args.bank, args.n_ext, n_slots=n_workers)
 
     script = f"""\
 #!/bin/bash
@@ -152,7 +161,7 @@ def _build_script_swarm(args, rundir, bank_path, event_path, log_path):
     queue = args.queue or _DEFAULT_QUEUE["swarm"]
     max_concurrent = 8 if args.bank == "small" else 20
     n_int_flag = f"--n-int {args.n_int}" if args.n_int else ""
-    mem = _mem_per_slot_mb(args.n_ext, n_slots=1)
+    mem = _mem_per_slot_mb("swarm", args.bank, args.n_ext, n_slots=1)
 
     script = f"""\
 #!/bin/bash

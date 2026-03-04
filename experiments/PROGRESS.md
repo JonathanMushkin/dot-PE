@@ -732,3 +732,15 @@ Note: Phase C missing mp/4w for small/2048 — omitted (not in original plan).
 | 2026-03-04 22:25 | 1097 | mp | large | 2048 | full | 20 | pending | — |
 
 | 2026-03-04 22:25 | 1098 | swarm | large | 2048 | full | - | pending | — |
+
+| 2026-03-04 23:22 | 2024 | mp | small | 512 | full | 4 | pending | — |
+
+| 2026-03-04 23:22 | 2025 | mp | small | 512 | full | 8 | pending | — |
+
+| 2026-03-04 23:22 | 2026 | swarm | small | 512 | full | - | pending | — |
+
+| 2026-03-04 23:22 | 2027 | mp | large | 2048 | full | 8 | pending | — |
+
+| 2026-03-04 23:22 | 2028 | mp | large | 2048 | full | 20 | pending | — |
+
+| 2026-03-04 23:22 | 2029 | swarm | large | 2048 | full | - | pending | — |
