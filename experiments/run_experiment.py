@@ -49,26 +49,31 @@ _WALL_LIMITS = {
 def _mem_per_slot_mb(mode, bank, n_ext, n_slots=1):
     """Memory per LSF slot in MB.
 
-    After thin-worker refactor, coherent workers load only ~1–2 GB each
-    (no LinearFree / CoherentLikelihoodProcessor in workers).
-    The orchestrator runs Stage 2.5 (precompute) which needs ~25 GB once.
+    After thin-worker refactor + malloc_trim + incremental Stage-5 merge:
+      - Coherent workers (swarm array job): ~1–2 GB each — unchanged.
+      - Swarm orchestrator: ctx ~10 GB + precompute spike freed via malloc_trim
+        + Stage 5 incremental merge (size_limit samples at a time).
+      - MP: precompute spike freed via malloc_trim before Pool fork;
+        workers inherit ctx via COW read-only + ~5 GB own new pages each.
 
     Calibrated observations (n_ext has negligible effect):
       serial/small: 9206-9270 MB  -> 13000 MB
       serial/large: 10473 MB      -> 15000 MB
-      swarm orchestrator (pre + post stages): ~25 GB -> 30000 MB
-      swarm/small thin workers:  ~2 GB/slot -> 4000 MB/slot
-      swarm/large thin workers:  ~2 GB/slot -> 4000 MB/slot
-      mp/small (fork, COW for precompute + n_workers thin forks): ~28 GB -> 32000 MB
-      mp/large: ~28 GB precompute + n_workers * ~2 GB workers -> request 35000 MB
+      swarm/small orchestrator:  ~17 GB peak -> 22000 MB
+      swarm/large orchestrator:  ~30 GB peak (malloc_trim helps) -> 40000 MB
+      mp workers: ~5 GB new pages/worker (COW-shared pages not double-counted)
     """
     if mode == "serial":
         total = 13000 if bank == "small" else 15000
     elif mode == "swarm":
-        # Orchestrator process (Stage 2.5 precompute = ~25 GB; merge = small)
-        total = 30000
-    else:  # mp — all in one process: precompute (25 GB) + n_workers thin forks (~2 GB each)
-        total = 28000 + n_slots * 2500
+        # Orchestrator: ctx ~10 GB + Stage 2.5 precompute spike freed via
+        # malloc_trim + Stage 5 incremental merge (≤ size_limit samples).
+        total = 22000 if bank == "small" else 40000
+    else:  # mp — precompute spike freed via malloc_trim before fork;
+           # workers (COW) only pay for new pages (~7 GB each for large bank).
+        base = 15000 if bank == "small" else 20000
+        per_worker = 4000 if bank == "small" else 8000
+        total = base + n_slots * per_worker
     return max(1024, total // n_slots)
 
 

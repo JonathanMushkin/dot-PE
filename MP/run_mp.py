@@ -308,6 +308,15 @@ def _run_coherent_mp(
             blocksize=blocksize,
         )
 
+        # Release CLP memory back to OS before forking workers
+        import gc as _gc
+        _gc.collect()
+        try:
+            import ctypes as _ctypes
+            _ctypes.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
+
         # Load setup into main process; workers inherit via COW fork
         _thin_setup = thin_coherent.load_thin_setup(setup_dir, rundir)
 
@@ -320,21 +329,35 @@ def _run_coherent_mp(
         n_actual = min(n_workers, len(i_blocks))
         print(f"  [MP] coherent: {len(i_blocks)} i_blocks → {n_actual} workers")
 
-        with Pool(n_actual) as pool:
-            results = pool.map(_thin_coherent_worker, worker_args)
-
-        # ── Merge results ─────────────────────────────────────────────────
-        partial_dfs = [r[0] for r in results if len(r[0]) > 0]
-        n_disc_total = sum(r[1] for r in results)
-        logsumexp_disc = safe_logsumexp([r[2] for r in results])
-        logsumsqrexp_disc = safe_logsumexp([r[3] for r in results])
+        # ── Incremental merge: process results one at a time to cap memory ─
+        accumulated = None
+        n_disc_total = 0
+        logsumexp_disc = -np.inf
+        logsumsqrexp_disc = -np.inf
         cached_dt = {}
-        for r in results:
-            cached_dt.update(r[4])
-        n_dist_marg = sum(r[5] for r in results)
+        n_dist_marg = 0
 
-        if partial_dfs:
-            combined = pd.concat(partial_dfs, ignore_index=True)
+        with Pool(n_actual) as pool:
+            for r in pool.imap_unordered(_thin_coherent_worker, worker_args):
+                df, n_disc, lse_disc, lsse_disc, dt_slice, n_dm = r
+                n_disc_total += n_disc
+                logsumexp_disc = safe_logsumexp([logsumexp_disc, lse_disc])
+                logsumsqrexp_disc = safe_logsumexp([logsumsqrexp_disc, lsse_disc])
+                cached_dt.update(dt_slice)
+                n_dist_marg += n_dm
+                if len(df) > 0:
+                    if accumulated is None:
+                        accumulated = df
+                    else:
+                        accumulated = pd.concat([accumulated, df], ignore_index=True)
+                        if len(accumulated) > size_limit:
+                            top_idx = np.argpartition(
+                                accumulated["bestfit_lnlike"].values, -size_limit
+                            )[-size_limit:]
+                            accumulated = accumulated.iloc[top_idx].reset_index(drop=True)
+
+        if accumulated is not None:
+            combined = accumulated
         else:
             combined = pd.DataFrame(columns=CoherentLikelihoodProcessor.PROB_SAMPLES_COLS)
 
@@ -488,6 +511,15 @@ def run(
         rundir=ctx["rundir"],
         extrinsic_samples=extrinsic_samples,
     )
+
+    # Free MarginalizationInfo and any other large objects before coherent stage
+    import gc as _gc2
+    _gc2.collect()
+    try:
+        import ctypes as _ctypes2
+        _ctypes2.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
 
     # ── Stage 5: coherent inference (parallelized, thin workers) ─────────────
     per_bank_results = _run_coherent_mp(

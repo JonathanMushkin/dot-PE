@@ -415,6 +415,15 @@ def run(
         )
         _mark_done(swarm_dir, "25")
         print(f"  Stage 2.5 done ({time.time()-t0:.0f} s elapsed)")
+
+        # Release CLP memory back to OS before forking workers
+        import gc
+        gc.collect()
+        try:
+            import ctypes
+            ctypes.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
     else:
         print("=== Stage 2.5: [skip] already done ===")
 
@@ -454,7 +463,7 @@ def run(
     if not _stage_done(swarm_dir, 5):
         print("\n=== Stage 5: merging coherent results + postprocess ===")
 
-        partial_dfs, cached_dt = [], {}
+        accumulated, cached_dt = None, {}
         n_disc_total = 0
         logsumexp_disc = -np.inf
         logsumsqrexp_disc = -np.inf
@@ -464,7 +473,7 @@ def run(
             d = np.load(swarm_dir / "coherent" / f"i_{i}.npz")
             n = len(d["i"])
             if n > 0:
-                partial_dfs.append(pd.DataFrame({
+                block_df = pd.DataFrame({
                     "i":               d["i"],
                     "e":               d["e"],
                     "o":               d["o"],
@@ -473,7 +482,16 @@ def run(
                     "bestfit_lnlike":  d["bestfit_lnlike"],
                     "d_h_1Mpc":        d["d_h_1Mpc"],
                     "h_h_1Mpc":        d["h_h_1Mpc"],
-                }))
+                })
+                if accumulated is None:
+                    accumulated = block_df
+                else:
+                    accumulated = pd.concat([accumulated, block_df], ignore_index=True)
+                    if len(accumulated) > size_limit:
+                        top_idx = np.argpartition(
+                            accumulated["bestfit_lnlike"].values, -size_limit
+                        )[-size_limit:]
+                        accumulated = accumulated.iloc[top_idx].reset_index(drop=True)
             n_disc_total  += int(d["n_samples_discarded"])
             logsumexp_disc = safe_logsumexp([float(d["logsumexp_discarded"]), logsumexp_disc])
             logsumsqrexp_disc = safe_logsumexp([float(d["logsumsqrexp_discarded"]), logsumsqrexp_disc])
@@ -482,8 +500,8 @@ def run(
                 cached_dt[int(k)] = float(v)
 
         combined = (
-            pd.concat(partial_dfs, ignore_index=True)
-            if partial_dfs
+            accumulated
+            if accumulated is not None
             else pd.DataFrame(columns=CoherentLikelihoodProcessor.PROB_SAMPLES_COLS)
         )
         combined["weights"] = exp_normalize(combined["ln_posterior"].values)

@@ -102,6 +102,8 @@ def precompute_coherent_setup(
     np.save(setup_dir / "logw_i.npy", clp.full_log_prior_weights_i)
 
     # Config
+    n_blocks = len(inds_to_blocks(selected_inds, blocksize))
+    max_output_per_block = max(50_000, 2 * size_limit // max(1, n_blocks))
     with open(setup_dir / "setup.json", "w") as f:
         json.dump(
             {
@@ -109,6 +111,7 @@ def precompute_coherent_setup(
                 "m_arr": np.asarray(m_arr).tolist(),
                 "max_bestfit_lnlike_diff": float(max_bestfit_lnlike_diff),
                 "size_limit": int(size_limit),
+                "max_output_per_block": int(max_output_per_block),
             },
             f,
         )
@@ -170,6 +173,7 @@ def load_thin_setup(setup_dir, rundir):
         "m_arr":               np.asarray(cfg["m_arr"]),
         "max_bestfit_lnlike_diff": cfg["max_bestfit_lnlike_diff"],
         "size_limit":          cfg["size_limit"],
+        "max_output_per_block": cfg.get("max_output_per_block"),
     }
 
 
@@ -275,6 +279,17 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
                 "h_h_1Mpc":        hh_k,
             }))
 
+            # Incremental trim to cap accumulated samples and bound memory.
+            max_per_block = setup.get("max_output_per_block")
+            if max_per_block is not None:
+                n_acc = sum(len(f) for f in all_frames)
+                if n_acc > 2 * max_per_block:
+                    merged = pd.concat(all_frames, ignore_index=True)
+                    top_idx = np.argpartition(
+                        merged["bestfit_lnlike"].values, -max_per_block
+                    )[-max_per_block:]
+                    all_frames = [merged.iloc[top_idx].reset_index(drop=True)]
+
         # ── Discarded samples stats ───────────────────────────────────────
         n_disc_blk = int(np.sum(~accepted))
         if n_disc_blk:
@@ -309,6 +324,14 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
 
     if all_frames:
         prob_samples_df = pd.concat(all_frames, ignore_index=True)
+        # Cap per-block output to avoid huge IPC payloads / disk files.
+        # The global orchestrator applies a further top-k merge across all blocks.
+        max_per_block = setup.get("max_output_per_block")
+        if max_per_block is not None and len(prob_samples_df) > max_per_block:
+            top_idx = np.argpartition(
+                prob_samples_df["bestfit_lnlike"].values, -max_per_block
+            )[-max_per_block:]
+            prob_samples_df = prob_samples_df.iloc[top_idx].reset_index(drop=True)
     else:
         prob_samples_df = pd.DataFrame(columns=[
             "i", "e", "o", "lnl_marginalized", "ln_posterior",

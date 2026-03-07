@@ -889,7 +889,7 @@ def prepare_run_objects(
     )
     par_dic_0 = coherent_posterior.likelihood.par_dic_0.copy()
 
-    coherent_posterior.to_json(dirname=rundir)
+    coherent_posterior.to_json(dirname=rundir, overwrite=True)
 
     pr = coherent_posterior.prior
 
