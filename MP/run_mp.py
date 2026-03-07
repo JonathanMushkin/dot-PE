@@ -85,12 +85,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from cogwheel.utils import exp_normalize
-from cogwheel.waveform import WaveformGenerator
-from dot_pe import inference
+from dot_pe import inference, thin_coherent
 from dot_pe.base_sampler_free_sampling import get_n_effective_total_i_e
 from dot_pe.coherent_processing import CoherentLikelihoodProcessor
 from dot_pe.inference import _create_single_detector_processor, run_for_single_detector
-from dot_pe.likelihood_calculating import LinearFree
 from dot_pe.utils import inds_to_blocks, safe_logsumexp
 
 
@@ -166,94 +164,28 @@ def _incoherent_chunk_worker(args):
     return chunk_inds, lnlike_di
 
 
-def _coherent_iblock_worker(args):
+# Module-level setup dict — populated in main process before Pool creation,
+# inherited by fork-based workers via copy-on-write (no per-task pickling).
+_thin_setup = None
+
+
+def _thin_coherent_worker(args):
     """
-    Process one i_block × all e_blocks for coherent inference.
+    Thin coherent worker: process one i_block × all e_blocks.
+
+    Uses pre-computed summary weights and dt cache from _thin_setup
+    (set before the Pool is created).  Per-worker memory: ~1–2 GB.
 
     Parameters (packed in args tuple)
     ----------------------------------
-    i_block                  : np.ndarray of intrinsic indices for this block
-    e_blocks                 : list of np.ndarray extrinsic index blocks
-    bank_folder              : str path
-    n_phi, m_arr             : inference config
-    par_dic_0                : reference parameter dict
-    event_data               : EventData
-    top_rundir               : str path  (where extrinsic_samples.feather lives)
-    size_limit               : int
-    max_bestfit_lnlike_diff  : float
-    intrinsic_logw_lookup    : None  or  (inds, logw) tuple
+    i_block      : np.ndarray  absolute bank indices for this block
+    e_blocks     : list[np.ndarray]  extrinsic index blocks
+    waveform_dir : str  path to waveforms directory
 
-    Returns
-    -------
-    prob_samples             : pd.DataFrame
-    n_samples_discarded      : int
-    logsumexp_discarded      : float
-    logsumsqrexp_discarded   : float
-    cached_dt                : dict {int → float}
-    n_distance_marginalizations : int
+    Returns same tuple as the old _coherent_iblock_worker.
     """
-    (
-        i_block,
-        e_blocks,
-        bank_folder,
-        n_phi,
-        m_arr,
-        par_dic_0,
-        event_data,
-        top_rundir,
-        size_limit,
-        max_bestfit_lnlike_diff,
-        intrinsic_logw_lookup,
-    ) = args
-
-    bank_folder = Path(bank_folder)
-    top_rundir = Path(top_rundir)
-
-    with open(bank_folder / "bank_config.json") as f:
-        bank_config = json.load(f)
-    fbin = np.array(bank_config["fbin"])
-    approximant = bank_config["approximant"]
-
-    wfg = WaveformGenerator.from_event_data(event_data, approximant)
-    likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
-
-    bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
-    waveform_dir = bank_folder / "waveforms"
-
-    clp = CoherentLikelihoodProcessor(
-        bank_file_path,
-        waveform_dir,
-        n_phi,
-        m_arr,
-        likelihood_linfree,
-        size_limit=size_limit,
-        max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
-        intrinsic_logw_lookup=intrinsic_logw_lookup,
-    )
-    clp.load_extrinsic_samples_data(top_rundir)
-
-    # Load waveforms once for this i_block, then iterate over all e_blocks
-    amp, phase = clp.intrinsic_sample_processor.load_amp_and_phase(waveform_dir, i_block)
-    h_impb = amp * np.exp(1j * phase)
-
-    for e_block in e_blocks:
-        clp.create_a_likelihood_block(
-            h_impb,
-            clp.full_response_dpe[..., e_block],
-            clp.full_timeshift_dbe[..., e_block],
-            i_block,
-            e_block,
-        )
-        clp.combine_prob_samples_with_next_block()
-
-    return (
-        clp.prob_samples,
-        clp.n_samples_discarded,
-        clp.logsumexp_discarded_ln_posterior,
-        clp.logsumsqrexp_discarded_ln_posterior,
-        dict(clp.intrinsic_sample_processor.cached_dt_linfree_relative),
-        clp.n_distance_marginalizations,
-    )
+    i_block, e_blocks, waveform_dir = args
+    return thin_coherent.run_thin_iblock(i_block, e_blocks, _thin_setup, waveform_dir)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,12 +246,18 @@ def _run_coherent_mp(
     selected_inds_by_bank, n_int_dict, n_ext, n_phi, m_arr,
     blocksize, size_limit, max_bestfit_lnlike_diff,
     bank_logw_override_dict, n_workers,
+    fbin, approximant,
 ):
     """
     Parallel replacement for run_coherent_inference_per_bank().
-    One worker per i_block; the main process merges the results.
+
+    Pre-computes summary weights and dt cache once per bank in the main
+    process, then dispatches thin workers (one per i_block) that each
+    need only ~1–2 GB.
     """
-    print("\n=== Coherent inference per bank (MP) ===")
+    global _thin_setup
+
+    print("\n=== Coherent inference per bank (MP, thin workers) ===")
     per_bank_results = []
 
     for bank_id, bank_path in banks.items():
@@ -352,32 +290,40 @@ def _run_coherent_mp(
             })
             continue
 
-        intrinsic_logw_lookup = None
-        if bank_logw_override_dict and bank_id in bank_logw_override_dict:
-            override_logw = np.asarray(bank_logw_override_dict[bank_id])[inds]
-            intrinsic_logw_lookup = (inds, override_logw)
+        # ── Pre-computation (main process, once per bank) ─────────────────
+        setup_dir = rundir / f"mp_coherent_setup_{bank_id}"
+        print(f"  [MP] pre-computing coherent setup for bank {bank_id}...")
+        thin_coherent.precompute_coherent_setup(
+            setup_dir=setup_dir,
+            bank_path=Path(bank_path),
+            event_data=event_data,
+            par_dic_0=par_dic_0,
+            fbin=fbin,
+            approximant=approximant,
+            m_arr=m_arr,
+            n_phi=n_phi,
+            size_limit=size_limit,
+            max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
+            selected_inds=inds,
+            blocksize=blocksize,
+        )
 
+        # Load setup into main process; workers inherit via COW fork
+        _thin_setup = thin_coherent.load_thin_setup(setup_dir, rundir)
+
+        waveform_dir = str(Path(bank_path) / "waveforms")
         i_blocks = inds_to_blocks(inds, blocksize)
         e_blocks = inds_to_blocks(np.arange(n_ext), blocksize)
 
-        worker_args = [
-            (
-                i_block, e_blocks,
-                str(bank_path), n_phi, m_arr,
-                par_dic_0, event_data, str(rundir),
-                size_limit, max_bestfit_lnlike_diff,
-                intrinsic_logw_lookup,
-            )
-            for i_block in i_blocks
-        ]
+        worker_args = [(i_block, e_blocks, waveform_dir) for i_block in i_blocks]
 
         n_actual = min(n_workers, len(i_blocks))
         print(f"  [MP] coherent: {len(i_blocks)} i_blocks → {n_actual} workers")
 
         with Pool(n_actual) as pool:
-            results = pool.map(_coherent_iblock_worker, worker_args)
+            results = pool.map(_thin_coherent_worker, worker_args)
 
-        # Merge results from all i_block workers
+        # ── Merge results ─────────────────────────────────────────────────
         partial_dfs = [r[0] for r in results if len(r[0]) > 0]
         n_disc_total = sum(r[1] for r in results)
         logsumexp_disc = safe_logsumexp([r[2] for r in results])
@@ -543,7 +489,7 @@ def run(
         extrinsic_samples=extrinsic_samples,
     )
 
-    # ── Stage 5: coherent inference (parallelized) ────────────────────────────
+    # ── Stage 5: coherent inference (parallelized, thin workers) ─────────────
     per_bank_results = _run_coherent_mp(
         banks=ctx["banks"],
         event_data=ctx["event_data"],
@@ -560,6 +506,8 @@ def run(
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
         bank_logw_override_dict=ctx.get("bank_logw_override_dict"),
         n_workers=n_workers,
+        fbin=ctx["fbin"],
+        approximant=ctx["approximant"],
     )
 
     # ── Stage 6: postprocess (serial) ─────────────────────────────────────────

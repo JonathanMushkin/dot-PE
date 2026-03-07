@@ -2,13 +2,19 @@
 """
 LSF swarm orchestrator for dot-pe inference.
 
-Chains 5 stages, submitting LSF array jobs for the two heavy loops:
-  Stage 1  setup + serialize inputs           (this process, ~60 s)
-  Stage 2  incoherent scoring swarm           (LSF array, physics-short)
-  Stage 2b merge + threshold                  (this process, ~5 s)
-  Stage 3  extrinsic sampling                 (this process, ~549 s)
-  Stage 4  coherent inference swarm           (LSF array, physics-short)
-  Stage 5  merge + postprocess + save         (this process, ~10 s)
+Chains 6 stages, submitting LSF array jobs for the two heavy loops:
+  Stage 1   setup + serialize inputs           (this process, ~60 s)
+  Stage 2   incoherent scoring swarm           (LSF array, physics-short)
+  Stage 2b  merge + threshold                  (this process, ~5 s)
+  Stage 3   extrinsic sampling                 (this process, ~549 s)
+  Stage 2.5 pre-compute coherent setup         (this process, ~60–300 s)
+  Stage 4   coherent inference swarm           (LSF array, physics-short)
+  Stage 5   merge + postprocess + save         (this process, ~10 s)
+
+Stage 2.5 builds CoherentLikelihoodProcessor once and saves summary weights
+(dh_weights_dmpb, hh_weights_dmppb) and the dt_linfree cache to
+swarm_setup/coherent_setup/.  Stage 4 workers then only load ~1–2 GB each
+instead of the ~10–25 GB per-worker required by the previous thick workers.
 
 Marker files (stage_N.done) allow resuming a failed run without re-doing
 completed stages — just re-run the same command.
@@ -83,7 +89,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from cogwheel.utils import exp_normalize
-from dot_pe import inference
+from dot_pe import inference, thin_coherent
 from dot_pe.base_sampler_free_sampling import get_n_effective_total_i_e
 from dot_pe.coherent_processing import CoherentLikelihoodProcessor
 from dot_pe.utils import inds_to_blocks, safe_logsumexp
@@ -388,6 +394,29 @@ def run(
         print(f"  Stage 3 done ({time.time()-t0:.0f} s elapsed)")
     else:
         print("=== Stage 3: [skip] already done ===")
+
+    # ── Stage 2.5: pre-compute coherent setup (summary weights + dt cache) ───
+    setup_dir = swarm_dir / "coherent_setup"
+    if not _stage_done(swarm_dir, "25"):
+        print(f"\n=== Stage 2.5: pre-computing coherent setup ===")
+        thin_coherent.precompute_coherent_setup(
+            setup_dir=setup_dir,
+            bank_path=bank_path,
+            event_data=ctx["event_data"],
+            par_dic_0=ctx["par_dic_0"],
+            fbin=ctx["fbin"],
+            approximant=ctx["approximant"],
+            m_arr=ctx["m_arr"],
+            n_phi=n_phi,
+            size_limit=size_limit,
+            max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
+            selected_inds=selected_inds,
+            blocksize=blocksize,
+        )
+        _mark_done(swarm_dir, "25")
+        print(f"  Stage 2.5 done ({time.time()-t0:.0f} s elapsed)")
+    else:
+        print("=== Stage 2.5: [skip] already done ===")
 
     # ── Stage 4: coherent swarm ───────────────────────────────────────────────
     i_blocks     = inds_to_blocks(selected_inds, blocksize)

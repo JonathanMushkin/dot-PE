@@ -49,25 +49,26 @@ _WALL_LIMITS = {
 def _mem_per_slot_mb(mode, bank, n_ext, n_slots=1):
     """Memory per LSF slot in MB.
 
-    Calibrated from benchmark runs (n_ext has negligible effect on memory):
-      serial/small: 9206-9270 MB observed  -> 13000 MB requested
-      serial/large: 10473 MB observed      -> 15000 MB requested
-      swarm/small:  16771 MB observed      -> 22000 MB requested
-      swarm/large:  unknown (OOM at 90GB)  -> 90000 MB (conservative)
-      mp/small: COW-dominated, total ~24 GB constant regardless of n_workers -> 30000 MB
-      mp/large: per-worker dominated (~8750 MB/worker):
-        mp/8w OOM at 79000; mp/20w OOM at 175000 (ratio matches n_workers)
-        -> 15000 + n_workers * 10000 MB
+    After thin-worker refactor, coherent workers load only ~1–2 GB each
+    (no LinearFree / CoherentLikelihoodProcessor in workers).
+    The orchestrator runs Stage 2.5 (precompute) which needs ~25 GB once.
+
+    Calibrated observations (n_ext has negligible effect):
+      serial/small: 9206-9270 MB  -> 13000 MB
+      serial/large: 10473 MB      -> 15000 MB
+      swarm orchestrator (pre + post stages): ~25 GB -> 30000 MB
+      swarm/small thin workers:  ~2 GB/slot -> 4000 MB/slot
+      swarm/large thin workers:  ~2 GB/slot -> 4000 MB/slot
+      mp/small (fork, COW for precompute + n_workers thin forks): ~28 GB -> 32000 MB
+      mp/large: ~28 GB precompute + n_workers * ~2 GB workers -> request 35000 MB
     """
     if mode == "serial":
         total = 13000 if bank == "small" else 15000
     elif mode == "swarm":
-        total = 22000 if bank == "small" else 90000
-    else:  # mp
-        if bank == "small":
-            total = 30000  # COW: constant regardless of n_workers
-        else:
-            total = 15000 + n_slots * 10000  # per-worker dominated for large bank
+        # Orchestrator process (Stage 2.5 precompute = ~25 GB; merge = small)
+        total = 30000
+    else:  # mp — all in one process: precompute (25 GB) + n_workers thin forks (~2 GB each)
+        total = 28000 + n_slots * 2500
     return max(1024, total // n_slots)
 
 
