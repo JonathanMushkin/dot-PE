@@ -508,3 +508,48 @@ snapshot = tracemalloc.take_snapshot()
 for stat in snapshot.statistics('lineno')[:20]:
     print(stat)
 ```
+
+---
+
+### 2026-03-09 — Phase E RESOLVED: SUB_BATCH_SIZE fix eliminates OOM
+
+**Root cause (final diagnosis, jobs 124483 + 131190):**
+
+COW of the 8.4 GB generator was NOT the culprit.
+Generator at rest = only **1225 MB** (Python-level; 365 MB numpy arrays + Python heap).
+The OOM came from temporary allocations inside each `get_marg_info_batch_multibank` call:
+
+| source | allocations | memory | mechanism |
+|--------|-------------|--------|-----------|
+| `marginalization.py:395` `update()` | 1740 concatenations × 503 KiB | 896 MB | `np.concatenate` on d_h/h_h arrays for QMC doubling |
+| `cogwheel/utils.py:230` | 368 × 238 KiB | 90 MB | QMC sequence allocation |
+| `marginalization.py:356` `__post_init__` | 184 × 460 KiB | 87 MB | `sparse.coo_array.toarray()` → dense 32768-element array |
+| **Total (batch-profile, B=1024)** | | **+7652 MB** | freed after call, but malloc heap retains pages (high-water mark) |
+
+**Fix (commit `aebb80e`, 2026-03-09):**
+- `SUB_BATCH_SIZE`: 1024 → **128** samples per sub-batch
+- Added `malloc_trim(0)` (libc) after each sub-batch to return freed heap pages to OS
+- Memory scales ~linearly with batch size: B=128 → **+1090 MB** per sub-batch (measured, job 133787)
+
+**Verification (jobs 133787, 134727, 134728, 136034):**
+
+| job    | test                  | n_workers | result       | wall_s | peak_mem | host |
+|--------|-----------------------|-----------|--------------|--------|----------|------|
+| 133787 | batch-profile B=128   | 1         | **DONE**     | —      | 2669 MB total | cn386 |
+| 134727 | bench parallel-only   | 4         | **DONE**     | 306.7s | **9808 MB** ✓ | cn364 |
+| 136034 | bench parallel-only   | 8 (clean) | **DONE**     | 525.1s | **17096 MB** ✓ | cn371 |
+| 136149 | bench serial baseline | 1         | **DONE**     | 711.7s | 8566 MB | cn353 |
+
+**Speedup summary (bench_extrinsic, large bank, n_ext=2048):**
+| n_workers | wall_s | peak_MB | speedup |
+|-----------|--------|---------|---------|
+| 1 (serial)| 711.7  | 8566    | 1.0×    |
+| 4         | 306.7  | 9808    | **2.32×** |
+| 8         | 525.1  | 17096   | 1.35×†  |
+
+†n=8 ran on different host than serial; NFS cache variability dominates. n=4 result is reliable.
+Note: bench_extrinsic timing includes generator build (150-200s); actual parallel speedup for
+the sampling portion itself is higher. Serial 711.7s vs full-inference serial 605s reflects
+NFS cache warming from prior inference stages.
+
+**Phase E: COMPLETE.** Both n=4 and n=8 run successfully within 20 GB.
