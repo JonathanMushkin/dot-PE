@@ -553,3 +553,34 @@ the sampling portion itself is higher. Serial 711.7s vs full-inference serial 60
 NFS cache warming from prior inference stages.
 
 **Phase E: COMPLETE.** Both n=4 and n=8 run successfully within 20 GB.
+
+---
+
+### 2026-03-10 00:29 — Phase F: port dotpe-nrsur lnlike optimizations
+
+Ported two sequential optimizations from `dotpe-nrsur` into `dot_pe/coherent_processing.py`:
+
+1. **Skip lnlike filter when threshold ≤ 0** (the default): with `min_marg_lnlike_for_sampling=0.0`,
+   virtually all candidates pass — every `lnlike()` call was wasted. Now takes first `n_to_process`
+   candidates directly (batch is already shuffled → unbiased). Applies to both `get_marg_info_batch`
+   and `get_marg_info_batch_multibank`.
+
+2. **Early-stop lnlike filter**: for non-zero thresholds, stop after collecting
+   `max(2×n_remaining, 32)` valid candidates instead of evaluating the full batch.
+   `n_remaining = n_combine - len(marg_info_i)` is passed as `max_filter_valid` from both callers.
+
+Reference speedups measured in dotpe-nrsur (NRSur waveform, N=200 survivors):
+- Skip filter alone: **3.33× Phase 4 speedup**
+- Early-stop alone: **2.58× Phase 4 speedup**
+
+For our XPHM bank, lnlike is cheap (~0.13s/call vs ~1s for NRSur), so the skip gives a smaller
+but still meaningful gain. The `max_filter_valid` reduction in QMC work (loading fewer waveforms
++ running fewer QMC chains) is the larger benefit here.
+
+**Jobs submitted (2026-03-10 00:29–00:33):**
+
+| job    | mode   | bank      | n_ext | n_workers | purpose                     | status  |
+|--------|--------|-----------|-------|-----------|------------------------------|---------|
+| 168214 | serial | small     | 128   | —         | smoke test (correctness)     | pending |
+| 168227 | serial | large     | 2048  | —         | full bench vs baseline 3167s | pending |
+| 168730 | mp/w8  | real event| —     | 8 (ext=4) | real event vs baseline ~1250s| pending |
