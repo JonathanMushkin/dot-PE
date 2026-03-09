@@ -288,3 +288,223 @@ then resumed via stage5 retry job; full-retry wall clock was 4815s (dominated by
 **mp speedup (large bank, n_ext=2048):**
 - serial → mp/4w: 3167 → 1783s = 1.8x
 - serial → mp/8w: 3167 → 949s  = 3.3x
+
+---
+
+### 2026-03-08 — Phase E: parallel extrinsic sampling (bench_extrinsic)
+
+**New code:** `dot_pe/parallel_extrinsic.py`, `experiments/bench_extrinsic.py`,
+`--n-ext-workers` added to `MP/run_mp.py`, `lsf_swarm/run_swarm.py`,
+`experiments/run_experiment.py`.
+
+Design: fork+COW pool dispatches 1024-sample batches to workers; each worker calls
+`get_marg_info_batch_multibank()` on the inherited generator; main process collects
+16 MI objects then breaks the pool early.
+
+**Smoke tests (2026-03-08 00:15, jobs 77388/77389/77398):**
+| job   | mode               | what was tested                        | result |
+|-------|--------------------|----------------------------------------|--------|
+| 77388 | bench serial (w=1) | `inference.draw_extrinsic_samples()`   | OOM at 8 GB (too small) — code ran correctly before kill |
+| 77389 | bench mp (w=4)     | `draw_extrinsic_samples_parallel()`    | OOM at 16 GB (too small) — parallel fork confirmed started |
+| 77398 | swarm --n-ext-workers 4 | `run_swarm.py` Stage 3 parallel wiring | **DONE** 298s, 2.7 GB peak ✓ |
+
+Swarm wiring confirmed correct. Serial/MP smoke OOMs were due to undersized memory
+allocation (8–16 GB requested vs. ~9–15 GB needed for the large-bank generator).
+
+**Full benchmark (2026-03-08 00:34, jobs 77816–77820), large bank, n_ext=2048:**
+| job   | n_workers | mem_alloc | result            | wall_s | peak_mem |
+|-------|-----------|-----------|-------------------|--------|----------|
+| 77816 | 1 (serial)| 18 GB     | **DONE**          | 797    | 8.6 GB   |
+| 77817 | 4         | 24 GB     | TERM_MEMLIMIT     | 815    | 24 GB    |
+| 77818 | 8         | 24 GB     | TERM_MEMLIMIT     | 759    | 24 GB    |
+| 77819 | 16        | 32 GB     | TERM_MEMLIMIT     | 746    | 32 GB    |
+| 77820 | 20        | 40 GB     | TERM_MEMLIMIT     | 746    | 40 GB    |
+
+**Root cause of all parallel OOMs — COW defeated by Python refcounting:**
+
+The COW assumption was wrong for the extrinsic stage. When a forked worker reads
+`_d_h_weights` / `_h_h_weights` from the inherited generator, Python's reference
+counting modifies the object header on each shared page, triggering a physical page
+copy for every accessed page. Unlike the coherent thin workers (which load their own
+data from disk and never touch parent arrays), the extrinsic workers read the parent's
+large numpy arrays directly, causing full duplicates of the ~8.6 GB generator in each
+worker. Observed memory scaling: `(n_workers + 1) × ~8.6 GB`.
+
+**Status:** parallel extrinsic stage is NOT yet viable with the current fork+COW
+architecture. Serial baseline measured: **797s** for large bank, n_ext=2048.
+
+---
+
+### 2026-03-08 11:18 — Profile-split result (job 83591)
+
+Ran `bench_extrinsic.py --profile-split` on large bank, n_ext=2048.
+
+**Step 1/2 split:**
+| step | function | wall_s | pct |
+|------|----------|--------|-----|
+| Step 1 | `_get_many_dh_hh` | 0.6 | 0.1% |
+| Step 2 | `get_marginalization_info` | 0.2 | 0.0% |
+| Other | (filter, I/O, marginalization internals) | 604.7 | 99.9% |
+
+**Top hotspots (by tottime):**
+- `numpy.fromfile`: 157s — loading 128 waveform block files from NFS (all 64 blocks = 12.7 GB)
+- scipy splines: 72s — `_kde_t_arrival_prob` per-sample
+- `take_along_axis`: 55s; `ufunc.reduce`: 46s; `argsort`: 25s — marginalization ops
+
+**Root cause revision:** The COW failure was NOT from `_d_h_weights` object headers
+(those arrays are tiny, ~1 MB). The actual problem was random batches of 1024 samples
+spanning ALL 64 block files → each worker loads ~12 GB of waveform data per batch.
+
+**Fix: block-partitioned workers** (implemented 2026-03-08)
+
+Instead of random-sample batches, partition the 64 waveform blocks across n_workers.
+Each worker loads only its 8 blocks (8×99 MB×2 = 1.6 GB), not all 64. Workers run to
+completion on their block range; main process selects best n_combine MI objects by
+n_effective_prior.
+
+Key facts that make this work:
+- Workers only RETURN MI objects that pass n_effective_prior threshold (~2 per worker)
+- Workers access `_d_h_weights` etc. READ-only → data pages COW-shared (tiny header COW)
+- Per-worker new allocations: ~600 MB (waveform rows + intermediate)
+- Estimated total for 8 workers: parent 8.4 GB + 8×0.6 = ~13 GB
+
+**Submitted job 85753** (2026-03-08 15:00): `bench_block` w=1,4,8, 20 GB, large bank.
+
+---
+
+### 2026-03-08 15:34 — Block-partitioned benchmark results (jobs 87502–87508)
+
+| job   | n_workers | mem_limit | result        | wall_s | peak_mem | notes |
+|-------|-----------|-----------|---------------|--------|----------|-------|
+| 87502 | 1 (serial)| 20 GB     | **DONE**      | 588    | 8.4 GB   | baseline |
+| 87504 | 4         | 10 GB     | TERM_RUNLIMIT | >1800  | 2.9 GB/slot | workers ran all samples, no early stop |
+| 87507 | 8         | 20 GB     | TERM_RUNLIMIT | >1800  | 2.9 GB/slot | same |
+| 87508 | 16        | 40 GB     | TERM_RUNLIMIT | >1800  | —        | same |
+
+**Root cause of timeouts:** Workers received ALL samples in their block range (~8,346
+per worker for w=8) and ran every one with no early stop. Serial finds 16 MI objects
+after only 1,024 random samples (1.6% acceptance rate); without early stopping, each
+worker does 8× more work than serial, taking ~4,000s per worker vs 488s serial.
+
+**Fix: shared counter (`multiprocessing.Value`) for collective early stop (2026-03-09)**
+
+Added to `parallel_extrinsic.py`:
+- `_accepted_count = Value('i', 0)`, `_count_lock = Lock()`, `_n_target = n_combine`
+  set before `Pool` creation; inherited via fork into shared POSIX mmap (not COW heap).
+- Worker loops in sub-batches of 1,024; checks `_accepted_count.value >= _n_target`
+  before each sub-batch (lockless read); increments counter under lock when MI objects
+  are accepted.
+- Workers from any block stop as soon as the global count reaches 16 — no per-worker
+  quota, no variance problem.
+
+**LSF memory accounting confirmed (2026-03-09):**
+
+From `/usr/share/lsf/conf/lsf.conf`:
+- `LSF_LINUX_CGROUP_ACCT=Y` + `LSF_REPLACE_PIM_WITH_LINUX_CGROUP=Y`: cgroup accounting
+- `LSB_JOB_MEMLIMIT=Y`: limit applies to total job (all processes); limit = rusage[mem] × n_slots
+- Cgroup counts shared (COW) pages **once** for the whole job
+
+**Coordinated-stop benchmark (2026-03-09, jobs 112789–112791, 113967–113969):**
+
+All six jobs hit EXACTLY their memory limit — meaning actual usage exceeded ALL of them.
+
+| job    | n_workers | mem_limit (total) | result       |
+|--------|-----------|-------------------|--------------|
+| 112789 | 4         | 10 GB             | TERM_MEMLIMIT|
+| 112790 | 8         | 20 GB             | TERM_MEMLIMIT|
+| 112791 | 16        | 40 GB             | TERM_MEMLIMIT|
+| 113967 | 4         | 24 GB             | TERM_MEMLIMIT|
+| 113968 | 8         | 36 GB             | TERM_MEMLIMIT|
+| 113969 | 16        | 56 GB             | TERM_MEMLIMIT|
+
+**Root cause: COW is fully defeated.** Memory scales as `(1 + n_workers) × 8,400 MB`
+(parent generator copied in full per worker), consistent with all observed OOMs:
+
+| n_workers | predicted actual | limits tried       | outcome |
+|-----------|-----------------|-------------------|---------|
+| 4         | 48,400 MB       | 10 GB, 24 GB      | OOM ✗  |
+| 8         | 88,400 MB       | 20 GB, 36 GB      | OOM ✗  |
+| 16        | 168,400 MB      | 40 GB, 56 GB      | OOM ✗  |
+
+`get_marg_info_batch_multibank` must write into generator arrays internally during
+computation (despite `use_cached_dt=False`), COW-copying every data page per worker.
+This is the exact Phase D thick-worker problem: identical memory scaling.
+
+**Status: the fork+COW architecture is fundamentally broken for the extrinsic stage.**
+The coordinated-stop logic (`Value` counter) is correct and can be kept; the problem
+is the memory model. Fix options (same as before, now confirmed necessary):
+
+- **Option B (shared memory):** move large generator arrays into `SharedMemory`/`/dev/shm`
+  before forking; workers get views into truly-shared pages that Python refcounting
+  cannot COW-copy. Requires identifying which arrays dominate the 8.4 GB.
+- **Option C (thin-worker):** precompute and save what workers need to disk, free the
+  generator before forking. Same pattern as coherent thin-worker refactor. Most work
+  but most robust.
+
+### Phase E next steps: paths to fix parallel extrinsic memory (decided 2026-03-09)
+
+**What we know:**
+- Serial extrinsic (w=1): 588s, 8.4 GB peak — this is the target to beat
+- Bottleneck: ~157s disk I/O (waveform blocks) + ~350s marginalization ops; dh/hh
+  computation is <0.1% of time (confirmed by profile-split job 83591)
+- COW is fully defeated: actual memory = `(1 + n_workers) × 8.4 GB`, regardless of
+  how much we allocate — `get_marg_info_batch_multibank` writes into generator arrays
+  internally, COW-copying every page per worker
+- Coordinated early-stop (`Value` counter, implemented in `parallel_extrinsic.py`)
+  is correct and can be kept; it is NOT the source of the memory problem
+- ~~Option A (split dh/hh from MI)~~: eliminated — dh/hh is <0.1% of runtime,
+  parallelizing it gives no meaningful speedup
+
+**Option B — POSIX shared memory for large generator arrays**
+
+Move the large numpy arrays out of the Python heap into
+`multiprocessing.shared_memory.SharedMemory` (or `/dev/shm` mmap) before forking.
+Workers get `np.ndarray` views into the shared segment. OS never COW-copies those
+pages; Python refcounting only touches the small object header (few hundred bytes),
+not the data buffer.
+
+Steps:
+1. Run `tracemalloc` or `pympler` on a serial run to identify which attributes of
+   `ext_generator` dominate the 8.4 GB (candidates: `_d_h_weights`, `_h_h_weights`,
+   internal QMC lookup tables, `coherent_score` internals)
+2. In `collect_marg_info_parallel`, before forking:
+   - Copy each large array into a named `SharedMemory` block
+   - Replace generator attribute with `np.ndarray(..., buffer=shm.buf)` view
+3. Fork workers via `Pool` — they inherit the generator with shm-backed arrays
+4. After pool exits: `shm.unlink()` for each block
+
+Pros: minimal architecture change, keeps the existing worker structure intact
+Cons: requires knowing the generator internals; must cover ALL large arrays or COW
+still fires; `SharedMemory` cleanup on crash needs care
+
+**Option C — Thin-worker redesign (coherent-stage blueprint)**
+
+Same pattern as `dot_pe/thin_coherent.py` + `lsf_swarm/worker_coherent.py`:
+1. **Precompute phase** (main process): run whatever setup `get_marg_info_batch_multibank`
+   needs, save outputs to disk under a `setup/` dir (npz/pkl files)
+2. **Free phase**: `del ext_generator` and `gc.collect()` before forking — parent
+   footprint drops to near zero
+3. **Worker phase**: each worker loads only `setup/` + its waveform blocks (~1.6 GB)
+   and runs a thin version of the marginalization
+4. **Collect phase**: main process reads worker outputs, picks best n_combine
+
+Pros: provably correct memory model (demonstrated for coherent stage); workers have
+~1.6 GB footprint regardless of n_workers
+Cons: most implementation work; requires understanding which parts of the generator
+construction can be precomputed vs. must be per-sample
+
+**Recommended first step whichever path is chosen:**
+
+Run a `tracemalloc` diagnostic on a serial extrinsic run to get a precise breakdown
+of the 8.4 GB by object/array. This informs both options:
+- For B: tells us exactly which arrays to move to SharedMemory
+- For C: tells us what the "thin" setup files need to contain
+
+```python
+import tracemalloc
+tracemalloc.start()
+# ... build ext_generator, run one batch ...
+snapshot = tracemalloc.take_snapshot()
+for stat in snapshot.statistics('lineno')[:20]:
+    print(stat)
+```

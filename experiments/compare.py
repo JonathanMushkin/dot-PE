@@ -15,10 +15,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_EXPERIMENTS = ROOT / "artifacts" / "experiments"
 
+_BANK_SIZE = {"small": "2^12", "large": "2^18"}
+
 _WALL_RE     = re.compile(r"Total wall-clock time:\s*([\d.]+)\s*s", re.IGNORECASE)
 _LSF_TIME_RE = re.compile(r"Run time\s*:\s*([\d.]+)\s*sec", re.IGNORECASE)
 _MODE_RE     = re.compile(
-    r"\d{8}_\d{6}_(serial|mp|swarm)(?:_w(\d+))?_(small|large)_next(\d+)"
+    r"\d{8}_\d{6}_(serial|mp|swarm)(?:_[cw](\d+))?_(small|large)_next(\d+)"
 )
 
 
@@ -91,17 +93,34 @@ def main():
 
     rows.sort(key=lambda r: (r[0], r[1], r[2], r[3] or 0))
 
-    header = (
-        "| bank | n_ext | mode | n_workers | wall_s | ln_evidence | n_effective | rundir |\n"
-        "|------|-------|------|-----------|--------|-------------|-------------|--------|\n"
-    )
-    print(header, end="")
+    HEADERS = ["bank", "n_ext", "mode", "n_workers", "wall_s", "ln_evidence", "n_effective", "rundir"]
+
+    formatted = []
     for bank, n_ext, mode, n_workers, wall, ln_ev, n_eff, name in rows:
-        nw_str   = str(n_workers) if n_workers is not None else "—"
+        if mode == "serial":
+            nw_str = str(n_workers) if n_workers is not None else "1"
+        elif n_workers is not None:
+            nw_str = str(n_workers)
+        else:
+            nw_str = "—"
         wall_str = f"{wall:.1f}" if wall is not None else "—"
         lne_str  = f"{ln_ev:.3f}" if ln_ev is not None else "—"
         neff_str = f"{n_eff:.1f}" if n_eff is not None else "—"
-        print(f"| {bank} | {n_ext} | {mode} | {nw_str} | {wall_str} | {lne_str} | {neff_str} | {name} |")
+        bank_str = _BANK_SIZE.get(bank, bank)
+        formatted.append([bank_str, str(n_ext), mode, nw_str, wall_str, lne_str, neff_str, name])
+
+    col_widths = [len(h) for h in HEADERS]
+    for row in formatted:
+        for i, cell in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(cell))
+
+    def fmt_row(cells):
+        return "| " + " | ".join(c.ljust(col_widths[i]) for i, c in enumerate(cells)) + " |"
+
+    print(fmt_row(HEADERS))
+    print("|-" + "-|-".join("-" * w for w in col_widths) + "-|")
+    for row in formatted:
+        print(fmt_row(row))
 
 
 if __name__ == "__main__":

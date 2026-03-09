@@ -86,3 +86,6 @@ Thumbs.db
 
 # Benchmark runner logs
 experiments/auto_run.log
+
+# Claude Code memory / project config
+.claude/

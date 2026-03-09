@@ -214,6 +214,7 @@ def run(
     mchirp_guess=None,
     worker_queue="physics-short",
     max_concurrent=20,
+    n_ext_workers=1,
 ):
     """
     Run LSF swarm inference.  Single-bank only in this version.
@@ -373,23 +374,40 @@ def run(
         selected_inds = np.load(swarm_dir / "selected_inds.npy")
         print(f"  {len(selected_inds)} selected intrinsic samples")
 
-    # ── Stage 3: extrinsic sampling (serial) ──────────────────────────────────
+    # ── Stage 3: extrinsic sampling ───────────────────────────────────────────
     if not _stage_done(swarm_dir, 3):
-        print(f"\n=== Stage 3: extrinsic sampling ({n_ext} samples) ===")
         selected_inds_by_bank = {bank_id: selected_inds}
-        inference.draw_extrinsic_samples(
-            banks=ctx["banks"],
-            event_data=ctx["event_data"],
-            par_dic_0=ctx["par_dic_0"],
-            fbin=ctx["fbin"],
-            approximant=ctx["approximant"],
-            selected_inds_by_bank=selected_inds_by_bank,
-            coherent_score_kwargs=ctx["coherent_score_kwargs"],
-            seed=seed,
-            n_ext=n_ext,
-            rundir=rundir,
-            extrinsic_samples=None,
-        )
+        if n_ext_workers > 1:
+            print(f"\n=== Stage 3: extrinsic sampling ({n_ext} samples, {n_ext_workers} workers) ===")
+            from dot_pe.parallel_extrinsic import draw_extrinsic_samples_parallel
+            draw_extrinsic_samples_parallel(
+                banks=ctx["banks"],
+                event_data=ctx["event_data"],
+                par_dic_0=ctx["par_dic_0"],
+                fbin=ctx["fbin"],
+                approximant=ctx["approximant"],
+                selected_inds_by_bank=selected_inds_by_bank,
+                coherent_score_kwargs=ctx["coherent_score_kwargs"],
+                seed=seed,
+                n_ext=n_ext,
+                rundir=rundir,
+                n_workers=n_ext_workers,
+            )
+        else:
+            print(f"\n=== Stage 3: extrinsic sampling ({n_ext} samples) ===")
+            inference.draw_extrinsic_samples(
+                banks=ctx["banks"],
+                event_data=ctx["event_data"],
+                par_dic_0=ctx["par_dic_0"],
+                fbin=ctx["fbin"],
+                approximant=ctx["approximant"],
+                selected_inds_by_bank=selected_inds_by_bank,
+                coherent_score_kwargs=ctx["coherent_score_kwargs"],
+                seed=seed,
+                n_ext=n_ext,
+                rundir=rundir,
+                extrinsic_samples=None,
+            )
         _mark_done(swarm_dir, 3)
         print(f"  Stage 3 done ({time.time()-t0:.0f} s elapsed)")
     else:
@@ -581,6 +599,8 @@ def main():
                    help="LSF queue for array workers")
     p.add_argument("--max-concurrent", type=int, default=20,
                    help="max simultaneously running worker tasks")
+    p.add_argument("--n-ext-workers", type=int, default=1,
+                   help="workers for parallel extrinsic MI collection (default: 1 = serial)")
     args = p.parse_args()
 
     run(
@@ -601,6 +621,7 @@ def main():
         draw_subset=args.draw_subset,
         worker_queue=args.worker_queue,
         max_concurrent=args.max_concurrent,
+        n_ext_workers=args.n_ext_workers,
     )
 
 

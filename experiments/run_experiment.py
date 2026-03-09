@@ -46,7 +46,7 @@ _WALL_LIMITS = {
 }
 
 
-def _mem_per_slot_mb(mode, bank, n_ext, n_slots=1):
+def _mem_per_slot_mb(mode, bank, n_ext, n_slots=1, n_ext_workers=1):
     """Memory per LSF slot in MB.
 
     After thin-worker refactor + malloc_trim + incremental Stage-5 merge:
@@ -55,6 +55,7 @@ def _mem_per_slot_mb(mode, bank, n_ext, n_slots=1):
         + Stage 5 incremental merge (size_limit samples at a time).
       - MP: precompute spike freed via malloc_trim before Pool fork;
         workers inherit ctx via COW read-only + ~5 GB own new pages each.
+      - Parallel extrinsic workers: ~200 MB new pages each (small per-batch alloc).
 
     Calibrated observations (n_ext has negligible effect):
       serial/small: 9206-9270 MB  -> 13000 MB
@@ -68,18 +69,25 @@ def _mem_per_slot_mb(mode, bank, n_ext, n_slots=1):
     elif mode == "swarm":
         # Orchestrator: ctx ~10 GB + Stage 2.5 precompute spike freed via
         # malloc_trim + Stage 5 incremental merge (≤ size_limit samples).
-        total = 22000 if bank == "small" else 40000
+        # With parallel extrinsic: add ~200 MB per ext worker (small new pages).
+        base = 22000 if bank == "small" else 40000
+        total = base + max(0, n_ext_workers - 1) * 200
     else:  # mp — precompute spike freed via malloc_trim before fork;
            # workers (COW) only pay for new pages (~7 GB each for large bank).
         base = 15000 if bank == "small" else 20000
         per_worker = 4000 if bank == "small" else 8000
-        total = base + n_slots * per_worker
+        total = base + n_slots * per_worker + max(0, n_ext_workers - 1) * 200
     return max(1024, total // n_slots)
 
 
-def _make_rundir(mode, bank, n_ext, n_workers=None):
+def _make_rundir(mode, bank, n_ext, n_workers=None, n_cores=None):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix = f"_w{n_workers}" if n_workers is not None else ""
+    if mode == "serial" and n_cores and n_cores > 1:
+        suffix = f"_c{n_cores}"
+    elif n_workers is not None:
+        suffix = f"_w{n_workers}"
+    else:
+        suffix = ""
     name = f"{ts}_{mode}{suffix}_{bank}_next{n_ext}"
     d = EXPERIMENTS_DIR / name
     d.mkdir(parents=True, exist_ok=True)
@@ -97,25 +105,27 @@ def _conda_header():
 def _build_script_serial(args, rundir, bank_path, event_path, log_path):
     wall = _WALL_LIMITS.get(("serial", args.bank), 120)
     queue = args.queue or _DEFAULT_QUEUE["serial"]
+    n_cores = args.n_cores or 1
     n_int_flag = f"--n_int {args.n_int}" if args.n_int else ""
     ext_flag = f"--extrinsic_samples {args.extrinsic_samples}" if args.extrinsic_samples else ""
-    mem = _mem_per_slot_mb("serial", args.bank, args.n_ext, n_slots=1)
+    mem = _mem_per_slot_mb("serial", args.bank, args.n_ext, n_slots=n_cores)
+    span_line = '#BSUB -R "span[hosts=1]"\n' if n_cores > 1 else ""
 
     script = f"""\
 #!/bin/bash
 #BSUB -J serial_{args.bank}_next{args.n_ext}
 #BSUB -q {queue}
-#BSUB -n 1
-#BSUB -R "rusage[mem={mem}]"
+#BSUB -n {n_cores}
+{span_line}#BSUB -R "rusage[mem={mem}]"
 #BSUB -W {wall}
 #BSUB -o {log_path}
 #BSUB -e {log_path}.err
 
 {_conda_header()}
-export OMP_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
-export NUMEXPR_NUM_THREADS=1
+export OMP_NUM_THREADS={n_cores}
+export MKL_NUM_THREADS={n_cores}
+export OPENBLAS_NUM_THREADS={n_cores}
+export NUMEXPR_NUM_THREADS={n_cores}
 
 cd {ROOT} && python -m dot_pe.inference \\
     --event {event_path} \\
@@ -129,12 +139,18 @@ cd {ROOT} && python -m dot_pe.inference \\
     return script
 
 
+_DEFAULT_MP_WORKERS = 8
+_DEFAULT_MAX_CONCURRENT = 20
+
 def _build_script_mp(args, rundir, bank_path, event_path, log_path):
     wall = _WALL_LIMITS.get(("mp", args.bank), 120)
     queue = args.queue or _DEFAULT_QUEUE["mp"]
-    n_workers = args.n_workers or 8
+    n_workers = args.n_workers or _DEFAULT_MP_WORKERS
+    n_ext_workers = args.n_ext_workers or 1
     n_int_flag = f"--n-int {args.n_int}" if args.n_int else ""
-    mem = _mem_per_slot_mb("mp", args.bank, args.n_ext, n_slots=n_workers)
+    n_ext_workers_flag = f"--n-ext-workers {n_ext_workers}" if n_ext_workers > 1 else ""
+    mem = _mem_per_slot_mb("mp", args.bank, args.n_ext, n_slots=n_workers,
+                           n_ext_workers=n_ext_workers)
 
     script = f"""\
 #!/bin/bash
@@ -160,6 +176,7 @@ python {ROOT}/MP/run_mp.py \\
     --n-ext {args.n_ext} \\
     --n-workers {n_workers} \\
     --seed {args.seed} \\
+    {n_ext_workers_flag} \\
     {n_int_flag}
 """
     return script
@@ -168,16 +185,22 @@ python {ROOT}/MP/run_mp.py \\
 def _build_script_swarm(args, rundir, bank_path, event_path, log_path):
     wall = _WALL_LIMITS.get(("swarm", args.bank), 240)
     queue = args.queue or _DEFAULT_QUEUE["swarm"]
-    max_concurrent = 8 if args.bank == "small" else 20
+    max_concurrent = args.max_concurrent or _DEFAULT_MAX_CONCURRENT
+    n_ext_workers = args.n_ext_workers or 1
     n_int_flag = f"--n-int {args.n_int}" if args.n_int else ""
-    mem = _mem_per_slot_mb("swarm", args.bank, args.n_ext, n_slots=1)
+    n_ext_workers_flag = f"--n-ext-workers {n_ext_workers}" if n_ext_workers > 1 else ""
+    mem = _mem_per_slot_mb("swarm", args.bank, args.n_ext, n_slots=n_ext_workers,
+                           n_ext_workers=n_ext_workers)
+    # When n_ext_workers > 1, request multiple cores on one host for the parallel fork pool
+    n_cores = n_ext_workers if n_ext_workers > 1 else 1
+    span_line = '#BSUB -R "span[hosts=1]"\n' if n_ext_workers > 1 else ""
 
     script = f"""\
 #!/bin/bash
 #BSUB -J swarm_{args.bank}_next{args.n_ext}
 #BSUB -q {queue}
-#BSUB -n 1
-#BSUB -R "rusage[mem={mem}]"
+#BSUB -n {n_cores}
+{span_line}#BSUB -R "rusage[mem={mem}]"
 #BSUB -W {wall}
 #BSUB -o {log_path}
 #BSUB -e {log_path}.err
@@ -195,6 +218,7 @@ python {ROOT}/lsf_swarm/run_swarm.py \\
     --n-ext {args.n_ext} \\
     --seed {args.seed} \\
     --max-concurrent {max_concurrent} \\
+    {n_ext_workers_flag} \\
     {n_int_flag}
 """
     return script
@@ -212,6 +236,12 @@ def main():
                    help="Limit intrinsic samples (default: full bank)")
     p.add_argument("--n-workers", type=int, default=None,
                    help="MP workers (default 8)")
+    p.add_argument("--n-cores", type=int, default=None,
+                   help="CPU cores for serial mode; enables multi-threaded BLAS (default: 1)")
+    p.add_argument("--max-concurrent", type=int, default=None,
+                   help=f"Swarm: max simultaneously running worker tasks (default: {_DEFAULT_MAX_CONCURRENT})")
+    p.add_argument("--n-ext-workers", type=int, default=1,
+                   help="Workers for parallel extrinsic MI collection in mp/swarm (default: 1 = serial)")
     p.add_argument("--extrinsic-samples", default=None,
                    help="Path to cached extrinsic samples pkl")
     p.add_argument("--seed", type=int, default=0)
@@ -232,8 +262,15 @@ def main():
         print(f"ERROR: event not found: {event_path}", file=sys.stderr)
         sys.exit(1)
 
-    n_workers_for_dir = (args.n_workers or 8) if args.mode == "mp" else None
-    rundir = _make_rundir(args.mode, args.bank, args.n_ext, n_workers=n_workers_for_dir)
+    if args.mode == "mp":
+        n_workers_for_dir = args.n_workers or _DEFAULT_MP_WORKERS
+    elif args.mode == "swarm":
+        n_workers_for_dir = args.max_concurrent or _DEFAULT_MAX_CONCURRENT
+    else:
+        n_workers_for_dir = None
+    n_cores_for_dir = (args.n_cores or 1) if args.mode == "serial" else None
+    rundir = _make_rundir(args.mode, args.bank, args.n_ext,
+                          n_workers=n_workers_for_dir, n_cores=n_cores_for_dir)
     log_path = rundir / "run.log"
 
     builders = {

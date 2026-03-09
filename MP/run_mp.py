@@ -6,7 +6,7 @@ Parallelizes the two heavy loops; everything else delegates to dot_pe.inference.
     Stage 1 — Setup:        inference.prepare_run_objects()                  (serial)
     Stage 2 — Incoherent:   Pool over chunks of intrinsic samples            (NEW)
     Stage 3 — Cross-bank:   inference.select_intrinsic_..._incoherent_...()  (serial)
-    Stage 4 — Extrinsic:    inference.draw_extrinsic_samples()               (serial)
+    Stage 4 — Extrinsic:    draw_extrinsic_samples_parallel() or serial       (NEW)
     Stage 5 — Coherent:     Pool, one worker per i_block                     (NEW)
     Stage 6 — Postprocess:  inference.aggregate_and_save_results()           (serial)
 
@@ -402,6 +402,7 @@ def run(
     blocksize=512,
     single_detector_blocksize=512,
     n_workers=None,
+    n_ext_workers=1,
     seed=None,
     size_limit=10**7,
     draw_subset=True,
@@ -417,10 +418,13 @@ def run(
     """
     Run inference with multiprocessing.  Drop-in for inference.run().
 
-    Extra argument vs inference.run()
-    -----------------------------------
+    Extra arguments vs inference.run()
+    ------------------------------------
     n_workers : int or None
-        Number of parallel workers.  None → os.cpu_count().
+        Number of parallel workers for incoherent + coherent stages.  None → os.cpu_count().
+    n_ext_workers : int
+        Workers for parallel extrinsic MI collection (Stage 4).
+        1 (default) = serial (original behaviour).  >1 = fork+COW parallel.
     """
     t0 = time.time()
     if n_workers is None:
@@ -497,20 +501,36 @@ def run(
         )
     )
 
-    # ── Stage 4: extrinsic sampling (serial) ──────────────────────────────────
-    inference.draw_extrinsic_samples(
-        banks=ctx["banks"],
-        event_data=ctx["event_data"],
-        par_dic_0=ctx["par_dic_0"],
-        fbin=ctx["fbin"],
-        approximant=ctx["approximant"],
-        selected_inds_by_bank=selected_inds_by_bank,
-        coherent_score_kwargs=ctx["coherent_score_kwargs"],
-        seed=seed,
-        n_ext=n_ext,
-        rundir=ctx["rundir"],
-        extrinsic_samples=extrinsic_samples,
-    )
+    # ── Stage 4: extrinsic sampling ───────────────────────────────────────────
+    if n_ext_workers > 1 and extrinsic_samples is None:
+        from dot_pe.parallel_extrinsic import draw_extrinsic_samples_parallel
+        draw_extrinsic_samples_parallel(
+            banks=ctx["banks"],
+            event_data=ctx["event_data"],
+            par_dic_0=ctx["par_dic_0"],
+            fbin=ctx["fbin"],
+            approximant=ctx["approximant"],
+            selected_inds_by_bank=selected_inds_by_bank,
+            coherent_score_kwargs=ctx["coherent_score_kwargs"],
+            seed=seed,
+            n_ext=n_ext,
+            rundir=ctx["rundir"],
+            n_workers=n_ext_workers,
+        )
+    else:
+        inference.draw_extrinsic_samples(
+            banks=ctx["banks"],
+            event_data=ctx["event_data"],
+            par_dic_0=ctx["par_dic_0"],
+            fbin=ctx["fbin"],
+            approximant=ctx["approximant"],
+            selected_inds_by_bank=selected_inds_by_bank,
+            coherent_score_kwargs=ctx["coherent_score_kwargs"],
+            seed=seed,
+            n_ext=n_ext,
+            rundir=ctx["rundir"],
+            extrinsic_samples=extrinsic_samples,
+        )
 
     # Free MarginalizationInfo and any other large objects before coherent stage
     import gc as _gc2
@@ -573,6 +593,8 @@ def main():
     p.add_argument("--bank",     required=True, help="path to bank folder")
     p.add_argument("--rundir",   default=None,  help="output directory (auto-named if omitted)")
     p.add_argument("--n-workers", type=int, default=None, help="parallel workers (default: cpu_count)")
+    p.add_argument("--n-ext-workers", type=int, default=1,
+                   help="workers for parallel extrinsic MI collection (default: 1 = serial)")
     p.add_argument("--n-ext",    type=int, default=4096)
     p.add_argument("--n-phi",    type=int, default=100)
     p.add_argument("--n-t",      type=int, default=128)
@@ -598,6 +620,7 @@ def main():
         blocksize=args.blocksize,
         single_detector_blocksize=args.single_detector_blocksize,
         n_workers=args.n_workers,
+        n_ext_workers=args.n_ext_workers,
         seed=args.seed,
         rundir=args.rundir,
         mchirp_guess=args.mchirp_guess,
