@@ -190,6 +190,126 @@ def _run_memory_profile(bank_path, event_path, n_ext, seed):
     print("=" * 72)
 
 
+def _proc_rss_mb():
+    """Current RSS from /proc/self/status in MB."""
+    with open("/proc/self/status") as f:
+        for line in f:
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) / 1024  # kB -> MB
+    return 0.0
+
+
+def _run_batch_profile(bank_path, event_path, source_rundir, n_ext, seed):
+    """
+    Build CoherentExtrinsicSamplesGenerator, then call get_marg_info_batch_multibank
+    on one real sub-batch of SUB_BATCH_SIZE=1024 samples.
+
+    Reports:
+      - RSS at key checkpoints (before context, after generator, before/after batch)
+      - Peak RSS during the batch call (polled every 100 ms via background thread)
+      - tracemalloc diff: new allocations incurred during the batch call
+    """
+    import gc
+    import threading
+    import pandas as pd
+    from cogwheel.waveform import WaveformGenerator
+    from dot_pe.coherent_processing import CoherentExtrinsicSamplesGenerator
+    from dot_pe.marginalization import MarginalizationExtrinsicSamplerFreeLikelihood
+    from dot_pe.parallel_extrinsic import SUB_BATCH_SIZE
+
+    # ---- Load real intrinsic indices --------------------------------------
+    inds_path = Path(source_rundir) / "banks" / "bank_0" / "intrinsic_samples.npz"
+    if not inds_path.exists():
+        print(f"ERROR: {inds_path} not found", file=sys.stderr)
+        sys.exit(1)
+    inds = np.load(inds_path)["inds"]
+    batch_idx = inds[:SUB_BATCH_SIZE]
+    bank_idx_arr = np.zeros(len(batch_idx), dtype=int)
+    print(f"Batch size: {len(batch_idx)} samples (SUB_BATCH_SIZE={SUB_BATCH_SIZE})")
+
+    # ---- Build context + generator ----------------------------------------
+    print(f"\nRSS before context build : {_proc_rss_mb():.0f} MB")
+    BENCH_DIR.mkdir(parents=True, exist_ok=True)
+    ctx = _build_ctx(bank_path, event_path, n_ext, seed)
+    bank_id = list(ctx["banks"].keys())[0]
+    first_bank_path = ctx["banks"][bank_id]
+
+    print(f"RSS after prepare_run_objects: {_proc_rss_mb():.0f} MB")
+
+    wfg = WaveformGenerator.from_event_data(ctx["event_data"], ctx["approximant"])
+    marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
+        ctx["event_data"], wfg, ctx["par_dic_0"], ctx["fbin"],
+        coherent_score=ctx["coherent_score_kwargs"],
+    )
+    ext_generator = CoherentExtrinsicSamplesGenerator(
+        likelihood=marg_ext_like,
+        intrinsic_bank_file=first_bank_path / "intrinsic_sample_bank.feather",
+        waveform_dir=first_bank_path / "waveforms",
+        seed=seed,
+    )
+    ext_generator.intrinsic_sample_processor.use_cached_dt = False
+    ext_generator.intrinsic_sample_processor.update_cached_dt = False
+
+    bank_df = pd.read_feather(first_bank_path / "intrinsic_sample_bank.feather")
+    waveform_dir = first_bank_path / "waveforms"
+
+    gc.collect()
+    print(f"RSS after generator build    : {_proc_rss_mb():.0f} MB")
+
+    # ---- Background thread: poll RSS at 100 ms intervals ------------------
+    peak_rss = [_proc_rss_mb()]
+    stop_evt = threading.Event()
+
+    def _poll():
+        while not stop_evt.is_set():
+            peak_rss[0] = max(peak_rss[0], _proc_rss_mb())
+            stop_evt.wait(0.1)
+
+    monitor = threading.Thread(target=_poll, daemon=True)
+
+    # ---- Run ONE batch call under tracemalloc ----------------------------
+    gc.collect()
+    rss_before = _proc_rss_mb()
+    tracemalloc.start()
+    monitor.start()
+
+    mi, ub, us = ext_generator.get_marg_info_batch_multibank(
+        batch_idx, bank_idx_arr,
+        [bank_df],
+        [waveform_dir],
+        0.0,   # min_marg_lnlike
+        0.0,   # min_n_eff
+    )
+
+    snapshot = tracemalloc.take_snapshot()
+    tracemalloc.stop()
+    stop_evt.set()
+    monitor.join()
+
+    rss_after = _proc_rss_mb()
+
+    # ---- Print RSS summary -----------------------------------------------
+    print(f"\n{'=' * 72}")
+    print("BATCH CALL MEMORY SUMMARY")
+    print(f"{'=' * 72}")
+    print(f"  MI objects returned          : {len(mi)}")
+    print(f"  RSS before batch call        : {rss_before:.0f} MB")
+    print(f"  RSS after  batch call        : {rss_after:.0f} MB  "
+          f"(delta: {rss_after - rss_before:+.0f} MB)")
+    print(f"  Peak RSS during batch call   : {peak_rss[0]:.0f} MB  "
+          f"(delta from before: {peak_rss[0] - rss_before:+.0f} MB)")
+
+    # ---- Print tracemalloc new allocations -------------------------------
+    stats = snapshot.statistics("lineno")
+    total_new = sum(s.size for s in stats)
+    print(f"\n  Tracemalloc new during call  : {total_new / 1e6:.1f} MB")
+    print(f"\n{'=' * 72}")
+    print("NEW ALLOCATIONS DURING BATCH CALL (tracemalloc, top 30 by size)")
+    print(f"{'=' * 72}")
+    for stat in stats[:30]:
+        print(f"  {stat.size / 1e6:>8.1f} MB  {stat}")
+
+
 def _build_ctx(bank_path, event_path, n_ext, seed):
     """Build the minimal inference context needed for extrinsic sampling."""
     return inference.prepare_run_objects(
@@ -333,8 +453,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
-        "--source-rundir", required=True,
-        help="Path to a prior serial run whose banks/bank_0/intrinsic_samples.npz is reused",
+        "--source-rundir", default=None,
+        help="Path to a prior serial run whose banks/bank_0/intrinsic_samples.npz is reused "
+             "(required except for --memory-profile)",
     )
     p.add_argument("--bank",  required=True, help="Path to bank folder")
     p.add_argument("--event", required=True, help="Path to event .npz file")
@@ -364,9 +485,18 @@ def main():
             "Ignores --n-workers-list and --n-repeat."
         ),
     )
+    p.add_argument(
+        "--batch-profile", action="store_true",
+        help=(
+            "Build generator then run ONE get_marg_info_batch_multibank call "
+            "on SUB_BATCH_SIZE real samples. Reports RSS before/after/peak "
+            "(100 ms polling) and tracemalloc new allocations during the call. "
+            "Requires --source-rundir. Ignores --n-workers-list and --n-repeat."
+        ),
+    )
     args = p.parse_args()
 
-    source_rundir = Path(args.source_rundir)
+    source_rundir = Path(args.source_rundir) if args.source_rundir else None
     bank_path     = Path(args.bank)
     event_path    = Path(args.event)
 
@@ -375,7 +505,18 @@ def main():
         _run_memory_profile(bank_path, event_path, args.n_ext, args.seed)
         return
 
+    # Batch-profile mode
+    if args.batch_profile:
+        if source_rundir is None:
+            print("ERROR: --batch-profile requires --source-rundir", file=sys.stderr)
+            sys.exit(1)
+        _run_batch_profile(bank_path, event_path, source_rundir, args.n_ext, args.seed)
+        return
+
     # Load pre-saved intrinsic indices (bank_0 only — single-bank runs)
+    if source_rundir is None:
+        print("ERROR: --source-rundir is required for benchmark mode", file=sys.stderr)
+        sys.exit(1)
     inds_path = source_rundir / "banks" / "bank_0" / "intrinsic_samples.npz"
     if not inds_path.exists():
         print(f"ERROR: intrinsic_samples.npz not found at {inds_path}", file=sys.stderr)
