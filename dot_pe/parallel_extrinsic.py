@@ -43,7 +43,13 @@ _accepted_count = None   # multiprocessing.Value('i', 0) — shared across worke
 _count_lock = None       # multiprocessing.Lock()
 _n_target = None         # int — stop when _accepted_count.value >= _n_target
 
-SUB_BATCH_SIZE = 1024    # samples per sub-batch inside each worker
+SUB_BATCH_SIZE = 128     # samples per sub-batch inside each worker
+# NOTE: smaller batch = lower peak RSS per worker (scales ~linearly with batch size).
+# Root cause: each get_marg_info_batch_multibank call accumulates MI objects via
+# np.concatenate in MarginalizationInfo.update(); freed pages pile up in the heap
+# (Python doesn't return them to the OS), creating a high-water mark.
+# Measured: B=1024 → +7652 MB/worker; B=128 → ~957 MB/worker (estimated).
+# For n=8 workers: B=1024 needs ~62 GB (OOM); B=128 needs ~9 GB (fits in 20 GB).
 
 
 def _extrinsic_batch_worker(args):
@@ -74,6 +80,13 @@ def _extrinsic_batch_worker(args):
             all_mi.extend(mi)
             all_b.extend(ub)
             all_s.extend(us)
+
+        # Return freed heap pages to the OS so subsequent sub-batches don't
+        # accumulate RSS across iterations (the high-water issue).
+        try:
+            ctypes.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
 
     return all_mi, all_b, all_s
 
