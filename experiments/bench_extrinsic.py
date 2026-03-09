@@ -24,6 +24,14 @@ Usage
         --n-ext 2048 \\
         --profile-split
 
+    # Memory profile: map the 8.4 GB generator footprint
+    python experiments/bench_extrinsic.py \\
+        --source-rundir artifacts/experiments/20260304_222558_serial_large_next2048 \\
+        --bank         artifacts/banks/bank_large \\
+        --event        artifacts/banks/event/tutorial_event.npz \\
+        --n-ext 2048 \\
+        --memory-profile
+
 Results are written under artifacts/bench_extrinsic/<timestamp>/ and a
 summary table is printed to stdout.
 """
@@ -34,6 +42,7 @@ import io
 import os
 import pstats
 import sys
+import tracemalloc
 import time
 import warnings
 from datetime import datetime
@@ -56,6 +65,129 @@ from dot_pe.parallel_extrinsic import draw_extrinsic_samples_parallel
 
 ARTIFACTS = ROOT / "artifacts"
 BENCH_DIR = ARTIFACTS / "bench_extrinsic"
+
+
+# ---------------------------------------------------------------------------
+# Memory profiling helpers
+# ---------------------------------------------------------------------------
+
+def _collect_ndarrays(obj, path="root", seen=None, max_depth=8):
+    """
+    Recursively walk an object's attribute tree and return a list of
+    (nbytes, path, shape, dtype) for every numpy ndarray found.
+
+    Avoids revisiting the same object (by id) and respects max_depth.
+    Does not walk into very large sequences (list/tuple > 200 items) to
+    avoid spending minutes iterating over the sky_dict index lists.
+    """
+    if seen is None:
+        seen = set()
+
+    results = []
+    obj_id = id(obj)
+    if obj_id in seen or max_depth <= 0:
+        return results
+    seen.add(obj_id)
+
+    if isinstance(obj, np.ndarray):
+        results.append((obj.nbytes, path, obj.shape, str(obj.dtype)))
+        # Still descend into structured array fields if any (rare), but not
+        # into the data itself — the ndarray is already recorded.
+        return results
+
+    if hasattr(obj, "__dict__"):
+        for attr, val in obj.__dict__.items():
+            results.extend(
+                _collect_ndarrays(val, f"{path}.{attr}", seen, max_depth - 1)
+            )
+
+    if isinstance(obj, dict):
+        for k, val in list(obj.items()):
+            results.extend(
+                _collect_ndarrays(val, f"{path}[{k!r}]", seen, max_depth - 1)
+            )
+
+    if isinstance(obj, (list, tuple)) and len(obj) <= 200:
+        for i, val in enumerate(obj):
+            results.extend(
+                _collect_ndarrays(val, f"{path}[{i}]", seen, max_depth - 1)
+            )
+
+    return results
+
+
+def _run_memory_profile(bank_path, event_path, n_ext, seed):
+    """
+    Build the CoherentExtrinsicSamplesGenerator, then:
+      1. Print a numpy-array inventory (object-tree walk) sorted by size.
+      2. Print a tracemalloc top-20 report for Python-level allocations.
+    """
+    import pandas as pd
+    from cogwheel.waveform import WaveformGenerator
+    from dot_pe.coherent_processing import CoherentExtrinsicSamplesGenerator
+    from dot_pe.marginalization import MarginalizationExtrinsicSamplerFreeLikelihood
+
+    # Build the inference context (same as bench_extrinsic normal mode)
+    print("\nBuilding inference context (prepare_run_objects)...")
+    BENCH_DIR.mkdir(parents=True, exist_ok=True)
+    ctx = _build_ctx(bank_path, event_path, n_ext, seed)
+    bank_ids = list(ctx["banks"].keys())
+    bank_id = bank_ids[0]
+    first_bank_path = ctx["banks"][bank_id]
+
+    # ---- Build generator under tracemalloc --------------------------------
+    print("Starting tracemalloc + building CoherentExtrinsicSamplesGenerator...")
+    tracemalloc.start()
+
+    wfg = WaveformGenerator.from_event_data(ctx["event_data"], ctx["approximant"])
+    marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
+        ctx["event_data"], wfg, ctx["par_dic_0"], ctx["fbin"],
+        coherent_score=ctx["coherent_score_kwargs"],
+    )
+    ext_generator = CoherentExtrinsicSamplesGenerator(
+        likelihood=marg_ext_like,
+        intrinsic_bank_file=first_bank_path / "intrinsic_sample_bank.feather",
+        waveform_dir=first_bank_path / "waveforms",
+        seed=seed,
+    )
+
+    snapshot = tracemalloc.take_snapshot()
+    tracemalloc.stop()
+
+    # ---- 1. Numpy array inventory -----------------------------------------
+    print("\n" + "=" * 72)
+    print("NUMPY ARRAY INVENTORY (object-tree walk of ext_generator)")
+    print("=" * 72)
+    arrays = _collect_ndarrays(ext_generator)
+    arrays.sort(key=lambda x: x[0], reverse=True)
+    total_bytes = sum(b for b, *_ in arrays)
+    print(f"  Total numpy data found : {total_bytes / 1e9:.3f} GB  ({len(arrays)} arrays)\n")
+    print(f"  {'Size (MB)':>10}  {'Shape':>30}  {'Dtype':>10}  Path")
+    print(f"  {'-'*10}  {'-'*30}  {'-'*10}  {'-'*40}")
+    for nbytes, path, shape, dtype in arrays[:40]:
+        mb = nbytes / 1e6
+        print(f"  {mb:>10.1f}  {str(shape):>30}  {dtype:>10}  {path}")
+    if len(arrays) > 40:
+        print(f"  ... ({len(arrays) - 40} more arrays, all smaller than "
+              f"{arrays[39][0]/1e6:.1f} MB)")
+
+    # ---- 2. tracemalloc top-20 by size ------------------------------------
+    print("\n" + "=" * 72)
+    print("TRACEMALLOC TOP 20 (Python-level allocations, grouped by line)")
+    print("=" * 72)
+    stats = snapshot.statistics("lineno")
+    total_tm = sum(s.size for s in stats)
+    print(f"  Total tracked by tracemalloc: {total_tm / 1e9:.3f} GB\n")
+    for stat in stats[:20]:
+        print(f"  {stat.size / 1e6:>8.1f} MB  {stat}")
+
+    print("\n" + "=" * 72)
+    print("NOTES")
+    print("  * tracemalloc may undercount large numpy arrays allocated via mmap.")
+    print("  * Object-tree walk only finds arrays reachable from ext_generator.")
+    print("  * If total numpy < 8.4 GB, some arrays live in sub-objects not")
+    print("    reachable at max_depth=8 (increase _collect_ndarrays max_depth).")
+    print("=" * 72)
 
 
 def _build_ctx(bank_path, event_path, n_ext, seed):
@@ -223,11 +355,25 @@ def main():
             "Ignores --n-workers-list and --n-repeat."
         ),
     )
+    p.add_argument(
+        "--memory-profile", action="store_true",
+        help=(
+            "Build CoherentExtrinsicSamplesGenerator then print a full memory "
+            "breakdown: numpy-array inventory (object-tree walk) + tracemalloc "
+            "top-20. Does not run any extrinsic sampling. "
+            "Ignores --n-workers-list and --n-repeat."
+        ),
+    )
     args = p.parse_args()
 
     source_rundir = Path(args.source_rundir)
     bank_path     = Path(args.bank)
     event_path    = Path(args.event)
+
+    # Memory-profile mode: no intrinsic indices needed
+    if args.memory_profile:
+        _run_memory_profile(bank_path, event_path, args.n_ext, args.seed)
+        return
 
     # Load pre-saved intrinsic indices (bank_0 only — single-bank runs)
     inds_path = source_rundir / "banks" / "bank_0" / "intrinsic_samples.npz"
