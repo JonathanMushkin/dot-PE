@@ -599,22 +599,56 @@ Fix (commit 89c1b02): clear `_ext_setup = None` at end of `collect_marg_info_par
 
 ---
 
-### 2026-03-11 12:04 — Phase G: real event end-to-end at n=4,8,20,64 workers
+### 2026-03-11 — Phase G: real event end-to-end at n=4,8,20,64 workers
 
-Applied fix for _ext_setup memory leak. Submitted 4 experiments on GW230605_065343 (bank_20).
-All jobs running on cn382 at 12:04.
+#### Round 1 (v2, 12:04, jobs 203280–203284) — all OOM
 
-| job    | n_workers | n_ext_workers | n_slots | mem/slot | total_mem | queue          |
-|--------|-----------|---------------|---------|----------|-----------|----------------|
-| 203280 | 4         | 4             | 5       | 5000 MB  | 25 GB     | physics-short  |
-| 203281 | 8         | 8             | 9       | 4000 MB  | 36 GB     | physics-short  |
-| 203283 | 20        | 16            | 21      | 3000 MB  | 63 GB     | physics-short  |
-| 203284 | 64        | 16            | 65      | 2000 MB  | 130 GB    | physics-short  |
+Applied _ext_setup leak fix. All 4 jobs reached the coherent stage (extrinsic passed),
+then OOM'd during coherent pool. n=64 OOM'd earlier, during incoherent.
 
-Notes:
-- n=64 job (203284) lacks span[hosts=1] (65 slots > 52 typical node). LSF allocated 13 slots on
-  cn382 (all processes run there) + 52 elsewhere; cgroup limit on cn382 may be 13×2000=26 GB.
-  If extrinsic stage (~22 GB) fits, coherent stage (~9 GB) will too.
-- Coherent stage hard cap: only 20 i_blocks exist for this event → n_actual=min(n,20)=20.
-  n=20 and n=64 will have identical coherent stage timing; n=64 benefits only from incoherent.
-- Reference: serial baseline 6733.6 s (job 138014 or run_0).
+| job    | n_workers | mem_limit | ran_s | OOM stage |
+|--------|-----------|-----------|-------|-----------|
+| 203280 | 4         | 25 GB     | 1228  | coherent pool |
+| 203281 | 8         | 36 GB     | 810   | coherent pool |
+| 203283 | 20        | 63 GB     | 538   | coherent pool |
+| 203284 | 64        | 26 GB*    | 130   | incoherent (64 workers) |
+
+*n=64 dropped span[hosts=1] → only 13 slots on cn382 → cgroup cap 26 GB.
+
+**Root cause: blocksize=2048 inherited from run_kwargs.json.**
+
+The reference serial run uses `blocksize=2048`. This controls how many intrinsic samples
+are packed into each coherent worker task. With blocksize=2048 and n_ext=2048, n_phi=100:
+```
+dh_ieo shape: (2048_i, 2048_e, 100_o) complex128 = 6.71 GB per worker
+hh_ieo shape: (2048_i, 2048_e, 100_o) float64    = 3.36 GB per worker
+bestfit_ieo:                                        3.36 GB per worker
+Total per worker:                                  ~15 GB
+```
+The bank_large Phase D tests used run_mp.py default `blocksize=512` → 4× smaller → 3.5 GB/worker.
+
+Fix (commit 709ea45):
+- `run_real_event_mp.py` now defaults blocksize to **512** (ignores value from run_kwargs.json).
+  New `--blocksize` argument for explicit override.
+- `span[hosts=1]` restored unconditionally. n=64 (65 slots) waits for a 128-core node.
+
+#### Round 2 (v3, 14:34, jobs 207254–207257) — running/pending
+
+| job    | n_workers | n_ext_workers | n_slots | mem/slot | total_mem | blocksize | status |
+|--------|-----------|---------------|---------|----------|-----------|-----------|--------|
+| 207254 | 4         | 4             | 5       | 5000 MB  | 25 GB     | 512       | RUN cn380 |
+| 207255 | 8         | 8             | 9       | 5000 MB  | 45 GB     | 512       | RUN cn380 |
+| 207256 | 20        | 16            | 21      | 5000 MB  | 105 GB    | 512       | RUN cn380 |
+| 207257 | 64        | 16            | 65      | 2000 MB  | 130 GB    | 512       | PEND (needs 65-slot node) |
+
+Memory estimate with blocksize=512:
+- Per worker: ~3.5 GB (dh_ieo 1.7 GB + hh 0.84 + bestfit 0.84 + overhead)
+- Parent at fork: ~5 GB (Python heap after precompute + gc.collect + malloc_trim)
+- Coherent hard cap: only 20 i_blocks → n_actual=min(n_workers, 20). n>20 gives no extra coherent speedup.
+- n=64 benefits only the incoherent stage (64 workers × 1M/64 templates each).
+
+Expected wall times vs 6733s serial baseline (based on Phase D scaling 1.8×/4w, 3.3×/8w):
+- n=4:  ~3700–4500s (60–75 min)
+- n=8:  ~2000–2500s (33–42 min)
+- n=20: ~1000–1500s (17–25 min)
+- n=64: ~500–900s (8–15 min, mostly incoherent speedup)
