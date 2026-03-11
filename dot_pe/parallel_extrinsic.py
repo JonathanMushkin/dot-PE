@@ -253,6 +253,14 @@ def collect_marg_info_parallel(
         all_bank_idx = [all_bank_idx[i] for i in order]
         all_sample_idx = [all_sample_idx[i] for i in order]
 
+    # Release module globals so the caller's gc.collect() + malloc_trim() can
+    # free the ext_generator (which is ~5 GB for bank_20).  Without this,
+    # _ext_setup keeps a live reference and the generator is COW-copied into
+    # every coherent-stage worker, causing OOM.
+    _ext_setup = None
+    _accepted_count = None
+    _count_lock = None
+
     return all_mi, all_bank_idx, all_sample_idx
 
 

@@ -156,12 +156,19 @@ def _build_and_submit(args):
     queue        = args.queue
     wall_limit   = 180  # minutes — 3 h ceiling (real event ≈ 1250 s expected)
 
+    # span[hosts=1] required so fork-based workers share memory on one node.
+    # But typical nodes have ≤52 cores; a 65-slot job would never land there.
+    # For n_slots > 52 we drop span[hosts=1] — Python always forks locally
+    # so correctness is unaffected; only the cgroup memory accounting changes
+    # (the limit is split across nodes, but all RSS is on the orchestrator node).
+    span_clause = "span[hosts=1] " if n_slots <= 52 else ""
+
     script = f"""\
 #!/bin/bash
 #BSUB -J {event_name}_mp_w{n_workers}
 #BSUB -q {queue}
 #BSUB -n {n_slots}
-#BSUB -R "rusage[mem={mem_per_slot}] span[hosts=1]"
+#BSUB -R "rusage[mem={mem_per_slot}] {span_clause}"
 #BSUB -W {wall_limit}
 #BSUB -o {output_dir}/lsf_%J.out
 #BSUB -e {output_dir}/lsf_%J.err
