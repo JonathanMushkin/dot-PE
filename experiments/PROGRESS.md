@@ -577,10 +577,44 @@ For our XPHM bank, lnlike is cheap (~0.13s/call vs ~1s for NRSur), so the skip g
 but still meaningful gain. The `max_filter_valid` reduction in QMC work (loading fewer waveforms
 + running fewer QMC chains) is the larger benefit here.
 
-**Jobs submitted (2026-03-10 00:29–00:33):**
+**Jobs submitted (2026-03-10 00:29–00:33) — completed:**
 
-| job    | mode   | bank      | n_ext | n_workers | purpose                     | status  |
+| job    | mode   | bank      | n_ext | n_workers | purpose                     | result  |
 |--------|--------|-----------|-------|-----------|------------------------------|---------|
-| 168214 | serial | small     | 128   | —         | smoke test (correctness)     | pending |
-| 168227 | serial | large     | 2048  | —         | full bench vs baseline 3167s | pending |
-| 168730 | mp/w8  | real event| —     | 8 (ext=4) | real event vs baseline ~1250s| pending |
+| 168214 | serial | small     | 128   | —         | smoke test (correctness)     | DONE 199s, 2309 MB |
+| 168227 | serial | large     | 2048  | —         | full bench vs baseline 3167s | DONE 3484s, 5191 MB, ln_ev=3.346 |
+| 168730 | mp/w8  | real event| 2048  | 8 (ext=4) | real event vs baseline       | OOM 63 GB → root cause: _ext_setup leak |
+
+Phase F filter optimizations confirmed working (serial correctness: small ln_ev=5.347 matches baseline,
+large ln_ev=3.346 close to 3.328 — minor variance due to n_ext=2048 randomness).
+
+**Root cause of real event OOM (diagnosed 2026-03-11):**
+
+`collect_marg_info_parallel()` stores the ext_generator in module-level `_ext_setup` dict
+and never clears it. After the extrinsic stage returns, the gc.collect()+malloc_trim() in
+run_mp.py cannot free the ~5 GB ext_generator for bank_20 because _ext_setup still holds
+a live reference. At the coherent-stage Pool fork, each worker COW-copies the generator → OOM.
+
+Fix (commit 89c1b02): clear `_ext_setup = None` at end of `collect_marg_info_parallel()`.
+
+---
+
+### 2026-03-11 12:04 — Phase G: real event end-to-end at n=4,8,20,64 workers
+
+Applied fix for _ext_setup memory leak. Submitted 4 experiments on GW230605_065343 (bank_20).
+All jobs running on cn382 at 12:04.
+
+| job    | n_workers | n_ext_workers | n_slots | mem/slot | total_mem | queue          |
+|--------|-----------|---------------|---------|----------|-----------|----------------|
+| 203280 | 4         | 4             | 5       | 5000 MB  | 25 GB     | physics-short  |
+| 203281 | 8         | 8             | 9       | 4000 MB  | 36 GB     | physics-short  |
+| 203283 | 20        | 16            | 21      | 3000 MB  | 63 GB     | physics-short  |
+| 203284 | 64        | 16            | 65      | 2000 MB  | 130 GB    | physics-short  |
+
+Notes:
+- n=64 job (203284) lacks span[hosts=1] (65 slots > 52 typical node). LSF allocated 13 slots on
+  cn382 (all processes run there) + 52 elsewhere; cgroup limit on cn382 may be 13×2000=26 GB.
+  If extrinsic stage (~22 GB) fits, coherent stage (~9 GB) will too.
+- Coherent stage hard cap: only 20 i_blocks exist for this event → n_actual=min(n,20)=20.
+  n=20 and n=64 will have identical coherent stage timing; n=64 benefits only from incoherent.
+- Reference: serial baseline 6733.6 s (job 138014 or run_0).
