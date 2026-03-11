@@ -94,7 +94,12 @@ def _build_and_submit(args):
     n_ext         = int(kw.get("n_ext", 2048))
     n_phi         = int(kw.get("n_phi", 100))
     n_t           = int(kw.get("n_t", 128))
-    blocksize     = int(kw.get("blocksize", 2048))
+    # blocksize controls how many intrinsic samples are batched per coherent
+    # worker task.  The reference serial run may use a large value (e.g. 2048)
+    # that is fine for serial but gives dh_ieo shape (2048, n_ext, n_phi) ≈ 6.7 GB
+    # complex per parallel worker — causing OOM.  Override via --blocksize; default
+    # 512 keeps per-worker dh_ieo to ~1.7 GB (matches run_mp.py default).
+    blocksize     = args.blocksize if args.blocksize is not None else int(kw.get("blocksize", 512))
     sd_blocksize  = int(kw.get("single_detector_blocksize", 2048))
     seed          = kw.get("seed")
     mchirp_guess  = kw.get("mchirp_guess")
@@ -156,19 +161,12 @@ def _build_and_submit(args):
     queue        = args.queue
     wall_limit   = 180  # minutes — 3 h ceiling (real event ≈ 1250 s expected)
 
-    # span[hosts=1] required so fork-based workers share memory on one node.
-    # But typical nodes have ≤52 cores; a 65-slot job would never land there.
-    # For n_slots > 52 we drop span[hosts=1] — Python always forks locally
-    # so correctness is unaffected; only the cgroup memory accounting changes
-    # (the limit is split across nodes, but all RSS is on the orchestrator node).
-    span_clause = "span[hosts=1] " if n_slots <= 52 else ""
-
     script = f"""\
 #!/bin/bash
 #BSUB -J {event_name}_mp_w{n_workers}
 #BSUB -q {queue}
 #BSUB -n {n_slots}
-#BSUB -R "rusage[mem={mem_per_slot}] {span_clause}"
+#BSUB -R "rusage[mem={mem_per_slot}] span[hosts=1]"
 #BSUB -W {wall_limit}
 #BSUB -o {output_dir}/lsf_%J.out
 #BSUB -e {output_dir}/lsf_%J.err
@@ -303,6 +301,10 @@ def main():
                    help="Memory per LSF slot in MB (default: 10000)")
     p.add_argument("--n-slots", type=int, default=9,
                    help="Number of LSF slots (default: 9)")
+    p.add_argument("--blocksize", type=int, default=None,
+                   help="Intrinsic block size for coherent workers (default: 512). "
+                        "Reference run may use 2048, which gives dh_ieo ≈ 6.7 GB/worker; "
+                        "512 gives ~1.7 GB/worker.")
     p.add_argument("--dry-run", action="store_true",
                    help="Print bsub script but do not submit")
     args = p.parse_args()
