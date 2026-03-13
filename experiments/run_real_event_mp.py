@@ -94,12 +94,7 @@ def _build_and_submit(args):
     n_ext         = int(kw.get("n_ext", 2048))
     n_phi         = int(kw.get("n_phi", 100))
     n_t           = int(kw.get("n_t", 128))
-    # blocksize controls how many intrinsic samples are batched per coherent
-    # worker task.  The reference serial run may use a large value (e.g. 2048)
-    # that is fine for serial but gives dh_ieo shape (2048, n_ext, n_phi) ≈ 6.7 GB
-    # complex per parallel worker — causing OOM.  Override via --blocksize; default
-    # 512 keeps per-worker dh_ieo to ~1.7 GB (matches run_mp.py default).
-    blocksize     = args.blocksize if args.blocksize is not None else int(kw.get("blocksize", 512))
+    blocksize     = args.blocksize if args.blocksize is not None else int(kw.get("blocksize", 2048))
     sd_blocksize  = int(kw.get("single_detector_blocksize", 2048))
     seed          = kw.get("seed")
     mchirp_guess  = kw.get("mchirp_guess")
@@ -302,9 +297,10 @@ def main():
     p.add_argument("--n-slots", type=int, default=9,
                    help="Number of LSF slots (default: 9)")
     p.add_argument("--blocksize", type=int, default=None,
-                   help="Intrinsic block size for coherent workers (default: 512). "
-                        "Reference run may use 2048, which gives dh_ieo ≈ 6.7 GB/worker; "
-                        "512 gives ~1.7 GB/worker.")
+                   help="Intrinsic block size for coherent workers "
+                        "(default: read from run_kwargs.json). "
+                        "The reference serial run uses 2048 (gives dh_ieo ≈ 6.7 GB/worker); "
+                        "use 512 for parallel runs to keep per-worker dh_ieo ≈ 1.7 GB.")
     p.add_argument("--dry-run", action="store_true",
                    help="Print bsub script but do not submit")
     args = p.parse_args()

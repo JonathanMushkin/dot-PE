@@ -97,6 +97,11 @@ from dot_pe.utils import inds_to_blocks, safe_logsumexp
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# Module-level setup dict for incoherent workers — populated in main process
+# before Pool creation, inherited via COW fork (no per-task pickling of large objects).
+_incoherent_setup = None
+
+
 def _incoherent_chunk_worker(args):
     """
     Score a contiguous range of intrinsic samples for all detectors.
@@ -104,32 +109,30 @@ def _incoherent_chunk_worker(args):
     Parameters (packed in args tuple)
     ----------------------------------
     sample_start, sample_end : absolute bank indices [start, end)
-    batch_size               : sub-batch size (mirrors single_detector_blocksize)
-    event_data, par_dic_0    : passed directly
-    bank_folder              : str path
-    fbin, approximant, n_phi, m_arr, n_t, size_limit : bank/inference config
+
+    All other data is read from the module-level _incoherent_setup dict,
+    which is set in the parent process before Pool creation and inherited
+    via COW fork — no per-task serialization of large objects.
 
     Returns
     -------
     chunk_inds  : np.ndarray  shape (N,)   absolute indices
     lnlike_di   : np.ndarray  shape (n_det, N)  per-detector log-likelihoods
     """
-    (
-        sample_start,
-        sample_end,
-        batch_size,
-        event_data,
-        par_dic_0,
-        bank_folder,
-        fbin,
-        approximant,
-        n_phi,
-        m_arr,
-        n_t,
-        size_limit,
-    ) = args
+    sample_start, sample_end = args
 
-    bank_folder = Path(bank_folder)
+    s           = _incoherent_setup
+    event_data  = s["event_data"]
+    par_dic_0   = s["par_dic_0"]
+    bank_folder = Path(s["bank_folder"])
+    fbin        = s["fbin"]
+    approximant = s["approximant"]
+    n_phi       = s["n_phi"]
+    m_arr       = s["m_arr"]
+    n_t         = s["n_t"]
+    size_limit  = s["size_limit"]
+    batch_size  = s["batch_size"]
+
     chunk_inds = np.arange(sample_start, sample_end)
     n_chunk = len(chunk_inds)
     n_det = len(event_data.detector_names)
@@ -205,7 +208,14 @@ def _collect_incoherent_mp(
     The sample range [0, n_int) is split into n_workers chunks.
     Each worker reconstructs its own per-detector SDPs and processes
     its chunk of batches, reusing h_impb across detectors per batch.
+
+    Large shared objects (event_data, par_dic_0, fbin, …) are stored in the
+    module-level _incoherent_setup dict before Pool creation so workers
+    inherit them via COW fork.  Only lightweight (sample_start, sample_end)
+    tuples are sent through the task queue.
     """
+    global _incoherent_setup
+
     # Round chunk size up to a multiple of batch_size so batch boundaries align
     raw_chunk = max(batch_size, (n_int + n_workers - 1) // n_workers)
     chunk_size = ((raw_chunk + batch_size - 1) // batch_size) * batch_size
@@ -216,17 +226,28 @@ def _collect_incoherent_mp(
         sample_ranges.append((s, min(s + chunk_size, n_int)))
         s += chunk_size
 
-    worker_args = [
-        (s, e, batch_size, event_data, par_dic_0, str(bank_folder),
-         fbin, approximant, n_phi, m_arr, n_t, size_limit)
-        for s, e in sample_ranges
-    ]
+    worker_args = [(s, e) for s, e in sample_ranges]
 
     n_actual = min(n_workers, len(worker_args))
     print(f"  [MP] incoherent: {len(worker_args)} chunks → {n_actual} workers")
 
-    with Pool(n_actual) as pool:
-        results = pool.map(_incoherent_chunk_worker, worker_args)
+    _incoherent_setup = {
+        "event_data":  event_data,
+        "par_dic_0":   par_dic_0,
+        "bank_folder": str(bank_folder),
+        "fbin":        fbin,
+        "approximant": approximant,
+        "n_phi":       n_phi,
+        "m_arr":       m_arr,
+        "n_t":         n_t,
+        "size_limit":  size_limit,
+        "batch_size":  batch_size,
+    }
+    try:
+        with Pool(n_actual) as pool:
+            results = pool.map(_incoherent_chunk_worker, worker_args)
+    finally:
+        _incoherent_setup = None  # release references
 
     all_inds = np.concatenate([r[0] for r in results])
     all_lnlike_di = np.concatenate([r[1] for r in results], axis=1)
