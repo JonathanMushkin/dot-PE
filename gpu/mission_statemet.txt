@@ -1,0 +1,24 @@
+MISSION:
+create a woking code equivalnet to infernece.run() that will do all 
+computationally heavy tasks on GPUs, whenever its beneficial.
+
+GUIDELINES: 
+- try "atomized" changes before large-scale changes. 
+- keep input/outputs identical to the current working mode, to the extent 
+possible
+- try to do "atomized" changes and test them well. Once it is proven they are 
+benefical, climb up the scale, and try to make the different patche work 
+togather.
+- use cuda-guide
+- document progress after each action in PROGRESS.md includign time-stamps
+(in local time).
+- when tokens run out - always wait it out. 
+- assume intrinsic-bank size is 2^20, extrinsic samples size is 2048.
+- if no test is available, assume runtime of infernece.run() in the 1-few 
+hours.
+- working code examples can be found in notebooks/03-run-infernece.
+- Never git merge with other branches unless explicitly told to. 
+- Never alter code in other folders unlesss explicitly told to. 
+- do not alter the code in dot-pe-future/dot_pe undless explicitly told to. 
+- write code in dot-pe/gpu. creare dedicated folders for non-python code 
+if required.
