@@ -1200,15 +1200,12 @@ def draw_extrinsic_samples(
                 response_dpe = np.load(response_dpe_path)
                 timeshift_dbe = np.load(timeshift_dbe_path)
             else:
-                # Prefer loading from the source run directory to avoid
-                # recomputing with event_data.tcoarse (= 144.0 exactly)
-                # when the source run used self.likelihood.event_data.tcoarse
-                # (which may differ by ~3 µs, causing large phase errors).
+                # Fall back to the source run directory so that response_dpe
+                # and timeshift_dbe are consistent with the extrinsic samples.
                 src_dir = Path(extrinsic_samples).parent
                 src_response = src_dir / "response_dpe.npy"
                 src_timeshift = src_dir / "timeshift_dbe.npy"
                 if src_response.exists() and src_timeshift.exists():
-                    print("  Reusing response_dpe/timeshift_dbe from source rundir.")
                     response_dpe = np.load(src_response)
                     timeshift_dbe = np.load(src_timeshift)
                 else:
