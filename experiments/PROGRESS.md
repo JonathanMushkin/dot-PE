@@ -632,23 +632,78 @@ Fix (commit 709ea45):
   New `--blocksize` argument for explicit override.
 - `span[hosts=1]` restored unconditionally. n=64 (65 slots) waits for a 128-core node.
 
-#### Round 2 (v3, 14:34, jobs 207254–207257) — running/pending
+#### Round 2 (v3, 14:34, jobs 207254–207257) — all OOM
+
+| job    | n_workers | mem_limit | ran_s | OOM stage |
+|--------|-----------|-----------|-------|-----------|
+| 207254 | 4         | 25 GB     | 918   | coherent pool |
+| 207255 | 8         | 45 GB     | 649   | coherent pool |
+| 207256 | 20        | 105 GB    | 465   | coherent pool |
+| 207257 | 64        | 130 GB    | 315   | incoherent pool |
+
+Two root causes:
+
+**RC1 (w4/w8/w20 coherent): blocksize fix was broken.**
+`run_real_event_mp.py:102` used `kw.get("blocksize", 512)` which read 2048 from
+run_kwargs.json — the 512 fallback was never reached. Submitted command still had
+`--blocksize 2048`, so per-worker dh_ieo = 6.71 GB. Fix (commit 49d64b8): removed
+the override; script now reads blocksize straight from run_kwargs.json or `--blocksize`.
+Pass `--blocksize 512` when submitting parallel jobs.
+
+**RC2 (n=64 incoherent): per-task pickling of event_data.**
+`_incoherent_chunk_worker` received `event_data`, `par_dic_0`, `fbin`, etc. inside the
+args tuple → `pool.map` serialized each of 64 tasks with a full copy of these objects.
+Workers got an extra deserialized copy on top of the COW-inherited parent copy.
+Fix (commit 49d64b8): move shared objects into module-level `_incoherent_setup` dict
+(same pattern as `_thin_setup`); only `(sample_start, sample_end)` sent per task.
+
+#### Round 3 (v4, 2026-03-13 22:10, jobs 297329–297332) — running
 
 | job    | n_workers | n_ext_workers | n_slots | mem/slot | total_mem | blocksize | status |
 |--------|-----------|---------------|---------|----------|-----------|-----------|--------|
-| 207254 | 4         | 4             | 5       | 5000 MB  | 25 GB     | 512       | RUN cn380 |
-| 207255 | 8         | 8             | 9       | 5000 MB  | 45 GB     | 512       | RUN cn380 |
-| 207256 | 20        | 16            | 21      | 5000 MB  | 105 GB    | 512       | RUN cn380 |
-| 207257 | 64        | 16            | 65      | 2000 MB  | 130 GB    | 512       | PEND (needs 65-slot node) |
+| 297329 | 4         | 4             | 5       | 6000 MB  | 30 GB     | 512       | RUN |
+| 297330 | 8         | 8             | 9       | 6000 MB  | 54 GB     | 512       | RUN |
+| 297331 | 20        | 16            | 21      | 6000 MB  | 126 GB    | 512       | RUN |
+| 297332 | 64        | 16            | 65      | 3000 MB  | 195 GB    | 512       | RUN/PEND |
 
-Memory estimate with blocksize=512:
-- Per worker: ~3.5 GB (dh_ieo 1.7 GB + hh 0.84 + bestfit 0.84 + overhead)
-- Parent at fork: ~5 GB (Python heap after precompute + gc.collect + malloc_trim)
-- Coherent hard cap: only 20 i_blocks → n_actual=min(n_workers, 20). n>20 gives no extra coherent speedup.
-- n=64 benefits only the incoherent stage (64 workers × 1M/64 templates each).
+Memory estimate with both fixes applied:
+- Coherent per worker (blocksize=512): ~3.5 GB (dh_ieo 1.7 GB + hh 0.84 + bestfit 0.84 + overhead)
+- Incoherent: COW-shared event_data (no extra pickle); per worker ~1–2 GB private
+- Parent at coherent fork: ~5 GB
 
-Expected wall times vs 6733s serial baseline (based on Phase D scaling 1.8×/4w, 3.3×/8w):
+Expected wall times vs 6733s serial baseline:
 - n=4:  ~3700–4500s (60–75 min)
 - n=8:  ~2000–2500s (33–42 min)
 - n=20: ~1000–1500s (17–25 min)
 - n=64: ~500–900s (8–15 min, mostly incoherent speedup)
+
+#### Round 3 results (v4) — w4/w8/w20 SUCCESS, w64 OOM
+
+| job    | n_w | wall_s | peak_mem | speedup | ln_evidence |
+|--------|-----|--------|----------|---------|-------------|
+| 297329 | 4   | 1474.6 | 20.6 GB  | 4.6×    | 21.483      |
+| 297330 | 8   | 1080.1 | 38.6 GB  | 6.2×    | 21.709      |
+| 297331 | 20  | 678.0  | 91.1 GB  | 9.9×    | 21.637      |
+| 297332 | 64  | OOM    | 195 GB   | —       | —           |
+
+Reference serial: 6733.6s, ln_evidence=20.824, n_effective=105206.
+
+ln_evidence differs from reference by ~0.65–0.88 — expected: each run draws fresh
+extrinsic samples (MC noise on the evidence integral). The blocksize change does NOT
+affect results since block outputs are merged unconditionally.
+
+w64 coherent OOM at 195 GB: parent footprint after precompute is much larger than
+expected (CLP processes all 256 bank_20 waveform blocks ~50 GB during dt_linfree
+precomputation; malloc may not return all pages after gc+malloc_trim).
+
+#### Validation runs (fixedext, 2026-03-14 00:11, jobs 298453–298455)
+
+Pin all three modes to the same extrinsic_samples.feather (from w4_v4) to isolate
+MC noise from any genuine code difference. If ln_evidence agrees across w4/w8/w20,
+pipeline is consistent.
+
+| job    | n_w | extrinsic | status |
+|--------|-----|-----------|--------|
+| 298453 | 4   | fixed     | RUN    |
+| 298454 | 8   | fixed     | RUN    |
+| 298455 | 20  | fixed     | RUN    |

@@ -1200,10 +1200,22 @@ def draw_extrinsic_samples(
                 response_dpe = np.load(response_dpe_path)
                 timeshift_dbe = np.load(timeshift_dbe_path)
             else:
-                processor = ExtrinsicSampleProcessor(event_data.detector_names)
-                response_dpe, timeshift_dbe = processor.get_components(
-                    extrinsic_samples_df, fbin, event_data.tcoarse
-                )
+                # Prefer loading from the source run directory to avoid
+                # recomputing with event_data.tcoarse (= 144.0 exactly)
+                # when the source run used self.likelihood.event_data.tcoarse
+                # (which may differ by ~3 µs, causing large phase errors).
+                src_dir = Path(extrinsic_samples).parent
+                src_response = src_dir / "response_dpe.npy"
+                src_timeshift = src_dir / "timeshift_dbe.npy"
+                if src_response.exists() and src_timeshift.exists():
+                    print("  Reusing response_dpe/timeshift_dbe from source rundir.")
+                    response_dpe = np.load(src_response)
+                    timeshift_dbe = np.load(src_timeshift)
+                else:
+                    processor = ExtrinsicSampleProcessor(event_data.detector_names)
+                    response_dpe, timeshift_dbe = processor.get_components(
+                        extrinsic_samples_df, fbin, event_data.tcoarse
+                    )
                 np.save(arr=response_dpe, file=response_dpe_path)
                 np.save(arr=timeshift_dbe, file=timeshift_dbe_path)
             return extrinsic_samples_df, response_dpe, timeshift_dbe

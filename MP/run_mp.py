@@ -84,12 +84,31 @@ warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import gc as _gc_module
+import ctypes as _ctypes_module
+import resource as _resource_module
+
 from cogwheel.utils import exp_normalize
 from dot_pe import inference, thin_coherent
 from dot_pe.base_sampler_free_sampling import get_n_effective_total_i_e
 from dot_pe.coherent_processing import CoherentLikelihoodProcessor
 from dot_pe.inference import _create_single_detector_processor, run_for_single_detector
 from dot_pe.utils import inds_to_blocks, safe_logsumexp
+
+
+def _log_rss(label: str) -> None:
+    """Print current and peak process RSS in MB."""
+    peak_kb = _resource_module.getrusage(_resource_module.RUSAGE_SELF).ru_maxrss
+    try:
+        cur_mb = 0.0
+        with open("/proc/self/status") as _f:
+            for _line in _f:
+                if _line.startswith("VmRSS:"):
+                    cur_mb = int(_line.split()[1]) / 1024
+                    break
+    except Exception:
+        cur_mb = peak_kb / 1024
+    print(f"  [RSS] {label}: cur={cur_mb:.0f} MB  peak={peak_kb / 1024:.0f} MB")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -330,16 +349,16 @@ def _run_coherent_mp(
         )
 
         # Release CLP memory back to OS before forking workers
-        import gc as _gc
-        _gc.collect()
+        _gc_module.collect()
         try:
-            import ctypes as _ctypes
-            _ctypes.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+            _ctypes_module.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
         except Exception:
             pass
+        _log_rss("after precompute + gc/trim (before coherent pool)")
 
         # Load setup into main process; workers inherit via COW fork
         _thin_setup = thin_coherent.load_thin_setup(setup_dir, rundir)
+        _log_rss("after load_thin_setup (coherent Pool fork point)")
 
         waveform_dir = str(Path(bank_path) / "waveforms")
         i_blocks = inds_to_blocks(inds, blocksize)
@@ -481,6 +500,16 @@ def run(
         bank_logw_override=bank_logw_override,
         coherent_posterior_kwargs={},
     )
+    # coherent_posterior is not used directly in run_mp (only ctx["pr"] is needed
+    # for Stage 6).  Drop the reference now so its likelihood (~several GB) can
+    # be freed before Stage 2, shrinking the parent RSS that workers inherit.
+    del ctx["coherent_posterior"]
+    _gc_module.collect()
+    try:
+        _ctypes_module.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+    _log_rss("after Stage 1 + del coherent_posterior")
 
     # ── Stage 2: incoherent selection (parallelized) ──────────────────────────
     print("\n=== Incoherent selection per bank (MP) ===")
@@ -508,6 +537,16 @@ def run(
         lnlikes_by_bank[bank_id] = incoherent_lnlikes
         lnlikes_di_by_bank[bank_id] = lnlike_di
         print(f"Bank {bank_id}: {len(inds)} intrinsic samples evaluated.")
+
+    # Free incoherent pool overhead (fragmented heap pages, IPC buffers) before
+    # Stage 3/4/5 so both fixedext and non-fixedext paths enter Stage 5 with
+    # equally clean parent RSS.
+    _gc_module.collect()
+    try:
+        _ctypes_module.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+    _log_rss("after Stage 2 incoherent + gc/trim")
 
     # ── Stage 3: cross-bank threshold (serial) ────────────────────────────────
     selected_inds_by_bank, _, _ = (
@@ -554,13 +593,12 @@ def run(
         )
 
     # Free MarginalizationInfo and any other large objects before coherent stage
-    import gc as _gc2
-    _gc2.collect()
+    _gc_module.collect()
     try:
-        import ctypes as _ctypes2
-        _ctypes2.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+        _ctypes_module.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
     except Exception:
         pass
+    _log_rss("after Stage 4 extrinsic + gc/trim")
 
     # ── Stage 5: coherent inference (parallelized, thin workers) ─────────────
     per_bank_results = _run_coherent_mp(

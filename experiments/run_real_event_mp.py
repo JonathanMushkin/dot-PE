@@ -144,6 +144,8 @@ def _build_and_submit(args):
         mp_cmd_parts.append(f"    --seed {seed}")
     if mchirp_guess is not None:
         mp_cmd_parts.append(f"    --mchirp-guess {mchirp_guess}")
+    if args.extrinsic_samples is not None:
+        mp_cmd_parts.append(f"    --extrinsic-samples {Path(args.extrinsic_samples).resolve()}")
 
     mp_cmd = " \\\n".join(mp_cmd_parts)
 
@@ -296,6 +298,9 @@ def main():
                    help="Memory per LSF slot in MB (default: 10000)")
     p.add_argument("--n-slots", type=int, default=9,
                    help="Number of LSF slots (default: 9)")
+    p.add_argument("--extrinsic-samples", default=None,
+                   help="Path to pre-drawn extrinsic_samples.feather to reuse across runs "
+                        "(skips extrinsic sampling stage; enables apples-to-apples comparison)")
     p.add_argument("--blocksize", type=int, default=None,
                    help="Intrinsic block size for coherent workers "
                         "(default: read from run_kwargs.json). "
