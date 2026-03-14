@@ -47,6 +47,7 @@ import resource
 import time
 import warnings
 from multiprocessing import Pool
+from tqdm import tqdm
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -229,7 +230,11 @@ def _collect_incoherent_mp(
     }
     try:
         with Pool(n_actual) as pool:
-            results = pool.map(_incoherent_chunk_worker, worker_args)
+            results = list(tqdm(
+                pool.imap(_incoherent_chunk_worker, worker_args),
+                total=len(worker_args),
+                desc="incoherent chunks",
+            ))
     finally:
         _incoherent_setup = None  # release references
 
@@ -370,7 +375,11 @@ def _run_coherent_mp(
         n_dist_marg = 0
 
         with Pool(n_actual) as pool:
-            for r in pool.imap_unordered(_thin_coherent_worker, worker_args):
+            for r in tqdm(
+                pool.imap_unordered(_thin_coherent_worker, worker_args),
+                total=len(worker_args),
+                desc="coherent i_blocks",
+            ):
                 df, n_disc, lse_disc, lsse_disc, dt_slice, n_dm = r
                 n_disc_total += n_disc
                 logsumexp_disc = safe_logsumexp([logsumexp_disc, lse_disc])

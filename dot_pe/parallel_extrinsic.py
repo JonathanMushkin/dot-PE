@@ -39,6 +39,7 @@ import pickle
 from copy import deepcopy
 from multiprocessing import Lock, Pool, Value
 from pathlib import Path
+from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
@@ -267,8 +268,10 @@ def collect_marg_info_parallel(
     # to n_combine by n_effective_prior below.
     all_mi, all_bank_idx, all_sample_idx = [], [], []
     with Pool(n_actual) as pool:
-        for mi_batch, used_b_batch, used_s_batch in pool.imap_unordered(
-            _extrinsic_batch_worker, worker_batches
+        for mi_batch, used_b_batch, used_s_batch in tqdm(
+            pool.imap_unordered(_extrinsic_batch_worker, worker_batches),
+            total=n_actual,
+            desc="extrinsic workers",
         ):
             all_mi.extend(mi_batch)
             all_bank_idx.extend(used_b_batch)
