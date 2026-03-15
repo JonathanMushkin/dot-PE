@@ -232,6 +232,380 @@ def test_single_detector_near_singular_hh():
 # Main
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Test: sample_distance_batched_gpu vs CPU lookup_table.sample_distance
+# ---------------------------------------------------------------------------
+
+def test_sample_distance_batched():
+    """
+    Deterministic accuracy test for sample_distance_batched_gpu.
+
+    Both CPU (lookup_table.sample_distance) and GPU use identical:
+      - focused grid: 1/linspace(*u_bounds, K) in u-space
+      - broad grid: linspace(0, D_MAX, K+1)[1:]
+      - CDF: trapezoidal rule (k=1 spline antiderivative == trapz)
+      - inversion: piecewise linear interpolation
+
+    By fixing the fractional CDF quantile (u_frac) to the same value in
+    both paths, the results must agree up to float32 rounding errors.
+
+    Expected accuracy: relative error < 1e-3 (limited by grid resolution,
+    not random noise).  With resolution=256 this would reach < 1e-6.
+    """
+    import numpy as np
+    from scipy.interpolate import InterpolatedUnivariateSpline
+    from cogwheel.likelihood import LookupTable
+    from gpu.distance_sampling_gpu import sample_distance_batched_gpu
+
+    rng = np.random.default_rng(77)
+    N = 500  # enough for a robust check; CDF inversion is deterministic
+
+    # Typical SNR range
+    norm_h  = rng.uniform(5.0, 50.0, N)
+    overlap = rng.uniform(0.5, 1.0, N) * norm_h
+    REF = 1.0
+    h_h = norm_h ** 2
+    d_h = overlap * REF * norm_h
+
+    lut = LookupTable(d_luminosity_prior_name="euclidean", d_luminosity_max=15000.0)
+    D_MAX = float(lut.d_luminosity_max)
+    K     = 32
+
+    # Fixed fractional quantiles: same for CPU and GPU
+    u_fracs = rng.uniform(0.02, 0.98, N)   # avoid tails where grid is sparse
+
+    # --- CPU reference: same grid as sample_distance, fixed quantile ---
+    cpu_results = np.empty(N)
+    for k in range(N):
+        u_bounds   = 1.0 / lut._get_distance_bounds(d_h[k], h_h[k], sigmas=10.0)
+        focused    = 1.0 / np.linspace(u_bounds[0], u_bounds[1], K)
+        focused    = focused[(focused > 0) & (focused < D_MAX)]
+        broad      = np.linspace(0.0, D_MAX, K + 1)[1:]
+        distances  = np.sort(np.concatenate([broad, focused]))
+        posterior  = lut._function_integrand(distances, d_h[k], h_h[k])
+        cumulative = InterpolatedUnivariateSpline(
+            distances, posterior, k=1).antiderivative()(distances)
+        cpu_results[k] = np.interp(
+            u_fracs[k] * cumulative[-1], cumulative, distances)
+
+    # --- GPU: same fractional quantiles, same grid logic ---
+    gpu_results = sample_distance_batched_gpu(
+        d_h, h_h, lut, resolution=K, _u_fracs=u_fracs)
+
+    assert gpu_results.shape == (N,)
+    assert np.all(gpu_results >= 0)
+    assert np.all(gpu_results <= D_MAX)
+
+    rel_err = np.abs(cpu_results - gpu_results) / (cpu_results + 1.0)
+    max_rel = rel_err.max()
+    med_rel = np.median(rel_err)
+    RTOL = 1e-3   # float32 CDF grid interpolation error budget
+
+    assert max_rel < RTOL, (
+        f"Max relative error {max_rel:.2e} exceeds {RTOL:.0e}. "
+        f"Median={med_rel:.2e}. Worst sample: "
+        f"d_h={d_h[rel_err.argmax()]:.3g}, h_h={h_h[rel_err.argmax()]:.3g}, "
+        f"cpu={cpu_results[rel_err.argmax()]:.1f}, gpu={gpu_results[rel_err.argmax()]:.1f}"
+    )
+    print(
+        f"PASS test_sample_distance_batched  "
+        f"(max_rel={max_rel:.2e}, median_rel={med_rel:.2e}, N={N}, K={K})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test: _batch_precessing_spin_inverse vs LAL per-sample baseline
+# ---------------------------------------------------------------------------
+
+def test_precessing_spin_inverse_transform_batch():
+    """
+    Verify _batch_precessing_spin_inverse for all three precessing-spin
+    subprior types against lalsimulation.SimInspiralTransformPrecessingWvf2PE.
+
+    Expected accuracy: ≤ 1e-6 relative error for all outputs
+    (theta_jn: ~1e-9 from J≈L; others: machine precision).
+    """
+    import lal
+    import lalsimulation as ls
+    import pandas as pd
+    from cogwheel.gw_prior.spin import (
+        UniformDiskInplaneSpinsIsotropicInclinationPrior,
+        IsotropicSpinsInplaneComponentsIsotropicInclinationPrior,
+        CartesianUniformDiskInplaneSpinsIsotropicInclinationPrior,
+        UniformDiskInplaneSpinsIsotropicInclinationSkyLocationPrior,
+    )
+    from gpu.run import _batch_precessing_spin_inverse
+
+    rng = np.random.default_rng(77)
+    N = 300
+    TGPS = 1187008882.4
+    MSUN = lal.MSUN_SI
+
+    m1_kg = rng.uniform(10, 80, N) * MSUN
+    m2_kg = rng.uniform(5, 40, N) * MSUN
+    f_ref = np.full(N, 50.0)
+
+    # Random spin vectors (Cartesian in L-frame)
+    chi1 = rng.uniform(0, 0.99, N)
+    chi2 = rng.uniform(0, 0.99, N)
+    tilt1 = rng.uniform(0, np.pi, N)
+    tilt2 = rng.uniform(0, np.pi, N)
+    phi_s1 = rng.uniform(0, 2*np.pi, N)
+    phi12 = rng.uniform(0, 2*np.pi, N)
+
+    s1x_n = chi1 * np.sin(tilt1) * np.cos(phi_s1)
+    s1y_n = chi1 * np.sin(tilt1) * np.sin(phi_s1)
+    s1z   = chi1 * np.cos(tilt1)
+    phi_s2 = (phi_s1 + phi12) % (2*np.pi)
+    s2x_n = chi2 * np.sin(tilt2) * np.cos(phi_s2)
+    s2y_n = chi2 * np.sin(tilt2) * np.sin(phi_s2)
+    s2z   = chi2 * np.cos(tilt2)
+    iota  = rng.uniform(0, np.pi, N)
+    ra    = rng.uniform(0, 2*np.pi, N)
+    dec   = rng.uniform(-np.pi/2, np.pi/2, N)
+
+    arrays_base = dict(
+        iota=iota, s1x_n=s1x_n, s1y_n=s1y_n, s2x_n=s2x_n, s2y_n=s2y_n,
+        s1z=s1z, s2z=s2z, m1=m1_kg, m2=m2_kg, f_ref=f_ref,
+    )
+
+    # LAL per-sample reference (polar outputs)
+    lal_results = np.array([
+        ls.SimInspiralTransformPrecessingWvf2PE(
+            iota[i], s1x_n[i], s1y_n[i], s1z[i], s2x_n[i], s2y_n[i], s2z[i],
+            m1_kg[i], m2_kg[i], f_ref[i], 0.)
+        for i in range(N)
+    ])
+    lal_theta_jn = lal_results[:, 0]
+    lal_tilt1    = lal_results[:, 2]
+    lal_tilt2    = lal_results[:, 3]
+    lal_phi12    = lal_results[:, 4]
+    lal_chi1     = lal_results[:, 5]
+    lal_chi2     = lal_results[:, 6]
+
+    RTOL_SPIN = 1e-6   # max relative error budget
+
+    # --- 1. _BaseInplaneSpinsInclinationPrior (polar) ---
+    sp1 = UniformDiskInplaneSpinsIsotropicInclinationPrior()
+    r1  = _batch_precessing_spin_inverse(sp1, arrays_base)
+    assert np.allclose(np.cos(lal_theta_jn), r1['costheta_jn'], rtol=RTOL_SPIN), \
+        f"costheta_jn mismatch (polar): max_rel={np.abs(np.cos(lal_theta_jn)-r1['costheta_jn']).max():.2e}"
+    lal_cums1 = sp1._inverse_spin_transform(lal_chi1, lal_tilt1, s1z)
+    assert np.allclose(lal_cums1, r1['cums1r_s1z'], rtol=RTOL_SPIN), \
+        f"cums1r_s1z mismatch: max_rel={np.abs(lal_cums1-r1['cums1r_s1z']).max():.2e}"
+    assert np.allclose(lal_phi12, r1['phi12'], atol=1e-12), \
+        f"phi12 mismatch: max_abs={np.abs(lal_phi12-r1['phi12']).max():.2e}"
+
+    # --- 2. CartesianUniformDiskInplaneSpinsIsotropicInclinationPrior ---
+    sp2 = CartesianUniformDiskInplaneSpinsIsotropicInclinationPrior()
+    r2  = _batch_precessing_spin_inverse(sp2, arrays_base)
+    # Scalar LAL reference for each sample
+    ref2 = [sp2.inverse_transform(
+        iota[i], s1x_n[i], s1y_n[i], s2x_n[i], s2y_n[i], s1z[i], s2z[i],
+        m1_kg[i], m2_kg[i], f_ref[i]) for i in range(N)]
+    for key in ['costheta_jn', 'x1', 'y1', 'x2', 'y2']:
+        ref_arr = np.array([r[key] for r in ref2])
+        assert np.allclose(r2[key], ref_arr, rtol=RTOL_SPIN, atol=1e-12), \
+            f"CartesianUniform {key} mismatch: max_rel={np.abs(r2[key]-ref_arr).max():.2e}"
+
+    # --- 3. _BaseSkyLocationPrior ---
+    sp3 = UniformDiskInplaneSpinsIsotropicInclinationSkyLocationPrior(
+        detector_pair='HL', tgps=TGPS)
+    arrays3 = dict(arrays_base, ra=ra, dec=dec)
+    r3 = _batch_precessing_spin_inverse(sp3, arrays3)
+    ref3 = [sp3.inverse_transform(
+        iota[i], s1x_n[i], s1y_n[i], s2x_n[i], s2y_n[i],
+        ra[i], dec[i], s1z[i], s2z[i], m1_kg[i], m2_kg[i], f_ref[i])
+        for i in range(N)]
+    for key in ['costheta_jn', 'phi_jl_hat', 'phi12', 'cums1r_s1z', 'cums2r_s2z',
+                'costhetanet', 'phinet_hat']:
+        ref_arr = np.array([r[key] for r in ref3])
+        assert np.allclose(r3[key], ref_arr, rtol=RTOL_SPIN, atol=1e-12), \
+            f"SkyLocation {key} mismatch: max={np.abs(r3[key]-ref_arr).max():.2e}"
+
+    print(f"PASS test_precessing_spin_inverse_transform_batch  (N={N}, 3 subprior types)")
+
+
+# ---------------------------------------------------------------------------
+# Test: _batch_extrinsic_subprior vs cogwheel per-sample baseline
+# ---------------------------------------------------------------------------
+
+def test_extrinsic_lal_subprior_batch():
+    """
+    Verify _batch_extrinsic_subprior for all four extrinsic LAL subprior types
+    against per-sample cogwheel baseline.
+
+    Expected accuracy: < 1e-12 relative error (machine precision).
+    """
+    import pandas as pd
+    from cogwheel.gw_prior.extrinsic import (
+        UniformPolarizationPrior,
+        UniformTimePrior,
+        UniformPhasePrior,
+        UniformLuminosityVolumePrior,
+    )
+    from gpu.run import _batch_extrinsic_subprior
+
+    rng = np.random.default_rng(55)
+    N = 500
+    TGPS = 1187008882.4
+    REF = 'H'
+    F_AVG = 109.0
+
+    ra  = rng.uniform(0, 2 * np.pi, N)
+    dec = rng.uniform(-np.pi / 2, np.pi / 2, N)
+    psi = rng.uniform(0, np.pi, N)
+    iota = rng.uniform(0, np.pi, N)
+    t_geocenter = rng.uniform(-0.05, 0.05, N)
+    phi_ref = rng.uniform(0, 2 * np.pi, N)
+    m1 = rng.uniform(10, 80, N)   # solar masses
+    m2 = rng.uniform(5,  40, N)
+    d_lum = rng.uniform(100, 5000, N)
+
+    RTOL = 1e-10   # machine precision budget
+
+    # --- 1. UniformPolarizationPrior ---
+    sp1 = UniformPolarizationPrior()
+    ref1 = [sp1.inverse_transform(psi[i]) for i in range(N)]
+    r1   = _batch_extrinsic_subprior(sp1, {'psi': psi})
+    ref_psi = np.array([r['psi'] for r in ref1])
+    assert np.allclose(r1['psi'], ref_psi, rtol=RTOL, atol=1e-12), \
+        f"psi mismatch: max_err={np.abs(r1['psi']-ref_psi).max():.2e}"
+
+    # --- 2. UniformTimePrior ---
+    sp2 = UniformTimePrior(tgps=TGPS, ref_det_name=REF, t0_refdet=0, dt0=0.07)
+    ref2 = [sp2.inverse_transform(t_geocenter[i], ra[i], dec[i]) for i in range(N)]
+    r2   = _batch_extrinsic_subprior(sp2, {
+        't_geocenter': t_geocenter, 'ra': ra, 'dec': dec})
+    ref_t = np.array([r['t_refdet'] for r in ref2])
+    assert np.allclose(r2['t_refdet'], ref_t, rtol=RTOL, atol=1e-12), \
+        f"t_refdet mismatch: max_err={np.abs(r2['t_refdet']-ref_t).max():.2e}"
+
+    # --- 3. UniformPhasePrior ---
+    par_dic_0 = dict(phi_ref=0., iota=1., ra=0.5, dec=0.5, psi=1., t_geocenter=0.)
+    sp3 = UniformPhasePrior(tgps=TGPS, ref_det_name=REF, f_avg=F_AVG,
+                             par_dic_0=par_dic_0)
+    ref3 = [sp3.inverse_transform(phi_ref[i], iota[i], ra[i], dec[i], psi[i],
+                                  t_geocenter[i]) for i in range(N)]
+    r3   = _batch_extrinsic_subprior(sp3, {
+        'phi_ref': phi_ref, 'iota': iota, 'ra': ra, 'dec': dec,
+        'psi': psi, 't_geocenter': t_geocenter})
+    ref_phi = np.array([r['phi_ref_hat'] for r in ref3])
+    assert np.allclose(r3['phi_ref_hat'], ref_phi, rtol=RTOL, atol=1e-12), \
+        f"phi_ref_hat mismatch: max_err={np.abs(r3['phi_ref_hat']-ref_phi).max():.2e}"
+
+    # --- 4. UniformLuminosityVolumePrior ---
+    sp4 = UniformLuminosityVolumePrior(tgps=TGPS, ref_det_name=REF, d_hat_max=500.)
+    ref4 = [sp4.inverse_transform(d_lum[i], ra[i], dec[i], psi[i], iota[i],
+                                  m1[i], m2[i]) for i in range(N)]
+    r4   = _batch_extrinsic_subprior(sp4, {
+        'd_luminosity': d_lum, 'ra': ra, 'dec': dec, 'psi': psi,
+        'iota': iota, 'm1': m1, 'm2': m2})
+    ref_dhat = np.array([r['d_hat'] for r in ref4])
+    assert np.allclose(r4['d_hat'], ref_dhat, rtol=RTOL, atol=1e-12), \
+        f"d_hat mismatch: max_err={np.abs(r4['d_hat']-ref_dhat).max():.2e}"
+
+    print(f"PASS test_extrinsic_lal_subprior_batch  "
+          f"(N={N}: psi, t_refdet, phi_ref_hat, d_hat all machine-precision)")
+
+
+# ---------------------------------------------------------------------------
+# Test: _pr_inverse_transform_batch vs cogwheel per-sample baseline
+# ---------------------------------------------------------------------------
+
+def test_prior_inverse_transform_batch():
+    """
+    Verify _pr_inverse_transform_batch against cogwheel's per-sample baseline.
+
+    Uses three subpriors that are known to be batch-safe (numpy-only) and
+    one that is NOT batch-safe (LAL time-delay), so both the fast path and
+    the per-sample fallback are exercised.
+
+    Expected accuracy: machine precision for pure-numpy subpriors; identical
+    results for the fallback path (same code path as cogwheel).
+    """
+    import pandas as pd
+    from cogwheel.gw_prior.extrinsic import (
+        IsotropicInclinationPrior,
+        IsotropicSkyLocationPrior,
+        UniformTimePrior,
+    )
+    from cogwheel.gw_prior.spin import IsotropicSpinsAlignedComponentsPrior
+    from gpu.run import _pr_inverse_transform_batch
+
+    rng = np.random.default_rng(99)
+    N = 500
+    TGPS = 1187008882.4  # GW170817
+
+    # --- Subpriors ---
+    inc_sp  = IsotropicInclinationPrior()               # batch-safe
+    sky_sp  = IsotropicSkyLocationPrior(               # batch-safe
+        detector_pair='HL', tgps=TGPS)
+    spin_sp = IsotropicSpinsAlignedComponentsPrior()    # batch-safe
+    time_sp = UniformTimePrior(                         # NOT batch-safe (LAL)
+        tgps=TGPS, ref_det_name='H', t0_refdet=0, dt0=0.07)
+
+    # --- Random standard-param inputs ---
+    iota          = rng.uniform(0, np.pi, N)
+    ra            = rng.uniform(0, 2 * np.pi, N)
+    dec           = rng.uniform(-np.pi / 2, np.pi / 2, N)
+    s1z           = rng.uniform(-0.99, 0.99, N)
+    s2z           = rng.uniform(-0.99, 0.99, N)
+    t_geocenter   = rng.uniform(-0.05, 0.05, N)
+
+    # sky_sp needs iota as conditioned_on
+    # time_sp needs ra, dec as conditioned_on
+
+    # Build DataFrame with all needed columns
+    df = pd.DataFrame({
+        'iota':        iota,
+        'ra':          ra,
+        'dec':         dec,
+        's1z':         s1z,
+        's2z':         s2z,
+        't_geocenter': t_geocenter,
+    })
+
+    # --- Cogwheel per-sample baseline (run each subprior individually) ---
+    inc_ref  = inc_sp.inverse_transform(iota)
+    sky_ref  = sky_sp.inverse_transform(ra, dec, iota)
+    spin_ref = spin_sp.inverse_transform(s1z, s2z)
+    time_ref = [time_sp.inverse_transform(
+                    float(t_geocenter[i]), float(ra[i]), float(dec[i]))
+                for i in range(N)]
+    time_ref_arr = {k: np.array([r[k] for r in time_ref]) for k in time_ref[0]}
+
+    # --- Batch call (adds columns in-place) ---
+    class MockPrior:
+        subpriors = [inc_sp, sky_sp, spin_sp, time_sp]
+
+    _pr_inverse_transform_batch(MockPrior(), df)
+
+    # --- Assert correctness ---
+    for key, ref_val in inc_ref.items():
+        assert np.allclose(df[key].values, ref_val, rtol=1e-12), \
+            f"inc_sp mismatch on {key}: max_err={np.abs(df[key].values - ref_val).max():.2e}"
+
+    for key, ref_val in sky_ref.items():
+        assert np.allclose(df[key].values, ref_val, rtol=1e-12), \
+            f"sky_sp mismatch on {key}: max_err={np.abs(df[key].values - ref_val).max():.2e}"
+
+    for key, ref_val in spin_ref.items():
+        assert np.allclose(df[key].values, ref_val, rtol=1e-12), \
+            f"spin_sp mismatch on {key}: max_err={np.abs(df[key].values - ref_val).max():.2e}"
+
+    for key, ref_val in time_ref_arr.items():
+        assert np.allclose(df[key].values, ref_val, rtol=1e-12), \
+            f"time_sp fallback mismatch on {key}: max_err={np.abs(df[key].values - ref_val).max():.2e}"
+
+    print(f"PASS test_prior_inverse_transform_batch  "
+          f"(N={N}, batch-safe: inc+sky+spin, fallback: time)")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     import torch
     if not torch.cuda.is_available():
@@ -243,4 +617,8 @@ if __name__ == "__main__":
     test_get_hh_by_mode()
     test_get_dh_hh_phi_grid()
     test_single_detector_near_singular_hh()
+    test_sample_distance_batched()
+    test_precessing_spin_inverse_transform_batch()
+    test_extrinsic_lal_subprior_batch()
+    test_prior_inverse_transform_batch()
     print("\nAll tests passed.")

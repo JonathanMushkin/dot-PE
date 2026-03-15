@@ -89,7 +89,7 @@ def _generate_event(out_dir: Path):
     event_data.inject_signal(injection_par_dic, "IMRPhenomXODE")
 
     event_npz = out_dir / f"{eventname}.npz"
-    event_data.to_npz(event_npz)
+    event_data.to_npz(filename=event_npz, overwrite=True)
     print(f"Event saved to {event_npz}")
     return event_data, event_npz
 
@@ -126,7 +126,7 @@ def main():
     # ---- Event ----
     if args.event_path is not None:
         from cogwheel import data
-        event_data = data.EventData.from_npz(args.event_path)
+        event_data = data.EventData.from_npz(filename=args.event_path)
         print(f"Loaded event from {args.event_path}")
     else:
         event_data, _ = _generate_event(out_dir)
