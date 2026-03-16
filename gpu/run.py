@@ -747,6 +747,31 @@ def _patch():
         _inf.run_for_single_detector
     )
 
+    # ---------------------------------------------------------------------------
+    # Track H: GPU acceleration of draw_extrinsic_samples
+    # ---------------------------------------------------------------------------
+    from gpu.extrinsic_gpu import (
+        _fast_post_init,
+        _get_dh_hh_qo_gpu,
+        _get_many_dh_hh_gpu,
+    )
+    from dot_pe.marginalization import (
+        MarginalizationInfoSamplerFree,
+        CoherentScoreSamplerFree,
+        MarginalizationExtrinsicSamplerFreeLikelihood,
+    )
+
+    # H1: Replace scipy sparse scatter-add with np.bincount (always beneficial,
+    # zero data movement, pure numpy, eliminates ~10s sparse construction overhead).
+    MarginalizationInfoSamplerFree.__post_init__ = _fast_post_init
+
+    # H2: GPU matmuls in _get_dh_hh_qo (phasor phase integration).
+    # Overrides the inherited CoherentScoreHM._get_dh_hh_qo on this subclass.
+    CoherentScoreSamplerFree._get_dh_hh_qo = _get_dh_hh_qo_gpu
+
+    # H3: GPU batched matmuls in _get_many_dh_hh (dh/hh inner products).
+    MarginalizationExtrinsicSamplerFreeLikelihood._get_many_dh_hh = _get_many_dh_hh_gpu
+
 
 def run(**kwargs):
     """GPU-accelerated inference.run()."""

@@ -56,6 +56,10 @@ def parse_args():
                    help="Top-N cumulative-time functions to print (default: 20).")
     p.add_argument("--n-pool", type=int, default=4,
                    help="Worker processes for bank generation (default: 4).")
+    p.add_argument("--profile-extrinsic", action="store_true",
+                   help="Wrap draw_extrinsic_samples in cProfile and print top-30 "
+                        "cumtime functions (Track H: identify hotspots before "
+                        "investing in GPU matmul patches).")
     return p.parse_args()
 
 
@@ -88,7 +92,7 @@ def _generate_event(out_dir: Path):
         s2x_n=0.0, s2y_n=0.0,
         l1=0.0, l2=0.0,
         tgps=0.0, f_ref=50.0,
-        d_luminosity=500.0,
+        d_luminosity=1366.0,  # gives lnlike ~64, SNR ~11 (realistic range 50-80)
         t_geocenter=0.0,
     )
     event_data.inject_signal(injection_par_dic, "IMRPhenomXODE")
@@ -181,13 +185,38 @@ def main():
             print("WARNING: --preload-bank has no effect without --gpu.")
         print("Using CPU run.")
 
+    # H0: Focused profiler for draw_extrinsic_samples internals.
+    # Monkey-patch before calling run_and_profile so all paths (GPU and CPU)
+    # are covered.  The cProfile.Profile accumulates data across all calls.
+    _ext_prof = None
+    if args.profile_extrinsic:
+        import cProfile as _cprof
+        import dot_pe.inference as _inf_mod
+        _ext_prof = _cprof.Profile()
+        _orig_draw = _inf_mod.draw_extrinsic_samples
+
+        def _profiled_draw(*a, **kw):
+            _ext_prof.enable()
+            result = _orig_draw(*a, **kw)
+            _ext_prof.disable()
+            return result
+
+        _inf_mod.draw_extrinsic_samples = _profiled_draw
+        print("Profiling draw_extrinsic_samples internals (--profile-extrinsic).")
+
     print("Starting profiled run...")
-    rundir = runner.run_and_profile(**run_kwargs)
+    if args.profile_extrinsic:
+        # run_and_profile installs its own cProfile session, which conflicts with
+        # the _ext_prof instance above (cProfile raises ValueError on nesting).
+        # Use runner.run() instead — the focused extrinsic profile is the goal.
+        rundir = runner.run(**run_kwargs)
+    else:
+        rundir = runner.run_and_profile(**run_kwargs)
     print(f"\nResults written to: {rundir}")
 
-    # ---- Print top-N cumulative functions ----
+    # ---- Print top-N cumulative functions (whole-run profile) ----
     profile_txt = Path(rundir) / "profile_output.txt"
-    if profile_txt.exists():
+    if profile_txt.exists() and not args.profile_extrinsic:
         print(f"\n{'='*60}")
         print(f"Top-{args.top_n} cumulative-time functions")
         print(f"{'='*60}")
@@ -201,6 +230,17 @@ def main():
         else:
             # Fallback: print the txt
             print(profile_txt.read_text()[:4000])
+
+    # ---- H0: print draw_extrinsic_samples focused profile ----
+    if _ext_prof is not None:
+        import io, pstats
+        print(f"\n{'='*60}")
+        print("draw_extrinsic_samples internals — top-30 by cumtime")
+        print(f"{'='*60}")
+        stream = io.StringIO()
+        ps = pstats.Stats(_ext_prof, stream=stream)
+        ps.strip_dirs().sort_stats(pstats.SortKey.CUMULATIVE).print_stats(30)
+        print(stream.getvalue())
 
 
 if __name__ == "__main__":

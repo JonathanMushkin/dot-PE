@@ -663,6 +663,156 @@ def test_preloaded_bank_lnlikes():
 
 
 # ---------------------------------------------------------------------------
+# Test: _fast_post_init — np.bincount matches scipy sparse scatter-add
+# (Track H1 correctness check)
+# ---------------------------------------------------------------------------
+
+def test_fast_post_init():
+    """
+    Verify _fast_post_init gives identical results to the original
+    MarginalizationInfoSamplerFree.__post_init__ for all derived attributes.
+
+    Tests the np.bincount scatter-add replacement on synthetic data with
+    duplicate q_inds (the realistic case that triggers sparse overhead).
+    """
+    from dot_pe.marginalization import MarginalizationInfoSamplerFree
+    from gpu.extrinsic_gpu import _fast_post_init
+
+    rng = np.random.default_rng(42)
+    n_qmc = 100
+    n_important = 300  # >n_qmc → many duplicate q_inds
+    n_det = 3
+    n_t = 64
+
+    q_inds = rng.integers(0, n_qmc, n_important).astype(int)
+    ln_num = rng.standard_normal(n_important) - 5.0
+    ln_num_prior = rng.standard_normal(n_important) - 5.0
+    tdet_inds = rng.integers(0, n_t, (n_det, n_important))
+    t_arrival_prob = rng.uniform(1e-6, 1.0, (n_det, n_t))
+    t_arrival_prob /= t_arrival_prob.sum(axis=1, keepdims=True)
+
+    class _Mock:
+        pass
+
+    def _make_mock():
+        obj = _Mock()
+        obj.q_inds = q_inds.copy()
+        obj.ln_numerators = ln_num.copy()
+        obj.ln_numerators_prior = ln_num_prior.copy()
+        obj.tdet_inds = tdet_inds.copy()
+        obj.proposals_n_qmc = [n_qmc]
+        obj.proposals = [t_arrival_prob.copy()]
+        obj.proposals_weights = [1.0]
+        return obj
+
+    obj_orig = _make_mock()
+    obj_fast = _make_mock()
+
+    MarginalizationInfoSamplerFree.__post_init__(obj_orig)
+    _fast_post_init(obj_fast)
+
+    assert np.allclose(obj_orig.weights, obj_fast.weights, atol=1e-12), \
+        f"weights mismatch: max diff {np.abs(obj_orig.weights - obj_fast.weights).max():.3e}"
+    assert np.allclose(np.sort(obj_orig.weights_q), np.sort(obj_fast.weights_q), atol=1e-12), \
+        f"weights_q mismatch (sorted): max diff " \
+        f"{np.abs(np.sort(obj_orig.weights_q) - np.sort(obj_fast.weights_q)).max():.3e}"
+    assert np.allclose(obj_orig.prior_weights, obj_fast.prior_weights, atol=1e-12), \
+        f"prior_weights mismatch: max diff {np.abs(obj_orig.prior_weights - obj_fast.prior_weights).max():.3e}"
+    assert np.allclose(
+        np.sort(obj_orig.prior_weights_q), np.sort(obj_fast.prior_weights_q), atol=1e-12
+    ), f"prior_weights_q mismatch (sorted)"
+    assert np.isclose(obj_orig.n_effective, obj_fast.n_effective, rtol=1e-10), \
+        f"n_effective mismatch: {obj_orig.n_effective} vs {obj_fast.n_effective}"
+    assert np.isclose(obj_orig.n_effective_prior, obj_fast.n_effective_prior, rtol=1e-10), \
+        f"n_effective_prior mismatch: {obj_orig.n_effective_prior} vs {obj_fast.n_effective_prior}"
+    assert np.isclose(obj_orig.lnl_marginalized, obj_fast.lnl_marginalized, rtol=1e-10), \
+        f"lnl_marginalized mismatch: {obj_orig.lnl_marginalized} vs {obj_fast.lnl_marginalized}"
+
+    print(f"PASS test_fast_post_init  (n_qmc={n_qmc}, n_important={n_important})")
+
+
+# ---------------------------------------------------------------------------
+# Test: _get_dh_hh_qo_gpu — GPU matmuls match CPU real_matmul
+# (Track H2 correctness check)
+# ---------------------------------------------------------------------------
+
+def test_get_dh_hh_qo_gpu():
+    """
+    Verify _get_dh_hh_qo_gpu matches the CPU reference for all matmul outputs.
+
+    Uses a mock 'self' that returns synthetic fplus_fcross and dh_dmpq from
+    pre-computed arrays so the test covers only the matmul correctness, not
+    the unchanged spline interpolation.
+
+    CPU reference follows the exact logic of CoherentScoreHM._get_dh_hh_qo.
+    """
+    import cogwheel.utils as cg_utils
+    from gpu.extrinsic_gpu import _get_dh_hh_qo_gpu
+
+    rng = make_rng(20)
+    n_q, n_m, n_mm, n_phi, n_d, n_p = 256, 4, 10, 100, 3, 2
+
+    dh_dmpq = rand_c64(rng, n_d, n_m, n_p, n_q)       # (n_d, n_m, n_p, n_q)
+    hh_mppd = rand_c64(rng, n_mm, n_p, n_p, n_d)      # (n_mm, n_p, n_p, n_d)
+    fplus_fcross = rand_f32(rng, n_q, n_d, n_p)        # (n_q, n_d, n_p) real
+    dh_phasor = rand_c64(rng, n_m, n_phi)              # (n_m, n_phi)
+    hh_phasor = rand_c64(rng, n_mm, n_phi)             # (n_mm, n_phi)
+
+    # ---- CPU reference (exact logic from CoherentScoreHM._get_dh_hh_qo) ----
+    dh_qm_cpu = (
+        np.moveaxis(dh_dmpq, (3, 1), (0, 1)).reshape(n_q, n_m, n_d * n_p)
+        @ fplus_fcross.reshape(n_q, n_d * n_p, 1)
+    ).reshape(n_q, n_m)
+    f_f = np.einsum('qdp,qdP->qpPd', fplus_fcross, fplus_fcross)
+    hh_qm_cpu = f_f.reshape(n_q, -1) @ hh_mppd.reshape(n_mm, -1).T
+    dh_qo_cpu = cg_utils.real_matmul(dh_qm_cpu, dh_phasor)
+    hh_qo_cpu = cg_utils.real_matmul(hh_qm_cpu, hh_phasor)
+
+    # ---- Mock self (minimal attributes; _interp_locally returns dh_dmpq slices) ----
+    det_counter = [0]
+
+    class _MockSkyDict:
+        detector_names = ['H', 'L', 'V']
+        delays = np.zeros((n_d - 1, n_q), dtype=np.float64)
+
+    class _MockSelf:
+        sky_dict = _MockSkyDict()
+        _dh_phasor = dh_phasor
+        _hh_phasor = hh_phasor
+
+        def _get_fplus_fcross(self, sky_inds, q_inds):
+            return fplus_fcross
+
+        def _interp_locally(self, times, dh_slice, t_det_slice):
+            idx = det_counter[0]
+            det_counter[0] += 1
+            return dh_dmpq[idx]  # (n_m, n_p, n_q)
+
+    mock = _MockSelf()
+    dh_qo_gpu, hh_qo_gpu = _get_dh_hh_qo_gpu(
+        mock,
+        sky_inds=np.arange(n_q, dtype=int),
+        q_inds=np.arange(n_q, dtype=int),
+        t_first_det=np.zeros(n_q),
+        times=np.zeros(10),
+        dh_mptd=np.zeros((n_m, n_p, 10, n_d), dtype=np.complex64),  # unused (mocked)
+        hh_mppd=hh_mppd,
+    )
+
+    assert dh_qo_gpu.shape == dh_qo_cpu.shape, \
+        f"dh_qo shape mismatch: {dh_qo_gpu.shape} vs {dh_qo_cpu.shape}"
+    assert hh_qo_gpu.shape == hh_qo_cpu.shape, \
+        f"hh_qo shape mismatch: {hh_qo_gpu.shape} vs {hh_qo_cpu.shape}"
+    assert np.allclose(dh_qo_cpu, dh_qo_gpu, atol=ATOL, rtol=RTOL), \
+        f"dh_qo mismatch: max diff {np.abs(dh_qo_cpu - dh_qo_gpu).max():.3e}"
+    assert np.allclose(hh_qo_cpu, hh_qo_gpu, atol=ATOL, rtol=RTOL), \
+        f"hh_qo mismatch: max diff {np.abs(hh_qo_cpu - hh_qo_gpu).max():.3e}"
+
+    print(f"PASS test_get_dh_hh_qo_gpu  "
+          f"(n_q={n_q}, n_m={n_m}, n_mm={n_mm}, n_phi={n_phi}, n_d={n_d})")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -682,4 +832,6 @@ if __name__ == "__main__":
     test_extrinsic_lal_subprior_batch()
     test_prior_inverse_transform_batch()
     test_preloaded_bank_lnlikes()
-    print("\nAll 10 tests passed.")
+    test_fast_post_init()
+    test_get_dh_hh_qo_gpu()
+    print("\nAll 12 tests passed.")
