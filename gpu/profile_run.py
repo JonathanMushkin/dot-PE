@@ -51,6 +51,8 @@ def parse_args():
                    help="Use GPU-accelerated run (gpu.run instead of dot_pe.inference).")
     p.add_argument("--top-n", type=int, default=20,
                    help="Top-N cumulative-time functions to print (default: 20).")
+    p.add_argument("--n-pool", type=int, default=4,
+                   help="Worker processes for bank generation (default: 4).")
     return p.parse_args()
 
 
@@ -94,26 +96,37 @@ def _generate_event(out_dir: Path):
     return event_data, event_npz
 
 
-def _generate_bank(out_dir: Path, bank_size: int):
-    """Generate a template bank with waveforms."""
-    from cogwheel import gw_utils
+def _generate_bank(out_dir: Path, bank_size: int, n_pool: int = 4):
+    """Generate a template bank with waveforms.
+
+    Uses threadpoolctl to limit each forked worker to 1 BLAS thread so that
+    n_pool workers on an N-core machine produce load ≈ n_pool, not N × n_pool.
+    """
     from dot_pe import sample_banks, config
 
-    bank_dir = out_dir / "test_bank"
+    try:
+        from threadpoolctl import threadpool_limits
+        _ctx = threadpool_limits(limits=1)
+    except ImportError:
+        import contextlib
+        _ctx = contextlib.nullcontext()
+
+    bank_dir = out_dir / f"test_bank_{bank_size}"
     bank_dir.mkdir(parents=True, exist_ok=True)
-    sample_banks.main(
-        bank_size=bank_size,
-        q_min=1 / 4,
-        m_min=10,
-        m_max=40,
-        inc_faceon_factor=1.0,
-        f_ref=50.0,
-        fbin=config.DEFAULT_FBIN,
-        n_pool=4,
-        blocksize=min(bank_size, 1024),
-        approximant="IMRPhenomXODE",
-        bank_dir=bank_dir,
-    )
+    with _ctx:
+        sample_banks.main(
+            bank_size=bank_size,
+            q_min=1 / 4,
+            m_min=10,
+            m_max=40,
+            inc_faceon_factor=1.0,
+            f_ref=50.0,
+            fbin=config.DEFAULT_FBIN,
+            n_pool=n_pool,
+            blocksize=min(bank_size, 1024),
+            approximant="IMRPhenomXODE",
+            bank_dir=bank_dir,
+        )
     print(f"Bank saved to {bank_dir}")
     return bank_dir
 
@@ -136,7 +149,7 @@ def main():
         bank_folder = args.bank_path[0] if len(args.bank_path) == 1 else args.bank_path
         print(f"Using existing bank: {bank_folder}")
     else:
-        bank_folder = _generate_bank(out_dir, args.bank_size)
+        bank_folder = _generate_bank(out_dir, args.bank_size, args.n_pool)
 
     # ---- Run ----
     run_kwargs = dict(
