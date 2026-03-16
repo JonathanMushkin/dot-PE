@@ -169,7 +169,7 @@ def main():
         blocksize=args.blocksize,
         single_detector_blocksize=args.single_detector_blocksize,
         seed=42,
-        draw_subset=False,
+        draw_subset=True,
     )
 
     if args.gpu:
