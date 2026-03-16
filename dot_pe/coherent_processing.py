@@ -888,6 +888,7 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         waveform_dir=None,
         min_marg_lnlike_for_sampling=0.0,
         single_marg_info_min_n_effective_prior=0.0,
+        max_filter_valid=None,
     ):
         """
         Process a batch of indices:
@@ -897,15 +898,20 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
 
         Returns a list of tuples (marg_info_object, index).
         """
-        # Filter indices using the likelihood threshold
-        valid_ids = [
-            int(i)
-            for i in batch_idx
-            if self.likelihood.lnlike(
-                bank.iloc[i].to_dict() | config.DEFAULT_PARAMS_DICT
-            )
-            > min_marg_lnlike_for_sampling
-        ]
+        n_to_process = max_filter_valid if max_filter_valid is not None else len(batch_idx)
+        n_to_process = min(n_to_process, len(batch_idx))
+
+        if min_marg_lnlike_for_sampling <= 0:
+            valid_ids = [int(i) for i in batch_idx[:n_to_process]]
+        else:
+            valid_ids = []
+            for i in batch_idx:
+                if self.likelihood.lnlike(
+                    bank.iloc[i].to_dict() | config.DEFAULT_PARAMS_DICT
+                ) > min_marg_lnlike_for_sampling:
+                    valid_ids.append(int(i))
+                    if len(valid_ids) >= n_to_process:
+                        break
         if not valid_ids:
             return [], []
 
@@ -948,6 +954,7 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         waveform_dirs,
         min_marg_lnlike_for_sampling,
         single_marg_info_min_n_effective_prior,
+        max_filter_valid=None,
     ):
         """
         Process a batch of (bank_idx, sample_idx) pairs for multibank extrinsic sampling.
@@ -978,23 +985,37 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         used_sample_idx_batch : list[int]
             List of sample indices for accepted objects.
         """
-        # Filter in batch order (preserves shuffled order)
-        valid_mask = np.array(
-            [
-                self.likelihood.lnlike(
+        # Determine how many candidates to pass to the QMC step
+        n_to_process = max_filter_valid if max_filter_valid is not None else len(batch_sample_idx)
+        n_to_process = min(n_to_process, len(batch_sample_idx))
+
+        if min_marg_lnlike_for_sampling <= 0:
+            # Skip expensive lnlike filter: with threshold <= 0, virtually all
+            # candidates pass. Take the first n_to_process directly (batch is
+            # already shuffled, so this is unbiased).
+            valid_sample_idx = np.asarray(batch_sample_idx[:n_to_process], dtype=int)
+            valid_bank_idx = np.asarray(batch_bank_idx[:n_to_process], dtype=int)
+        else:
+            # Filter with early exit once we have enough valid candidates
+            valid_sample_indices = []
+            valid_bank_indices = []
+            for sample_idx, bank_idx in zip(batch_sample_idx, batch_bank_idx):
+                lnl = self.likelihood.lnlike(
                     banks[int(bank_idx)].iloc[int(sample_idx)].to_dict()
                     | config.DEFAULT_PARAMS_DICT
                 )
-                > min_marg_lnlike_for_sampling
-                for sample_idx, bank_idx in zip(batch_sample_idx, batch_bank_idx)
-            ],
-            dtype=bool,
-        )
-        if not np.any(valid_mask):
-            return [], [], []
+                if lnl > min_marg_lnlike_for_sampling:
+                    valid_sample_indices.append(int(sample_idx))
+                    valid_bank_indices.append(int(bank_idx))
+                    if len(valid_sample_indices) >= n_to_process:
+                        break
+            if not valid_sample_indices:
+                return [], [], []
+            valid_sample_idx = np.array(valid_sample_indices, dtype=int)
+            valid_bank_idx = np.array(valid_bank_indices, dtype=int)
 
-        valid_sample_idx = np.asarray(batch_sample_idx, dtype=int)[valid_mask]
-        valid_bank_idx = np.asarray(batch_bank_idx, dtype=int)[valid_mask]
+        if len(valid_sample_idx) == 0:
+            return [], [], []
 
         # Load waveforms per bank, scatter back preserving valid order
         # Cannot initialize arrays upfront: shape depends on waveform data (n_modes, n_pol, n_fbin)
@@ -1111,12 +1132,15 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
         with tqdm(total=n_combine, desc="Marginalization objects", unit="obj") as pbar:
             # Collect enough MarginalizationInfo objects
             for batch_idx, batch in enumerate(batches):
+                n_remaining = n_combine - len(marg_info_i)
+                max_filter_valid = max(2 * n_remaining, 32)
                 marg_info_batch, used_indices_batch = self.get_marg_info_batch(
                     batch,
                     bank,
                     waveform_dir,
                     min_marg_lnlike_for_sampling,
                     single_marg_info_min_n_effective_prior,
+                    max_filter_valid=max_filter_valid,
                 )
                 for mi, idx in zip(marg_info_batch, used_indices_batch):
                     marg_info_i.append(mi)
@@ -1247,6 +1271,8 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
                     batch_samples = sample_idx_arr[start:end]
                     batch_banks = bank_idx_arr[start:end]
 
+                    n_remaining = n_combine - len(marg_info_i)
+                    max_filter_valid = max(2 * n_remaining, 32)
                     mi_batch, used_b_batch, used_s_batch = (
                         self.get_marg_info_batch_multibank(
                             batch_samples,
@@ -1255,6 +1281,7 @@ class CoherentExtrinsicSamplesGenerator(JSONMixin, Loggable):
                             waveform_dirs,
                             min_marg_lnlike_for_sampling,
                             single_marg_info_min_n_effective_prior,
+                            max_filter_valid=max_filter_valid,
                         )
                     )
 

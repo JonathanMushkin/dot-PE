@@ -797,6 +797,7 @@ def prepare_run_objects(
 
     if not Path(rundir).exists():
         mkdirs(rundir)
+    rundir = Path(rundir)
 
     # Convert bank_folder to JSON-serializable format preserving structure
     if isinstance(bank_folder, (list, tuple)):
@@ -818,7 +819,7 @@ def prepare_run_objects(
                 "n_t": int(n_t),
                 "blocksize": int(blocksize),
                 "single_detector_blocksize": int(single_detector_blocksize),
-                "i_int_start": int(i_int_start),
+                "i_int_start": int(i_int_start) if i_int_start is not None else 0,
                 "seed": int(seed) if seed is not None else None,
                 "load_inds": bool(load_inds),
                 "inds_path": str(inds_path) if inds_path is not None else None,
@@ -888,7 +889,7 @@ def prepare_run_objects(
     )
     par_dic_0 = coherent_posterior.likelihood.par_dic_0.copy()
 
-    coherent_posterior.to_json(dirname=rundir)
+    coherent_posterior.to_json(dirname=rundir, overwrite=True)
 
     pr = coherent_posterior.prior
 
@@ -1134,6 +1135,7 @@ def select_intrinsic_samples_across_banks_by_incoherent_likelihood(
             selected_lnlikes_di_by_bank[bank_id] = selected_lnlikes_di
 
         bank_rundir = banks_dir / bank_id
+        bank_rundir.mkdir(parents=True, exist_ok=True)
         np.savez(
             bank_rundir / "intrinsic_samples.npz",
             inds=selected_inds,
@@ -1198,10 +1200,19 @@ def draw_extrinsic_samples(
                 response_dpe = np.load(response_dpe_path)
                 timeshift_dbe = np.load(timeshift_dbe_path)
             else:
-                processor = ExtrinsicSampleProcessor(event_data.detector_names)
-                response_dpe, timeshift_dbe = processor.get_components(
-                    extrinsic_samples_df, fbin, event_data.tcoarse
-                )
+                # Fall back to the source run directory so that response_dpe
+                # and timeshift_dbe are consistent with the extrinsic samples.
+                src_dir = Path(extrinsic_samples).parent
+                src_response = src_dir / "response_dpe.npy"
+                src_timeshift = src_dir / "timeshift_dbe.npy"
+                if src_response.exists() and src_timeshift.exists():
+                    response_dpe = np.load(src_response)
+                    timeshift_dbe = np.load(src_timeshift)
+                else:
+                    processor = ExtrinsicSampleProcessor(event_data.detector_names)
+                    response_dpe, timeshift_dbe = processor.get_components(
+                        extrinsic_samples_df, fbin, event_data.tcoarse
+                    )
                 np.save(arr=response_dpe, file=response_dpe_path)
                 np.save(arr=timeshift_dbe, file=timeshift_dbe_path)
             return extrinsic_samples_df, response_dpe, timeshift_dbe

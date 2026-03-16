@@ -83,3 +83,6 @@ Thumbs.db
 # Notebook-generated artifacts
 .ipynb_checkpoints/
 **/artifacts/
+
+# Claude Code project config
+.claude/
