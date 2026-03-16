@@ -499,3 +499,28 @@ rows before standardizing → 0.1–2s).
 
 ### Centralized report
 `gpu/BENCHMARK.md` created — auto-updated after every benchmark run.
+
+---
+
+## 2026-03-17 — Tutorials and posterior comparison
+
+### notebooks/06_run_inference_gpu (Tutorial 6)
+
+End-to-end GPU inference tutorial. Bank: 2^16 (65k) templates, same injection and
+params as the other tutorials (chirp_mass=20, HLV, O3 ASDs, d=2000 Mpc).
+
+**Structure:**
+1. GPU run via `gpu.run.run()` — drop-in for `inference.run()`
+2. CPU baseline — identical call via `inference.run()`; reuses existing run if present
+3. Timing comparison table with speedup column
+4. **Corner plot** — CPU vs GPU posteriors overlaid, injection truth in red
+5. **1-D marginal histograms** — 10 params, injection truth as dotted line
+6. **KS + JS divergence table** and heatmap (GPU vs CPU)
+
+The only change vs a standard CPU notebook is `import gpu.run as gpu_run` and
+replacing `inference.run(...)` with `gpu_run.run(...)`.
+
+### Posterior comparison results (nb04_event, 128k bank)
+GPU posteriors are consistent with CPU: KS < 0.07 on mass and spin parameters.
+`costheta_jn` shows slightly higher KS (~0.13) — expected sampling noise at ~700 samples.
+No systematic bias detected between CPU and GPU inference paths.
