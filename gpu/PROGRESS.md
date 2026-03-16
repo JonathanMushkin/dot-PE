@@ -299,3 +299,47 @@ profile_event (25 intrinsic samples) — see 2026-03-14 section.
 - **GPU determinism on high-SNR event (mchirp≈75): CONFIRMED**
 - **CPU vs GPU agreement (profile_event, 32k bank): CONFIRMED at <0.7%**
 - **check_real_event.py**: written at `gpu/check_real_event.py`
+
+---
+
+## 2026-03-16 — 1M-bank scaling benchmark (2^20 templates)
+
+### Setup
+- **Bank**: `test_bank_1048576` (1,048,576 templates), q∈[0.25,1], mchirp∈[10,40]
+- **Event**: `profile_event.npz` re-generated at **d=1366 Mpc** (chirp_mass=20, HLV O3 ASDs,
+  seed=20250314) → lnlike≈63.8, SNR≈11.3 (in the target 50–70 range)
+- **Params**: single_detector_blocksize=2048 → **512 incoherent batches** (vs 16 at 32k)
+
+### Incoherent step scaling benchmark (clean isolated runs)
+
+| Mode | Batches | Time | Rate | Speedup |
+|------|---------|------|------|---------|
+| GPU | 512 | **405.4s** | 0.79s/batch | — |
+| CPU | 512 | **1323.7s** | 2.58s/batch | — |
+| **GPU vs CPU** | — | — | — | **3.27×** |
+
+GPU speedup improves at 1M bank (3.27×) vs 32k bank (2.6×) because:
+- More batches → GPU warmup overhead amortized
+- GPU fully utilized across all 512 batches
+- CPU: 2.58s/batch stable (numpy-bound)
+
+### Incoherent selection result
+- **39,318 templates** passed the 20-lnl threshold (max incoherent lnlike = 76.74)
+- High survivor count at SNR~11 with 1M-template dense bank
+  (compared to 25 survivors at 32k bank with the same event)
+
+### draw_extrinsic bottleneck note
+With 39,318 incoherent survivors, `draw_extrinsic_samples` would need to process
+~2,457 QMC groups (n_combine=16) — estimated ~17h. This step is locked (cogwheel
+CPU QMC), so the full end-to-end run at 1M bank is dominated by it at SNR~11.
+At higher SNR (fewer survivors near threshold), or with a targeted bank subset,
+the full pipeline completes in comparable time to 32k.
+
+### Summary: Incoherent speedup scales with bank size
+
+| Bank size | GPU (select_intrinsic) | CPU | Speedup |
+|-----------|----------------------|-----|---------|
+| 32k (2^15) | 18.7s (16 batches) | 47.9s | **2.6×** |
+| 1M (2^20) | 405.4s (512 batches) | 1323.7s | **3.3×** |
+
+GPU advantage grows with bank size — consistent with better GPU utilization at scale.
