@@ -388,3 +388,114 @@ During incoherent loop, slice from GPU memory — zero disk I/O per batch.
 `draw_extrinsic_samples` has **fixed cost with large internal variance** — it does not depend on
 how many intrinsic samples survived the incoherent threshold. Cost is purely from the QMC
 convergence loop (variable number of chunks until n_effective threshold is met).
+
+---
+
+## 2026-03-16 — Phase F filter skip (merged from origin/main)
+
+### Problem
+`get_marg_info_batch_multibank` was calling `self.likelihood.lnlike()` on all 1024 batch
+candidates as a pre-filter. With `min_marg_lnlike_for_sampling=0.0` (default), virtually
+all candidates pass, spending ~330–562s on lnlike pre-evaluation with no net benefit.
+
+### Fix (in dot_pe/coherent_processing.py, from main branch)
+When `min_marg_lnlike_for_sampling <= 0`, skip the filter entirely and take the first
+`n_to_process` candidates directly from the batch. Merged into `dev/gpu` via
+`git merge origin/main`.
+
+### Impact
+- draw_extrinsic: **692s → 114s** (6× improvement) — dominant fix for this stage
+- H1/H2/H3 GPU patches contributed negligible additional gain relative to this
+
+---
+
+## 2026-03-16 — Track H: GPU acceleration of draw_extrinsic_samples
+
+### H1: np.bincount replacing scipy.sparse scatter-add
+`MarginalizationInfoSamplerFree.__post_init__` constructed two `sparse.coo_array` objects
+just to do scatter-add (hidden in matrix construction overhead). Replaced with `np.bincount`
+— zero dependencies, single C loop.
+
+Patch: `_fast_post_init` in `gpu/extrinsic_gpu.py`, registered as:
+```python
+MarginalizationInfoSamplerFree.__post_init__ = _fast_post_init
+```
+
+### H2: GPU phasor matmuls in `_get_dh_hh_qo`
+`CoherentScoreSamplerFree._get_dh_hh_qo` computes `real_matmul(dh_qm, phasor)` and
+`real_matmul(hh_qm, phasor)` for each QMC chunk (~2100 calls). Patched to run on GPU:
+- `_dh_phasor` / `_hh_phasor` uploaded to GPU once at init
+- Per-chunk: upload `dh_qm`, `hh_qm` → torch matmuls → download result
+
+Patch: `_get_dh_hh_qo_gpu` in `gpu/extrinsic_gpu.py`.
+
+### H3: GPU batched matmuls in `_get_many_dh_hh`
+`MarginalizationExtrinsicSamplerFreeLikelihood._get_many_dh_hh` had an 8-iteration loop of
+complex matmuls plus a 5-index einsum. Replaced with `torch.einsum`.
+
+**Critical bug**: `h_h_weights` values ~3e48 exceed float32 max (3.4e38). Fix: compute
+einsum in complex128 (preserving full precision), then cast result back to complex64.
+Same pattern as the Track A `hh_weights_dmppb` overflow fix.
+
+Patch: `_get_many_dh_hh_gpu` in `gpu/extrinsic_gpu.py`.
+
+### Profile internals (draw_extrinsic, GPU, nb03/nb04 consistent after Phase F)
+
+| Function | Time | Calls |
+|---|---|---|
+| `optimize_beta_temperature` | 75–82s | 1 |
+| `_get_marginalization_info_chunk` | ~40s | ~2100 |
+| `_fast_post_init` (H1) | ~24s | ~3600 |
+| `_kde_t_arrival_prob` | ~24s | ~1480 |
+| `_get_lnnumerators_important_flippsi` | ~20s | ~2100 |
+| `_fitpack2` spline | ~18s | ~2100 |
+| `argsort` | ~14s | ~6200 |
+| `_get_dh_hh_qo_gpu` (H2) | ~12s | ~2100 |
+
+`optimize_beta_temperature` (75–82s, 1 call, pure CPU QMC setup) is now the dominant
+bottleneck — not GPU-patchable in current form.
+
+### Tests
+- `test_fast_post_init` and `test_get_dh_hh_qo_gpu` added; **12 tests total, all PASS**
+
+---
+
+## 2026-03-16 — Production benchmarks (nb03/nb04/nb05)
+
+All runs use: `draw_subset=True, n_ext=512, n_phi=32, n_t=64, blocksize=2048`
+Event: `nb04_event` (chirp_mass=20, d=1366 Mpc, lnlike_max≈76, SNR≈11 — realistic O3)
+
+### nb04 — 2 × 64k banks (128k total)
+
+| Stage | CPU | GPU | Speedup |
+|---|---|---|---|
+| Incoherent bank_0 (65k) | 150 | 27 | 5.6× |
+| Incoherent bank_1 (65k) | 96 | 27 | 3.6× |
+| draw_extrinsic | 111 | 119 | ~1× |
+| Coherent (both banks) | 79 | 72 | ~1× |
+| Standardizing | 0.4 | 0.1 | — |
+| **Total** | **~436** | **~245** | **1.8×** |
+
+draw_extrinsic is GPU-neutral — `optimize_beta_temperature` (75s, CPU-only) dominates both paths.
+
+### nb05 — single 1M bank
+
+| Stage | CPU | GPU | Speedup |
+|---|---|---|---|
+| Incoherent (1M) | 1490 | 417 | 3.6× |
+| draw_extrinsic | 106 | 112 | ~1× |
+| Coherent (20 blocks) | 162 | 115 | 1.4× |
+| Standardizing | 2 | 0.3 | — |
+| **Total** | **~1760** | **~644** | **2.7×** |
+
+At 1M scale, incoherent dominates (~85% of CPU time) → end-to-end speedup jumps to 2.7×
+vs 1.8× at 128k. See `gpu/BENCHMARK.md` for full details.
+
+### draw_subset=True fix
+`gpu/profile_run.py` had `draw_subset=False` hardcoded — causing 7640s standardizing in
+CPU baselines (20M prob_samples rows all vectorized by `np.vectorize`). Fixed to
+`draw_subset=True` to match production notebook default (downsamples to ~n_effective/2
+rows before standardizing → 0.1–2s).
+
+### Centralized report
+`gpu/BENCHMARK.md` created — auto-updated after every benchmark run.
