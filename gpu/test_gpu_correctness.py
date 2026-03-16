@@ -603,6 +603,66 @@ def test_prior_inverse_transform_batch():
 
 
 # ---------------------------------------------------------------------------
+# Test: preloaded GPU tensor vs numpy (disk-loaded) gives identical lnlikes
+# (Track G correctness check)
+# ---------------------------------------------------------------------------
+
+def test_preloaded_bank_lnlikes():
+    """
+    Verify that passing a pre-loaded GPU tensor as h_impb to
+    get_response_over_distance_and_lnlike_gpu gives bit-identical results
+    to passing the equivalent numpy array (the normal disk-loaded path).
+
+    This tests the key correctness property of Track G:
+      - A "bank" GPU tensor is created with shape (N_total, m, p, b).
+      - A batch is sliced: h_bank_gpu[inds] → GPU tensor (batch, m, p, b).
+      - Both the numpy path and the GPU-tensor path must agree on lnlike_iot.
+    """
+    import torch
+    from gpu.single_detector_gpu import get_response_over_distance_and_lnlike_gpu
+    from gpu.gpu_constants import DEVICE
+
+    rng = make_rng(13)
+    N_total = 32
+    i, m, p, b, t = 8, 4, 2, 64, 16
+    n_phi = 10
+    m_arr = np.array([2, 1, 3, 4])
+    d = 1
+    M = len(list(itertools.combinations_with_replacement(range(m), 2)))
+
+    # Full "preloaded bank" as numpy, then uploaded to GPU
+    h_bank_np = rand_c64(rng, N_total, m, p, b)
+    inds = np.arange(i)  # first i entries
+    h_impb_np = h_bank_np[inds]  # (i, m, p, b) — disk-loaded path reference
+
+    dh_weights = rand_c64(rng, d, m, p, b)
+    hh_weights = rand_c64(rng, d, M, p, p, b)
+    timeshift  = rand_c64(rng, d, b, t)
+    asd_drift  = np.ones(d, dtype=np.float32)
+
+    # --- Path A: numpy array (normal disk-loaded path) ---
+    r_np, ll_np = get_response_over_distance_and_lnlike_gpu(
+        dh_weights, hh_weights, h_impb_np, timeshift, asd_drift, n_phi, m_arr
+    )
+
+    # --- Path B: preloaded GPU tensor, sliced for batch (Track G path) ---
+    h_bank_gpu  = torch.from_numpy(h_bank_np).to(DEVICE, dtype=torch.complex64)
+    h_batch_gpu = h_bank_gpu[inds].contiguous()
+
+    r_gpu, ll_gpu = get_response_over_distance_and_lnlike_gpu(
+        dh_weights, hh_weights, h_batch_gpu, timeshift, asd_drift, n_phi, m_arr
+    )
+
+    assert np.allclose(r_np, r_gpu, atol=ATOL, rtol=RTOL), (
+        f"r_iotp mismatch (preloaded vs numpy): max diff {np.abs(r_np - r_gpu).max():.3e}"
+    )
+    assert np.allclose(ll_np, ll_gpu, atol=ATOL, rtol=RTOL), (
+        f"lnlike_iot mismatch (preloaded vs numpy): max diff {np.abs(ll_np - ll_gpu).max():.3e}"
+    )
+    print("PASS test_preloaded_bank_lnlikes")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -621,4 +681,5 @@ if __name__ == "__main__":
     test_precessing_spin_inverse_transform_batch()
     test_extrinsic_lal_subprior_batch()
     test_prior_inverse_transform_batch()
-    print("\nAll tests passed.")
+    test_preloaded_bank_lnlikes()
+    print("\nAll 10 tests passed.")

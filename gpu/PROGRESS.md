@@ -343,3 +343,48 @@ the full pipeline completes in comparable time to 32k.
 | 1M (2^20) | 405.4s (512 batches) | 1323.7s | **3.3×** |
 
 GPU advantage grows with bank size — consistent with better GPU utilization at scale.
+
+---
+
+## 2026-03-16 — Track G: GPU bank preload + transfer cost analysis
+
+### Transfer cost analysis (1M bank, answered question)
+CPU↔GPU memory transfers are **not** the bottleneck (~1s out of 405s, <0.3%).
+Real bottleneck is **disk I/O + CPU waveform processing** per batch:
+- `load_amp_and_phase`: 424.9s cumtime (514 calls × 0.83s)
+- `get_relative_linfree_dt_from_waveform`: 327.7s cumtime (514 calls × 0.64s)
+- GPU kernel itself: 40.9s total across all 1536 calls = **0.08s/batch**
+GPU sits idle ~94% of the time waiting for CPU to load from disk.
+
+### Track G: GPU bank preload
+**Idea**: load and process all waveform files once at startup, store entire bank as GPU tensor.
+During incoherent loop, slice from GPU memory — zero disk I/O per batch.
+
+**Memory**: 1M × 4 modes × 2 pol × 378 freq bins × complex64 ≈ **24 GB** (fits in 44 GB L40S VRAM).
+
+**Implemented in `gpu/run.py`**:
+- `_preload_bank_to_gpu(bank_folder, sdp)`: loads all blocks via `ThreadPool(8)`, uploads to GPU
+- `_make_preloaded_run_for_single_detector(original_fn)`: wraps `run_for_single_detector`; on first
+  call triggers lazy preload, then slices `h_gpu[inds]` each batch (zero disk I/O)
+- `_PRELOAD_ENABLED` flag (default False); set via `gpu.run._PRELOAD_ENABLED = True`
+- `_patch()` now also registers the preload wrapper on `_inf.run_for_single_detector`
+
+**`gpu/single_detector_gpu.py`**: `_to_c64` updated to accept torch tensors (skips re-upload).
+
+**`gpu/profile_run.py`**: `--preload-bank` flag added.
+
+**Expected speedup (1M bank)**:
+| Phase | Before | After Track G |
+|-------|--------|---------------|
+| Preload (one-time) | 0s | ~60s |
+| Incoherent | 405s | ~41s |
+| Everything else | ~558s | ~558s |
+| **Total** | **~963s** | **~660s** |
+
+**Test added**: `test_preloaded_bank_lnlikes` — verifies GPU tensor slice gives bit-identical lnlikes vs numpy path.
+**Test suite**: 10 tests, all PASS.
+
+### Key insight: draw_extrinsic does not scale with survivor count
+`draw_extrinsic_samples` has **fixed cost with large internal variance** — it does not depend on
+how many intrinsic samples survived the incoherent threshold. Cost is purely from the QMC
+convergence loop (variable number of chunks until n_effective threshold is met).

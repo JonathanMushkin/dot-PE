@@ -31,8 +31,10 @@ from dot_pe.single_detector import SingleDetectorProcessor
 from gpu.gpu_constants import COMPLEX_DTYPE, DEVICE, REAL_DTYPE
 
 
-def _to_c64(arr: np.ndarray) -> torch.Tensor:
-    """Upload a numpy array to GPU as complex64."""
+def _to_c64(arr) -> torch.Tensor:
+    """Upload a numpy array (or move a tensor) to GPU as complex64."""
+    if isinstance(arr, torch.Tensor):
+        return arr.to(DEVICE, dtype=COMPLEX_DTYPE, non_blocking=True)
     return torch.from_numpy(np.asarray(arr, dtype=np.complex64)).to(
         DEVICE, dtype=COMPLEX_DTYPE, non_blocking=True
     )

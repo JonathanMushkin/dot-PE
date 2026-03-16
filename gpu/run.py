@@ -6,9 +6,176 @@ delegating, so all downstream code picks up the GPU implementations.
 """
 
 import sys
+import time
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+# ---------------------------------------------------------------------------
+# Track G: GPU bank preload — load all waveforms once, store in VRAM
+# ---------------------------------------------------------------------------
+
+# Module-level cache: str(bank_folder) → torch.Tensor (N, n_modes, n_pol, n_fbin) complex64
+_PRELOADED_BANK: dict = {}
+_PRELOAD_ENABLED: bool = False
+
+
+def _preload_bank_to_gpu(bank_folder, sdp) -> None:
+    """
+    Preload all waveforms from bank_folder into GPU VRAM as complex64.
+
+    Uses a ThreadPool to overlap disk reads across blocks (np.load releases
+    the GIL so reads for multiple blocks proceed concurrently).
+
+    Parameters
+    ----------
+    bank_folder : str or Path
+    sdp : SingleDetectorProcessor
+        Used to call load_amp_and_phase and get_relative_linfree_dt_from_waveform.
+        Concurrent calls per block are safe: each block loads disjoint indices,
+        so dict mutations in cached_dt_linfree_relative target different keys.
+    """
+    import json
+    import torch
+    from pathlib import Path
+    from multiprocessing.pool import ThreadPool
+    from gpu.gpu_constants import DEVICE
+
+    bank_folder = Path(bank_folder)
+    waveform_dir = bank_folder / "waveforms"
+
+    with open(bank_folder / "bank_config.json") as f:
+        bank_config = json.load(f)
+    block_size = bank_config["blocksize"]
+
+    amp_files = sorted(
+        waveform_dir.glob("amplitudes_block_*.npy"),
+        key=lambda f: int(f.stem.removeprefix("amplitudes_block").split("_")[1]),
+    )
+    n_blocks = len(amp_files)
+
+    # Determine actual total size (last block may be partial)
+    last_arr = np.load(amp_files[-1], mmap_mode="r")
+    last_block_size = len(last_arr)
+    del last_arr
+    n_total = (n_blocks - 1) * block_size + last_block_size
+
+    print(
+        f"[preload] {n_blocks} blocks × up to {block_size} = {n_total} waveforms from {bank_folder.name}",
+        flush=True,
+    )
+    t0 = time.perf_counter()
+
+    def load_block(block_idx: int) -> np.ndarray:
+        start = block_idx * block_size
+        end = n_total if block_idx == n_blocks - 1 else start + block_size
+        inds = np.arange(start, end)
+        amp, phase = sdp.intrinsic_sample_processor.load_amp_and_phase(waveform_dir, inds)
+        return (amp * np.exp(1j * phase)).astype(np.complex64)
+
+    n_workers = min(8, n_blocks)
+    with ThreadPool(n_workers) as pool:
+        blocks = pool.map(load_block, range(n_blocks))
+
+    t_cpu = time.perf_counter() - t0
+    h_all = np.concatenate(blocks, axis=0)  # (n_total, n_modes, n_pol, n_fbin)
+
+    h_gpu = torch.from_numpy(h_all).to(DEVICE, dtype=torch.complex64)
+    torch.cuda.synchronize()
+
+    t_total = time.perf_counter() - t0
+    gb = h_gpu.numel() * h_gpu.element_size() / 1e9
+    print(
+        f"[preload] Done in {t_total:.1f}s (CPU {t_cpu:.1f}s, upload {t_total - t_cpu:.1f}s). "
+        f"Tensor {tuple(h_gpu.shape)}, {gb:.2f} GB VRAM",
+        flush=True,
+    )
+    _PRELOADED_BANK[str(bank_folder)] = h_gpu
+
+
+def _make_preloaded_run_for_single_detector(original_fn):
+    """
+    Wrap dot_pe.inference.run_for_single_detector to use the preloaded GPU
+    bank (Track G) when _PRELOAD_ENABLED is True.
+
+    Behaviour when h_impb is None (first detector per batch):
+      - Trigger lazy preload of the bank on first call.
+      - Slice h_gpu[inds] — zero disk I/O.
+      - Pass the GPU tensor directly to get_response_over_distance_and_lnlike_gpu
+        (which now accepts torch tensors via the updated _to_c64).
+      - Return (lnlike_i, h_batch_gpu) matching the original return convention.
+
+    When h_impb is not None (subsequent detectors) or preload is disabled,
+    the original function is called unchanged.
+    """
+
+    def _wrapped(
+        event_data,
+        det_name,
+        par_dic_0,
+        bank_folder,
+        inds,
+        fbin,
+        h_impb=None,
+        approximant="IMRPhenomXODE",
+        n_phi=100,
+        single_detector_blocksize=512,
+        m_arr=None,
+        n_t=128,
+        size_limit=10**7,
+        sdp=None,
+    ):
+        if m_arr is None:
+            m_arr = np.array([2, 1, 3, 4])
+
+        # Only intercept the "first detector" call (h_impb is None) with preload on.
+        if not _PRELOAD_ENABLED or h_impb is not None:
+            return original_fn(
+                event_data, det_name, par_dic_0, bank_folder, inds, fbin,
+                h_impb, approximant, n_phi, single_detector_blocksize,
+                m_arr, n_t, size_limit=size_limit, sdp=sdp,
+            )
+
+        # Resolve bank key (handles multi-bank list)
+        if isinstance(bank_folder, (list, tuple)):
+            bank_key = str(bank_folder[0])
+            single_bank = bank_folder[0]
+        else:
+            bank_key = str(bank_folder)
+            single_bank = bank_folder
+
+        # Lazy preload: triggers on the very first batch call.
+        if bank_key not in _PRELOADED_BANK:
+            # Need an sdp to call load_amp_and_phase.  Use the one passed in if
+            # available; otherwise create one via the same logic as the original.
+            if sdp is None:
+                from dot_pe.inference import _create_single_detector_processor
+                sdp_for_preload = _create_single_detector_processor(
+                    event_data, det_name, par_dic_0, single_bank, fbin,
+                    approximant, n_phi, m_arr, single_detector_blocksize, size_limit,
+                )
+            else:
+                sdp_for_preload = sdp
+            _preload_bank_to_gpu(single_bank, sdp_for_preload)
+
+        h_gpu = _PRELOADED_BANK[bank_key]      # (N_total, modes, pol, fbin) GPU c64
+        h_batch_gpu = h_gpu[inds].contiguous()  # (batch, modes, pol, fbin) GPU c64
+
+        # Call original with the pre-loaded GPU tensor as h_impb.
+        # The original sets return_h_impb=False (h_impb is not None), skips disk load,
+        # stores h_batch_gpu on sdp, and calls get_response_over_distance_and_lnlike_gpu.
+        lnlike_i = original_fn(
+            event_data, det_name, par_dic_0, bank_folder, inds, fbin,
+            h_batch_gpu, approximant, n_phi, single_detector_blocksize,
+            m_arr, n_t, size_limit=size_limit, sdp=sdp,
+        )
+        # Restore the "first detector" return convention: (lnlike_i, h_impb).
+        return lnlike_i, h_batch_gpu
+
+    return _wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -572,6 +739,13 @@ def _patch():
 
     # Replace per-sample np.vectorize distance loop with batched GPU call
     _inf.standardize_samples = _standardize_samples_gpu
+
+    # Track G: wrap run_for_single_detector to use preloaded GPU bank when enabled.
+    # The wrapper is always registered; _PRELOAD_ENABLED flag controls behaviour at
+    # call time so the flag can be set after _patch() is called.
+    _inf.run_for_single_detector = _make_preloaded_run_for_single_detector(
+        _inf.run_for_single_detector
+    )
 
 
 def run(**kwargs):

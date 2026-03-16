@@ -49,6 +49,9 @@ def parse_args():
                    help="Incoherent block size (default: 2048).")
     p.add_argument("--gpu", action="store_true",
                    help="Use GPU-accelerated run (gpu.run instead of dot_pe.inference).")
+    p.add_argument("--preload-bank", action="store_true",
+                   help="(GPU only) Preload entire waveform bank into GPU VRAM before inference "
+                        "(Track G: eliminates per-batch disk I/O; requires --gpu).")
     p.add_argument("--top-n", type=int, default=20,
                    help="Top-N cumulative-time functions to print (default: 20).")
     p.add_argument("--n-pool", type=int, default=4,
@@ -167,9 +170,15 @@ def main():
 
     if args.gpu:
         import gpu.run as runner
-        print("Using GPU-accelerated run.")
+        if args.preload_bank:
+            runner._PRELOAD_ENABLED = True
+            print("Using GPU-accelerated run with bank preload (Track G).")
+        else:
+            print("Using GPU-accelerated run.")
     else:
         from dot_pe import inference as runner
+        if args.preload_bank:
+            print("WARNING: --preload-bank has no effect without --gpu.")
         print("Using CPU run.")
 
     print("Starting profiled run...")
