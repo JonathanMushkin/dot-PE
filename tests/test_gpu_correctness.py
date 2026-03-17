@@ -154,17 +154,17 @@ def test_get_dh_hh_phi_grid():
 
 
 # ---------------------------------------------------------------------------
-# Test: float32 precision in the 2×2 inversion (near-singular hh matrix)
+# Test: float32 precision in the 2x2 inversion (near-singular hh matrix)
 #
 # Background
 # ----------
 # The determinant det = a00*a11 - a01^2.  For a near-face-on binary
-# h+ ≈ h×, so a01 ≈ a00 ≈ a11, and det is a small difference of two
-# nearly-equal float32 numbers — catastrophic cancellation.
+# h+ ~ hx, so a01 ~ a00 ~ a11, and det is a small difference of two
+# nearly-equal float32 numbers -- catastrophic cancellation.
 # Measured float32 relative error in det:
-#   eps=1e-3 → ~2e-5   (fine)
-#   eps=1e-5 → ~1e-3   (already 0.1%)
-#   eps=1e-6 → ~1e-2   (1.3% — unacceptable for lnlike precision)
+#   eps=1e-3 -> ~2e-5   (fine)
+#   eps=1e-5 -> ~1e-3   (already 0.1%)
+#   eps=1e-6 -> ~1e-2   (1.3% -- unacceptable for lnlike precision)
 #
 # Fix: the inversion is performed in float64 and the result cast back to
 # float32.  This test verifies that the fix holds at eps=1e-6 (extreme
@@ -173,8 +173,8 @@ def test_get_dh_hh_phi_grid():
 
 def test_single_detector_near_singular_hh():
     """
-    Stress-test the 2×2 hh inversion with a near-face-on binary
-    (h_plus ≈ h_cross → nearly rank-1 hh matrix → det ≈ 0).
+    Stress-test the 2x2 hh inversion with a near-face-on binary
+    (h_plus ~ h_cross -> nearly rank-1 hh matrix -> det ~ 0).
     Uses float64 CPU baseline vs float32+float64-inversion GPU path.
     Asserts relative error in lnlike_iot stays below 1e-4.
     """
@@ -218,11 +218,11 @@ def test_single_detector_near_singular_hh():
     RTOL_STRESS = 1e-3  # 0.1% relative tolerance
     assert ll_rel < RTOL_STRESS, (
         f"lnlike relative error {ll_rel:.3e} exceeds {RTOL_STRESS:.0e} "
-        f"(near-singular hh, eps={eps:.0e}) — float64 inversion may be broken"
+        f"(near-singular hh, eps={eps:.0e}) -- float64 inversion may be broken"
     )
     assert r_rel < RTOL_STRESS, (
         f"r_iotp relative error {r_rel:.3e} exceeds {RTOL_STRESS:.0e} "
-        f"(near-singular hh, eps={eps:.0e}) — float64 inversion may be broken"
+        f"(near-singular hh, eps={eps:.0e}) -- float64 inversion may be broken"
     )
     print(f"PASS test_single_detector_near_singular_hh  "
           f"(ll_rel={ll_rel:.2e}, r_rel={r_rel:.2e})")
@@ -322,8 +322,8 @@ def test_precessing_spin_inverse_transform_batch():
     Verify _batch_precessing_spin_inverse for all three precessing-spin
     subprior types against lalsimulation.SimInspiralTransformPrecessingWvf2PE.
 
-    Expected accuracy: ≤ 1e-6 relative error for all outputs
-    (theta_jn: ~1e-9 from J≈L; others: machine precision).
+    Expected accuracy: <= 1e-6 relative error for all outputs
+    (theta_jn: ~1e-9 from J~L; others: machine precision).
     """
     import lal
     import lalsimulation as ls
@@ -615,7 +615,7 @@ def test_preloaded_bank_lnlikes():
 
     This tests the key correctness property of Track G:
       - A "bank" GPU tensor is created with shape (N_total, m, p, b).
-      - A batch is sliced: h_bank_gpu[inds] → GPU tensor (batch, m, p, b).
+      - A batch is sliced: h_bank_gpu[inds] -> GPU tensor (batch, m, p, b).
       - Both the numpy path and the GPU-tensor path must agree on lnlike_iot.
     """
     import torch
@@ -633,7 +633,7 @@ def test_preloaded_bank_lnlikes():
     # Full "preloaded bank" as numpy, then uploaded to GPU
     h_bank_np = rand_c64(rng, N_total, m, p, b)
     inds = np.arange(i)  # first i entries
-    h_impb_np = h_bank_np[inds]  # (i, m, p, b) — disk-loaded path reference
+    h_impb_np = h_bank_np[inds]  # (i, m, p, b) -- disk-loaded path reference
 
     dh_weights = rand_c64(rng, d, m, p, b)
     hh_weights = rand_c64(rng, d, M, p, p, b)
@@ -663,7 +663,7 @@ def test_preloaded_bank_lnlikes():
 
 
 # ---------------------------------------------------------------------------
-# Test: _fast_post_init — np.bincount matches scipy sparse scatter-add
+# Test: _fast_post_init -- np.bincount matches scipy sparse scatter-add
 # (Track H1 correctness check)
 # ---------------------------------------------------------------------------
 
@@ -680,7 +680,7 @@ def test_fast_post_init():
 
     rng = np.random.default_rng(42)
     n_qmc = 100
-    n_important = 300  # >n_qmc → many duplicate q_inds
+    n_important = 300  # >n_qmc -> many duplicate q_inds
     n_det = 3
     n_t = 64
 
@@ -732,7 +732,7 @@ def test_fast_post_init():
 
 
 # ---------------------------------------------------------------------------
-# Test: _get_dh_hh_qo_gpu — GPU matmuls match CPU real_matmul
+# Test: _get_dh_hh_qo_gpu -- GPU matmuls match CPU real_matmul
 # (Track H2 correctness check)
 # ---------------------------------------------------------------------------
 
@@ -819,7 +819,7 @@ def test_get_dh_hh_qo_gpu():
 if __name__ == "__main__":
     import torch
     if not torch.cuda.is_available():
-        print("No CUDA GPU available — skipping GPU tests.")
+        print("No CUDA GPU available -- skipping GPU tests.")
         sys.exit(0)
 
     test_single_detector()

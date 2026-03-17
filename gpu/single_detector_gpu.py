@@ -1,34 +1,31 @@
 """
 GPU port of SingleDetectorProcessor.get_response_over_distance_and_lnlike.
 
-All heavy math is in the standalone function get_response_over_distance_and_lnlike_gpu.
+All heavy math is in the standalone function
+get_response_over_distance_and_lnlike_gpu.
 The GPUSingleDetectorProcessor subclass is just a one-line dispatch shim.
 
 Precision notes
 ---------------
-* dh_weights: max ~4e24  — fits comfortably in float32 (max ~3.4e38)
-* hh_weights: max ~3e48  — EXCEEDS float32 range; kept in float64 on GPU
-* h_impb:     max ~6e-20 — fits in float32
-* timeshift:  max ~1     — fits in float32
+* dh_weights: max ~4e24  -- fits comfortably in float32 (max ~3.4e38)
+* hh_weights: max ~3e48  -- EXCEEDS float32 range; kept in float64 on GPU
+* h_impb:     max ~6e-20 -- fits in float32
+* timeshift:  max ~1     -- fits in float32
 
 Strategy:
   - dh path: complex64 throughout (fast)
-  - hh einsum: complex128 (hh_weights * h * h_conj → result ~1e10, safe to
+  - hh einsum: complex128 (hh_weights * h * h_conj -> result ~1e10, safe to
     cast back to complex64 afterwards)
-  - 2×2 inversion: float64 (catastrophic cancellation when det is small)
+  - 2x2 inversion: float64 (catastrophic cancellation when det is small)
 """
 
 import itertools
-import sys
-from pathlib import Path
 
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from dot_pe.single_detector import SingleDetectorProcessor
-from gpu.gpu_constants import COMPLEX_DTYPE, DEVICE, REAL_DTYPE
+from dot_pe.single_detector import SingleDetectorProcessor, _get_phasors
+from gpu.gpu_constants import COMPLEX_DTYPE, DEVICE
 
 
 def _to_c64(arr) -> torch.Tensor:
@@ -66,8 +63,6 @@ def get_response_over_distance_and_lnlike_gpu(
     r_iotp : numpy.ndarray, shape (i, n_phi, t, p)
     lnlike_iot : numpy.ndarray, shape (i, n_phi, t)
     """
-    from dot_pe.single_detector import _get_phasors
-
     i, m, p, b = h_impb.shape
     t = timeshift_dbt.shape[-1]
     x = i * m * p
@@ -85,16 +80,16 @@ def get_response_over_distance_and_lnlike_gpu(
     m_inds_t  = list(m_inds_list)
     mp_inds_t = list(mprime_inds_list)
 
-    # ---- Upload inputs (dh path → c64, hh weights → c128) ----
+    # ---- Upload inputs (dh path -> c64, hh weights -> c128) ----
     h_g        = _to_c64(h_impb)                  # (i,m,p,b)
     ts_g       = _to_c64(timeshift_dbt[0])         # (b,t)
     dh_w_g     = _to_c64(dh_weights_dmpb[0])       # (m,p,b)
-    hh_w_f64   = _to_c128(hh_weights_dmppb[0])     # (M,p,P,b) — overflow-safe
+    hh_w_f64   = _to_c128(hh_weights_dmppb[0])     # (M,p,P,b) -- overflow-safe
     dh_phasor_g = _to_c64(dh_phasor_mo_np)         # (m,o)
     hh_phasor_g = _to_c64(hh_phasor_Mo_np)         # (M,o)
 
     #########
-    # <d|h>  — all float32
+    # <d|h>  -- all float32
     #########
     h_conj_g   = h_g.conj()
     dh_impb_g  = dh_w_g * drift_inv2 * h_conj_g   # (i,m,p,b)
@@ -111,12 +106,12 @@ def get_response_over_distance_and_lnlike_gpu(
     dh_iotp_g  = dh_itpo_g.permute(0, 3, 1, 2)            # (i,o,t,p)
 
     #########
-    # <h|h>  — einsum in float64, result cast back to float32
+    # <h|h>  -- einsum in float64, result cast back to float32
     #########
     # hh_weights max ~3e48 overflows float32; h max ~6e-20.
-    # Product hh_weights * h * h_conj ~ 1e10 — safe to cast back to float32.
-    hh_wts_drift_f64 = hh_w_f64 * drift_inv2                         # (M,p,P,b) c128
-    h_iMpb_f64      = h_g[:, m_inds_t,  :, :].to(torch.complex128)  # (i,M,p,b)
+    # Product hh_weights * h * h_conj ~ 1e10 -- safe to cast back to float32.
+    hh_wts_drift_f64 = hh_w_f64 * drift_inv2      # (M,p,P,b) c128
+    h_iMpb_f64      = h_g[:, m_inds_t,  :, :].to(torch.complex128)
     h_iMpb_conj_f64 = h_conj_g[:, mp_inds_t, :, :].to(torch.complex128)
 
     hh_iMpp_g = torch.einsum(
@@ -124,16 +119,17 @@ def get_response_over_distance_and_lnlike_gpu(
         hh_wts_drift_f64,
         h_iMpb_f64,
         h_iMpb_conj_f64,
-    ).to(COMPLEX_DTYPE)                                               # (i,M,p,P) → c64
+    ).to(COMPLEX_DTYPE)                            # (i,M,p,P) -> c64
 
-    # (i,p,P,M) @ (M,o) → (i,p,P,o)
+    # (i,p,P,M) @ (M,o) -> (i,p,P,o)
     hh_ippM_g  = hh_iMpp_g.permute(0, 2, 3, 1).contiguous()
     hh_ippo_g  = torch.matmul(hh_ippM_g, hh_phasor_g)
-    hh_iopp_g  = hh_ippo_g.real.permute(0, 3, 1, 2)                  # (i,o,p,P) f32
+    hh_iopp_g  = hh_ippo_g.real.permute(0, 3, 1, 2)  # (i,o,p,P) f32
 
-    # 2×2 inverse — float64 to avoid catastrophic cancellation when det is small
-    # (near-face-on binary: h+ ≈ hx → det ≈ 0; float32 gives ~1% rel error at
-    #  det/diag ≈ 1e-5; float64 keeps it below 1e-10)
+    # 2x2 inverse -- float64 to avoid catastrophic cancellation
+    # when det is small (near-face-on binary: h+ ~ hx -> det ~ 0;
+    # float32 gives ~1% rel error at det/diag ~ 1e-5; float64
+    # keeps it below 1e-10)
     hh_f64        = hh_iopp_g.double()
     det_recip_f64 = 1.0 / (
         hh_f64[..., 0, 0] * hh_f64[..., 1, 1]
@@ -144,7 +140,7 @@ def get_response_over_distance_and_lnlike_gpu(
     hh_inv_f64[..., 0, 1] = -hh_f64[..., 0, 1] * det_recip_f64
     hh_inv_f64[..., 1, 0] = -hh_f64[..., 1, 0] * det_recip_f64
     hh_inv_f64[..., 1, 1] =  hh_f64[..., 0, 0] * det_recip_f64
-    hh_inv_g = hh_inv_f64.float()                                     # (i,o,p,P) f32
+    hh_inv_g = hh_inv_f64.float()                  # (i,o,p,P) f32
 
     ######################
     # Optimal solution

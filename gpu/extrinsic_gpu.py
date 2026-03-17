@@ -1,18 +1,29 @@
 """
-GPU-accelerated implementations of draw_extrinsic_samples hotspots.
+GPU-accelerated replacements for draw_extrinsic_samples hotspots.
 
-Track H: GPU acceleration of draw_extrinsic_samples.
+Three methods are monkey-patched onto the dot_pe marginalization classes
+in gpu.inference._patch():
 
-H1: np.bincount replacing scipy sparse in MarginalizationInfoSamplerFree.__post_init__
-H2: GPU matmuls in CoherentScoreSamplerFree._get_dh_hh_qo
-H3: GPU batched matmuls in MarginalizationExtrinsicSamplerFreeLikelihood._get_many_dh_hh
+_fast_post_init: replaces scipy sparse scatter-add with np.bincount in
+    MarginalizationInfoSamplerFree.__post_init__
+
+_get_dh_hh_qo_gpu: GPU matmuls for phase integration in
+    CoherentScoreSamplerFree._get_dh_hh_qo
+
+_get_many_dh_hh_gpu: GPU batched matmuls in
+    MarginalizationExtrinsicSamplerFreeLikelihood._get_many_dh_hh
 """
 
 import numpy as np
+import torch
+from cogwheel.utils import exp_normalize, n_effective
+from scipy.special import logsumexp
+
+from gpu.gpu_constants import DEVICE
 
 
 # ---------------------------------------------------------------------------
-# H1: Fast __post_init__ — np.bincount replacing scipy sparse scatter-add
+# Fast __post_init__
 # ---------------------------------------------------------------------------
 
 def _fast_post_init(self):
@@ -23,9 +34,6 @@ def _fast_post_init(self):
     eliminating sparse matrix construction overhead (~10s at 32k bank).
     All other logic is identical to the original.
     """
-    from scipy.special import logsumexp
-    from cogwheel.utils import exp_normalize, n_effective
-
     self.n_qmc = sum(self.proposals_n_qmc)
 
     if self.q_inds.size == 0:
@@ -75,10 +83,12 @@ def _fast_post_init(self):
 
 
 # ---------------------------------------------------------------------------
-# H2: GPU _get_dh_hh_qo — phasor matmuls on GPU
+# GPU _get_dh_hh_qo -- phasor matmuls on GPU
 # ---------------------------------------------------------------------------
 
-def _get_dh_hh_qo_gpu(self, sky_inds, q_inds, t_first_det, times, dh_mptd, hh_mppd):
+def _get_dh_hh_qo_gpu(
+    self, sky_inds, q_inds, t_first_det, times, dh_mptd, hh_mppd
+):
     """
     GPU-accelerated replacement for CoherentScoreSamplerFree._get_dh_hh_qo.
 
@@ -90,9 +100,6 @@ def _get_dh_hh_qo_gpu(self, sky_inds, q_inds, t_first_det, times, dh_mptd, hh_mp
 
     _dh_phasor and _hh_phasor are uploaded once and cached on self.
     """
-    import torch
-    from gpu.gpu_constants import DEVICE
-
     # ---- CPU: antenna patterns + spline interpolation (unchanged) ----
     fplus_fcross = self._get_fplus_fcross(sky_inds, q_inds)  # (n_q, n_d, n_p)
 
@@ -120,15 +127,20 @@ def _get_dh_hh_qo_gpu(self, sky_inds, q_inds, t_first_det, times, dh_mptd, hh_mp
         ).to(DEVICE)  # (n_mm, n_phi)
 
     # ---- GPU: dh_qm = batched matmul ----
-    # moveaxis(dh_dmpq, (3,1), (0,1)) → (n_q, n_m, n_d, n_p) → (n_q, n_m, n_d*n_p)
+    # moveaxis(dh_dmpq, (3,1), (0,1))
+    #   -> (n_q, n_m, n_d, n_p) -> (n_q, n_m, n_d*n_p)
     dh_qmdp = np.ascontiguousarray(
         np.moveaxis(dh_dmpq, (3, 1), (0, 1)).reshape(n_q, n_m, n_d * n_p)
     )
-    dh_t = torch.from_numpy(dh_qmdp).to(DEVICE)  # (n_q, n_m, n_d*n_p) complex64
+    # (n_q, n_m, n_d*n_p) complex64
+    dh_t = torch.from_numpy(dh_qmdp).to(DEVICE)
 
-    # fplus_fcross (n_q, n_d, n_p) → (n_q, n_d*n_p, 1), cast to complex64 (imag=0)
+    # fplus_fcross (n_q, n_d, n_p) -> (n_q, n_d*n_p, 1),
+    # cast to complex64 (imag=0)
     fpc_t = torch.from_numpy(
-        np.ascontiguousarray(fplus_fcross.astype(np.float32).reshape(n_q, n_d * n_p, 1))
+        np.ascontiguousarray(
+            fplus_fcross.astype(np.float32).reshape(n_q, n_d * n_p, 1)
+        )
     ).to(DEVICE).to(torch.complex64)
 
     dh_qm_t = torch.bmm(dh_t, fpc_t).squeeze(-1)  # (n_q, n_m)
@@ -138,14 +150,18 @@ def _get_dh_hh_qo_gpu(self, sky_inds, q_inds, t_first_det, times, dh_mptd, hh_mp
     fpc_full = torch.from_numpy(
         np.ascontiguousarray(fplus_fcross.astype(np.float32))
     ).to(DEVICE)  # (n_q, n_d, n_p) real
-    f_f_t = torch.einsum('qdp,qdP->qpPd', fpc_full, fpc_full)  # (n_q, n_p, n_P, n_d)
+    # (n_q, n_p, n_P, n_d)
+    f_f_t = torch.einsum('qdp,qdP->qpPd', fpc_full, fpc_full)
 
     hh_t = torch.from_numpy(
-        np.ascontiguousarray(np.asarray(hh_mppd, dtype=np.complex64).reshape(n_mm, -1))
+        np.ascontiguousarray(
+            np.asarray(hh_mppd, dtype=np.complex64).reshape(n_mm, -1)
+        )
     ).to(DEVICE)  # (n_mm, n_p*n_P*n_d) complex64
 
     # Cast real f_f to complex64 for the matmul with complex hh_t
-    hh_qm_t = f_f_t.reshape(n_q, -1).to(torch.complex64) @ hh_t.T  # (n_q, n_mm)
+    # (n_q, n_mm)
+    hh_qm_t = f_f_t.reshape(n_q, -1).to(torch.complex64) @ hh_t.T
 
     # ---- GPU: phase integration via complex matmul ----
     # (a @ b).real == real_matmul(a, b) for complex64 a, b
@@ -156,7 +172,7 @@ def _get_dh_hh_qo_gpu(self, sky_inds, q_inds, t_first_det, times, dh_mptd, hh_mp
 
 
 # ---------------------------------------------------------------------------
-# H3: GPU _get_many_dh_hh — batched matmuls replacing 8-iteration loop
+# GPU _get_many_dh_hh -- batched matmuls
 # ---------------------------------------------------------------------------
 
 def _get_many_dh_hh_gpu(
@@ -173,14 +189,12 @@ def _get_many_dh_hh_gpu(
     GPU-accelerated replacement for
     MarginalizationExtrinsicSamplerFreeLikelihood._get_many_dh_hh.
 
-    Replaces the n_m×n_p loop with a single batched torch.bmm, and the
+    Replaces the n_mxn_p loop with a single batched torch.bmm, and the
     numpy einsum for hh_imppd with torch.einsum.
     """
-    import torch
-    from gpu.gpu_constants import DEVICE
-
     h_impb = amp_impb * np.exp(1j * phase_impb)
-    h_mpbi = np.moveaxis(h_impb, 0, -1).astype(np.complex64)  # (n_m, n_p, n_b, n_i)
+    # (n_m, n_p, n_b, n_i)
+    h_mpbi = np.moveaxis(h_impb, 0, -1).astype(np.complex64)
     n_m, n_t, n_d, n_b = d_h_weights.shape
     n_i = amp_impb.shape[0]
     n_p = 2
@@ -189,8 +203,10 @@ def _get_many_dh_hh_gpu(
     d_h_w = d_h_weights.reshape((n_m, n_td, n_b))  # (n_m, n_td, n_b)
 
     # ---- GPU: batched dh_mptdi ----
-    # Goal: dh_mptdi[m, p] = d_h_w[m] @ h_mpbi[m, p].conj()  → (n_td, n_i)
-    # Batched: (n_m*n_p, n_td, n_b) @ (n_m*n_p, n_b, n_i) → (n_m*n_p, n_td, n_i)
+    # Goal: dh_mptdi[m, p] = d_h_w[m] @ h_mpbi[m, p].conj()
+    #   -> (n_td, n_i)
+    # Batched: (n_m*n_p, n_td, n_b) @ (n_m*n_p, n_b, n_i)
+    #   -> (n_m*n_p, n_td, n_i)
     d_h_w_t = torch.from_numpy(
         np.ascontiguousarray(d_h_w.astype(np.complex64))
     ).to(DEVICE)  # (n_m, n_td, n_b)
@@ -227,7 +243,9 @@ def _get_many_dh_hh_gpu(
     ).to(DEVICE)  # (n_mm, n_p, n_b, n_i)
 
     h_mp_conj_t = torch.from_numpy(
-        np.ascontiguousarray(h_mpbi.conj()[mprime_inds_l].astype(np.complex128))
+        np.ascontiguousarray(
+            h_mpbi.conj()[mprime_inds_l].astype(np.complex128)
+        )
     ).to(DEVICE)  # (n_mm, n_p, n_b, n_i)
 
     hh_imppd_t = torch.einsum(
