@@ -28,7 +28,8 @@ CPU-only regardless of bank size.
 
 ## Benchmark results (L40S, O3-range event)
 
-Event: chirp mass 20 M_sun, d = 1366 Mpc, SNR ~ 11 (realistic O3 range).
+Event: chirp mass 20 M_sun, d = 1366 Mpc, SNR ~ 11 (realistic O3 range),
+3-detector network (H1, L1, V1).
 Waveform shape per template: (4 modes, 2 polarisations, 378 frequency bins).
 Run settings: `n_ext=512`, `n_phi=32`, `n_t=64`, `draw_subset=True`,
 `blocksize=2048`.
