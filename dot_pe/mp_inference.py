@@ -51,6 +51,9 @@ from tqdm import tqdm
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
+import cProfile
+import pstats
+
 import numpy as np
 import pandas as pd
 
@@ -98,6 +101,22 @@ def _incoherent_chunk_worker(args):
     sample_start, sample_end = args
 
     s = _incoherent_setup
+    profile_dir = s.get("_profile_dir")
+
+    if profile_dir:
+        _prof = cProfile.Profile()
+        _prof.enable()
+    try:
+        return _incoherent_chunk_worker_inner(sample_start, sample_end, s)
+    finally:
+        if profile_dir:
+            _prof.disable()
+            _prof.dump_stats(
+                f"{profile_dir}/incoherent_{os.getpid()}_{sample_start}.prof"
+            )
+
+
+def _incoherent_chunk_worker_inner(sample_start, sample_end, s):
     event_data = s["event_data"]
     par_dic_0 = s["par_dic_0"]
     bank_folder = Path(s["bank_folder"])
@@ -170,7 +189,19 @@ _thin_setup = None
 def _thin_coherent_worker(args):
     """Thin coherent worker: process one intrinsic block x all extrinsic."""
     i_block, e_blocks, waveform_dir = args
-    return thin_coherent.run_thin_iblock(i_block, e_blocks, _thin_setup, waveform_dir)
+    profile_dir = _thin_setup.get("_profile_dir")
+
+    if profile_dir:
+        _prof = cProfile.Profile()
+        _prof.enable()
+    try:
+        return thin_coherent.run_thin_iblock(i_block, e_blocks, _thin_setup, waveform_dir)
+    finally:
+        if profile_dir:
+            _prof.disable()
+            _prof.dump_stats(
+                f"{profile_dir}/coherent_{os.getpid()}_{i_block[0]}.prof"
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -191,6 +222,7 @@ def _collect_incoherent_mp(
     batch_size,
     size_limit,
     n_workers,
+    profile_dir=None,
 ):
     """
     Parallel replacement for collect_int_samples_from_single_detectors().
@@ -227,6 +259,7 @@ def _collect_incoherent_mp(
         "n_t": n_t,
         "size_limit": size_limit,
         "batch_size": batch_size,
+        "_profile_dir": profile_dir,
     }
     try:
         with Pool(n_actual) as pool:
@@ -269,6 +302,7 @@ def _run_coherent_mp(
     n_workers,
     fbin,
     approximant,
+    profile_dir=None,
 ):
     """
     Parallel replacement for run_coherent_inference_per_bank().
@@ -354,6 +388,7 @@ def _run_coherent_mp(
 
         # Load setup into main process; workers inherit via COW fork
         _thin_setup = thin_coherent.load_thin_setup(setup_dir, rundir)
+        _thin_setup["_profile_dir"] = profile_dir  # None when not profiling
         _log_rss("after load_thin_setup (coherent Pool fork point)")
 
         waveform_dir = str(Path(bank_path) / "waveforms")
@@ -476,6 +511,7 @@ def run(
         pd.Series,
         None,
     ] = None,
+    profile: bool = False,
 ) -> Path:
     """Run inference with multiprocessing.  Drop-in for inference.run().
 
@@ -488,11 +524,13 @@ def run(
         (Stage 4).  1 = serial.
     """
     t0 = time.time()
+    t_stages = {}
     if n_workers is None:
         n_workers = os.cpu_count() or 1
     print(f"[MP] n_workers = {n_workers}")
 
     # ── Stage 1: setup (serial) ───────────────────────────────────────
+    _t = time.perf_counter()
     ctx = inference.prepare_run_objects(
         event=event,
         bank_folder=bank_folder,
@@ -532,8 +570,16 @@ def run(
     except Exception:
         pass
     _log_rss("after Stage 1 + del coherent_posterior")
+    t_stages["1_setup"] = time.perf_counter() - _t
+
+    if profile:
+        profiles_dir = Path(ctx["rundir"]) / "worker_profiles"
+        profiles_dir.mkdir(exist_ok=True)
+    else:
+        profiles_dir = None
 
     # ── Stage 2: incoherent selection (parallelized) ──────────────────
+    _t = time.perf_counter()
     print("\n=== Incoherent selection per bank (MP) ===")
     candidate_inds_by_bank = {}
     lnlikes_by_bank = {}
@@ -554,6 +600,7 @@ def run(
             batch_size=single_detector_blocksize,
             size_limit=size_limit,
             n_workers=n_workers,
+            profile_dir=str(profiles_dir) if profiles_dir else None,
         )
         candidate_inds_by_bank[bank_id] = inds
         lnlikes_by_bank[bank_id] = incoherent_lnlikes
@@ -571,8 +618,10 @@ def run(
     except Exception:
         pass
     _log_rss("after Stage 2 incoherent + gc/trim")
+    t_stages["2_incoherent"] = time.perf_counter() - _t
 
     # ── Stage 3: cross-bank threshold (serial) ────────────────────────
+    _t = time.perf_counter()
     (selected_inds_by_bank, _, _) = (
         inference.select_intrinsic_samples_across_banks_by_incoherent_likelihood(
             banks=ctx["banks"],
@@ -584,8 +633,10 @@ def run(
             event_data=ctx["event_data"],
         )
     )
+    t_stages["3_crossbank"] = time.perf_counter() - _t
 
     # ── Stage 4: extrinsic sampling ───────────────────────────────────
+    _t = time.perf_counter()
     if n_ext_workers > 1 and extrinsic_samples is None:
         draw_extrinsic_samples_parallel(
             banks=ctx["banks"],
@@ -622,8 +673,10 @@ def run(
     except Exception:
         pass
     _log_rss("after Stage 4 extrinsic + gc/trim")
+    t_stages["4_extrinsic"] = time.perf_counter() - _t
 
     # ── Stage 5: coherent inference (parallelized, thin workers) ──────
+    _t = time.perf_counter()
     per_bank_results = _run_coherent_mp(
         banks=ctx["banks"],
         event_data=ctx["event_data"],
@@ -642,9 +695,12 @@ def run(
         n_workers=n_workers,
         fbin=ctx["fbin"],
         approximant=ctx["approximant"],
+        profile_dir=str(profiles_dir) if profiles_dir else None,
     )
+    t_stages["5_coherent"] = time.perf_counter() - _t
 
     # ── Stage 6: postprocess (serial) ─────────────────────────────────
+    _t = time.perf_counter()
     result = inference.aggregate_and_save_results(
         per_bank_results=per_bank_results,
         banks=ctx["banks"],
@@ -657,8 +713,51 @@ def run(
         draw_subset=draw_subset,
     )
 
+    t_stages["6_postprocess"] = time.perf_counter() - _t
+
+    if profile:
+        prof_files = sorted(profiles_dir.glob("*.prof"))
+        if prof_files:
+            combined = pstats.Stats(str(prof_files[0]))
+            for p in prof_files[1:]:
+                combined.add(str(p))
+            combined.dump_stats(Path(ctx["rundir"]) / "profile_output.prof")
+            with open(Path(ctx["rundir"]) / "profile_output.txt", "w") as f:
+                ps = pstats.Stats(str(prof_files[0]), stream=f)
+                for p in prof_files[1:]:
+                    ps.add(str(p))
+                ps.strip_dirs().sort_stats(pstats.SortKey.CUMULATIVE).print_stats()
+            print(f"[profile] {len(prof_files)} worker profiles merged -> "
+                  f"{ctx['rundir']}/profile_output.prof")
+
+        print("\nStage timings:")
+        labels = {
+            "1_setup":       "Stage 1 (setup)",
+            "2_incoherent":  "Stage 2 (incoherent)",
+            "3_crossbank":   "Stage 3 (cross-bank)",
+            "4_extrinsic":   "Stage 4 (extrinsic)",
+            "5_coherent":    "Stage 5 (coherent)",
+            "6_postprocess": "Stage 6 (postprocess)",
+        }
+        for key, label in labels.items():
+            print(f"  {label:<28} {t_stages.get(key, 0):.1f} s")
+
     print(f"\nTotal wall-clock time: {time.time() - t0:.1f} s")
     return result
+
+
+def run_and_profile(**kwargs) -> Path:
+    """
+    Drop-in for run() that profiles all worker processes.
+
+    Writes to rundir:
+      worker_profiles/incoherent_<pid>_<start>.prof  — one per incoherent worker
+      worker_profiles/coherent_<pid>_<iblock>.prof   — one per coherent worker
+      profile_output.prof   — merged binary (view with snakeviz)
+      profile_output.txt    — merged human-readable, sorted by cumtime
+    Also prints a stage-level wall-clock table.
+    """
+    return run(**kwargs, profile=True)
 
 
 # ─────────────────────────────────────────────────────────────────────
