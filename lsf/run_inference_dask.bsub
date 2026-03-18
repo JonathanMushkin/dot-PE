@@ -1,0 +1,76 @@
+#!/bin/bash
+#BSUB -n 64
+#BSUB -R "span[ptile=8]"
+#BSUB -W 04:00
+#BSUB -o run_%J.out
+#BSUB -e run_%J.err
+
+# ── Usage ──────────────────────────────────────────────────────────────────
+# Customise the variables in the "User configuration" section below, then:
+#
+#   EVENT=/path/to/event.npz \
+#   BANK=/path/to/bank_folder \
+#   RUNDIR=/path/to/output \
+#   bsub < lsf/run_inference_dask.bsub
+#
+# Or set them via -env in bsub, or hard-code below.
+# ───────────────────────────────────────────────────────────────────────────
+
+# ── User configuration ─────────────────────────────────────────────────────
+EVENT="${EVENT:?Must set EVENT=/path/to/event.npz}"
+BANK="${BANK:?Must set BANK=/path/to/bank_folder}"
+RUNDIR="${RUNDIR:-/tmp/dot_pe_dask_${LSB_JOBID}}"
+CONDA_ENV="${CONDA_ENV:-dot-pe}"
+
+N_EXT="${N_EXT:-4096}"
+N_PHI="${N_PHI:-100}"
+N_T="${N_T:-128}"
+BLOCKSIZE="${BLOCKSIZE:-512}"
+SINGLE_DETECTOR_BLOCKSIZE="${SINGLE_DETECTOR_BLOCKSIZE:-512}"
+SCHEDULER_PORT="${SCHEDULER_PORT:-8786}"
+WORKER_MEMORY="${WORKER_MEMORY:-5GB}"
+# ───────────────────────────────────────────────────────────────────────────
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "${CONDA_ENV}"
+
+SCHEDULER="${HOSTNAME}:${SCHEDULER_PORT}"
+
+# Start Dask scheduler on the head (submission) node
+dask scheduler --port "${SCHEDULER_PORT}" --no-dashboard &
+SCHED_PID=$!
+sleep 3
+
+# Start one Dask worker per allocated slot across all nodes.
+# blaunch broadcasts the command to every host in the job allocation.
+blaunch dask worker "${SCHEDULER}" \
+    --nthreads 1 \
+    --memory-limit "${WORKER_MEMORY}" \
+    --no-dashboard &
+WORKERS_PID=$!
+sleep 10
+
+echo "[run_inference_dask] scheduler=${SCHEDULER}, rundir=${RUNDIR}"
+
+python - <<'PYEOF'
+import os
+from dot_pe import mp_inference
+
+mp_inference.run(
+    event=os.environ["EVENT"],
+    bank_folder=os.environ["BANK"],
+    rundir=os.environ["RUNDIR"],
+    scheduler_address=os.environ["SCHEDULER"],
+    n_ext=int(os.environ.get("N_EXT", 4096)),
+    n_phi=int(os.environ.get("N_PHI", 100)),
+    n_t=int(os.environ.get("N_T", 128)),
+    blocksize=int(os.environ.get("BLOCKSIZE", 512)),
+    single_detector_blocksize=int(
+        os.environ.get("SINGLE_DETECTOR_BLOCKSIZE", 512)
+    ),
+)
+print("Done.")
+PYEOF
+
+# Shut down Dask processes
+kill "${WORKERS_PID}" "${SCHED_PID}" 2>/dev/null || true
