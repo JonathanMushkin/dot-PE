@@ -730,17 +730,17 @@ def run(
             print(f"[profile] {len(prof_files)} worker profiles merged -> "
                   f"{ctx['rundir']}/profile_output.prof")
 
-        print("\nStage timings:")
-        labels = {
-            "1_setup":       "Stage 1 (setup)",
-            "2_incoherent":  "Stage 2 (incoherent)",
-            "3_crossbank":   "Stage 3 (cross-bank)",
-            "4_extrinsic":   "Stage 4 (extrinsic)",
-            "5_coherent":    "Stage 5 (coherent)",
-            "6_postprocess": "Stage 6 (postprocess)",
-        }
-        for key, label in labels.items():
-            print(f"  {label:<28} {t_stages.get(key, 0):.1f} s")
+    print("\nStage timings:")
+    labels = {
+        "1_setup":       "Stage 1 (setup)",
+        "2_incoherent":  "Stage 2 (incoherent)",
+        "3_crossbank":   "Stage 3 (cross-bank)",
+        "4_extrinsic":   "Stage 4 (extrinsic)",
+        "5_coherent":    "Stage 5 (coherent)",
+        "6_postprocess": "Stage 6 (postprocess)",
+    }
+    for key, label in labels.items():
+        print(f"  {label:<28} {t_stages.get(key, 0):.1f} s")
 
     print(f"\nTotal wall-clock time: {time.time() - t0:.1f} s")
     return result
