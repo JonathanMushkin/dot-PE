@@ -1698,6 +1698,153 @@ def run(
     )
 
 
+def run_timed(**kwargs) -> Path:
+    """Drop-in for run() that prints per-stage wall-clock times.
+
+    Prints timings in the same format as mp_inference / dask_inference so
+    that run_one_benchmark.py can parse them uniformly.
+    """
+    import time as _time
+
+    t0 = _time.time()
+    t_stages = {}
+
+    # Stage 1
+    _t = _time.perf_counter()
+    ctx = prepare_run_objects(
+        event=kwargs.get("event"),
+        bank_folder=kwargs.get("bank_folder"),
+        n_int=kwargs.get("n_int"),
+        n_ext=kwargs["n_ext"],
+        n_phi=kwargs["n_phi"],
+        n_t=kwargs["n_t"],
+        blocksize=kwargs.get("blocksize", 512),
+        single_detector_blocksize=kwargs.get("single_detector_blocksize", 512),
+        i_int_start=kwargs.get("i_int_start", 0),
+        seed=kwargs.get("seed"),
+        load_inds=kwargs.get("load_inds", False),
+        inds_path=kwargs.get("inds_path"),
+        size_limit=kwargs.get("size_limit", 10**7),
+        draw_subset=kwargs.get("draw_subset", True),
+        n_draws=kwargs.get("n_draws"),
+        event_dir=kwargs.get("event_dir"),
+        rundir=kwargs.get("rundir"),
+        coherent_score_min_n_effective_prior=kwargs.get("coherent_score_min_n_effective_prior", 100),
+        max_incoherent_lnlike_drop=kwargs.get("max_incoherent_lnlike_drop", 20),
+        max_bestfit_lnlike_diff=kwargs.get("max_bestfit_lnlike_diff", 20),
+        mchirp_guess=kwargs.get("mchirp_guess"),
+        extrinsic_samples=kwargs.get("extrinsic_samples"),
+        n_phi_incoherent=kwargs.get("n_phi_incoherent"),
+        preselected_indices=kwargs.get("preselected_indices"),
+        bank_logw_override=kwargs.get("bank_logw_override"),
+        coherent_posterior_kwargs=kwargs.get("coherent_posterior_kwargs", {}),
+    )
+    t_stages["1_setup"] = _time.perf_counter() - _t
+
+    # Stage 2
+    _t = _time.perf_counter()
+    candidate_inds_by_bank, lnlikes_by_bank, lnlikes_di_by_bank = (
+        select_intrinsic_samples_per_bank_incoherently(
+            banks=ctx["banks"],
+            event_data=ctx["event_data"],
+            par_dic_0=ctx["par_dic_0"],
+            n_int_dict=ctx["n_int_dict"],
+            single_detector_blocksize=kwargs.get("single_detector_blocksize", 512),
+            n_phi_incoherent=kwargs.get("n_phi_incoherent"),
+            n_phi=kwargs["n_phi"],
+            n_t=kwargs["n_t"],
+            max_incoherent_lnlike_drop=kwargs.get("max_incoherent_lnlike_drop", 20),
+            preselected_indices_dict=ctx["preselected_indices_dict"],
+            load_inds=kwargs.get("load_inds", False),
+            inds_path_dict=ctx["inds_path_dict"],
+            banks_dir=ctx["banks_dir"],
+        )
+    )
+    t_stages["2_incoherent"] = _time.perf_counter() - _t
+
+    # Stage 3
+    _t = _time.perf_counter()
+    selected_inds_by_bank, _, _ = (
+        select_intrinsic_samples_across_banks_by_incoherent_likelihood(
+            banks=ctx["banks"],
+            candidate_inds_by_bank=candidate_inds_by_bank,
+            incoherent_lnlikes_by_bank=lnlikes_by_bank,
+            lnlikes_di_by_bank=lnlikes_di_by_bank,
+            max_incoherent_lnlike_drop=kwargs.get("max_incoherent_lnlike_drop", 20),
+            banks_dir=ctx["banks_dir"],
+            event_data=ctx["event_data"],
+        )
+    )
+    t_stages["3_crossbank"] = _time.perf_counter() - _t
+
+    # Stage 4
+    _t = _time.perf_counter()
+    draw_extrinsic_samples(
+        banks=ctx["banks"],
+        event_data=ctx["event_data"],
+        par_dic_0=ctx["par_dic_0"],
+        fbin=ctx["fbin"],
+        approximant=ctx["approximant"],
+        selected_inds_by_bank=selected_inds_by_bank,
+        coherent_score_kwargs=ctx["coherent_score_kwargs"],
+        seed=kwargs.get("seed"),
+        n_ext=kwargs["n_ext"],
+        rundir=ctx["rundir"],
+        extrinsic_samples=kwargs.get("extrinsic_samples"),
+    )
+    t_stages["4_extrinsic"] = _time.perf_counter() - _t
+
+    # Stage 5
+    _t = _time.perf_counter()
+    per_bank_results = run_coherent_inference_per_bank(
+        banks=ctx["banks"],
+        event_data=ctx["event_data"],
+        rundir=ctx["rundir"],
+        banks_dir=ctx["banks_dir"],
+        par_dic_0=ctx["par_dic_0"],
+        selected_inds_by_bank=selected_inds_by_bank,
+        n_int_dict=ctx["n_int_dict"],
+        n_ext=kwargs["n_ext"],
+        n_phi=kwargs["n_phi"],
+        m_arr=ctx["m_arr"],
+        blocksize=kwargs.get("blocksize", 512),
+        size_limit=kwargs.get("size_limit", 10**7),
+        max_bestfit_lnlike_diff=kwargs.get("max_bestfit_lnlike_diff", 20),
+        bank_logw_override_dict=ctx["bank_logw_override_dict"],
+    )
+    t_stages["5_coherent"] = _time.perf_counter() - _t
+
+    # Stage 6
+    _t = _time.perf_counter()
+    result = aggregate_and_save_results(
+        per_bank_results=per_bank_results,
+        banks=ctx["banks"],
+        event_data=ctx["event_data"],
+        rundir=ctx["rundir"],
+        banks_dir=ctx["banks_dir"],
+        n_phi=kwargs["n_phi"],
+        pr=ctx["pr"],
+        n_draws=kwargs.get("n_draws"),
+        draw_subset=kwargs.get("draw_subset", True),
+    )
+    t_stages["6_postprocess"] = _time.perf_counter() - _t
+
+    print("\nStage timings:")
+    labels = {
+        "1_setup":       "Stage 1 (setup)",
+        "2_incoherent":  "Stage 2 (incoherent)",
+        "3_crossbank":   "Stage 3 (cross-bank)",
+        "4_extrinsic":   "Stage 4 (extrinsic)",
+        "5_coherent":    "Stage 5 (coherent)",
+        "6_postprocess": "Stage 6 (postprocess)",
+    }
+    for key, label in labels.items():
+        print(f"  {label:<28} {t_stages.get(key, 0):.1f} s")
+    print(f"\nTotal wall-clock time: {_time.time() - t0:.1f} s")
+
+    return result
+
+
 def run_and_profile(**kwargs):
     """
     Run the magic integral and profile the run.
