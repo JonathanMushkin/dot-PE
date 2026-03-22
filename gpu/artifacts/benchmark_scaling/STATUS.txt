@@ -1,0 +1,18 @@
+Benchmark Scaling — Status as of 2026-03-22 10:06
+=================================================
+
+COMPLETED
+---------
+Serial   (8 BLAS threads)  total=1523s   S2=1166s  S4= 135s  S5= 200s
+MP  8w   (1t/worker)       total= 439s   S2= 204s  S4= 118s  S5=  97s
+MP 16w   (1t/worker)       total= 291s   S2=  84s  S4= 118s  S5=  76s
+MP 32w   (1t/worker)       total= 237s   S2=  47s  S4= 118s  S5=  59s
+Dask  8w (1t/worker)       total= 407s   S2= 170s  S4= 120s  S5= 101s
+Dask 16w (1t/worker)       total= 305s   S2=  92s  S4= 120s  S5=  77s
+Dask 32w (1t/worker)       total= 258s   S2=  57s  S4= 122s  S5=  62s
+
+FILES
+-----
+run_benchmark.sh             — launch all sessions
+run_one_benchmark.py         — single config runner
+collect_benchmark_results.py — aggregates JSONs -> report.txt

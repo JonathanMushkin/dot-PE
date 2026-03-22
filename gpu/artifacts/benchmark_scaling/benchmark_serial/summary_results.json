@@ -1,0 +1,24 @@
+{
+    "n_effective": 8439.81658525749,
+    "n_effective_i": 327.99524092019107,
+    "n_effective_e": 111.71310551644939,
+    "bestfit_lnlike_max": 70.8652243067513,
+    "lnl_marginalized_max": 64.30970349224292,
+    "n_i_inds_used": 39318,
+    "ln_evidence": 30.278526268007305,
+    "ln_evidence_discarded": 20.257371566073807,
+    "n_distance_marginalizations": 41395167,
+    "n_banks": 1,
+    "per_bank_results": {
+        "bank_0": {
+            "ln_evidence": 30.278526268007305,
+            "n_effective": 8439.81658525749,
+            "n_inds_used": 39318,
+            "N_k": 17179869184
+        }
+    },
+    "injection": {
+        "bestfit_lnlike": 64.08012569269832,
+        "lnl_marginalized": 56.37435250596318
+    }
+}

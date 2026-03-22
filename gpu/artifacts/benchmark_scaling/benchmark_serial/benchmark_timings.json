@@ -1,0 +1,12 @@
+{
+  "1_setup": 5.8,
+  "2_incoherent": 1166.3,
+  "4_extrinsic": 134.6,
+  "5_coherent": 200.3,
+  "6_postprocess": 16.1,
+  "total": 1523.112,
+  "label": "benchmark_serial",
+  "module": "inference",
+  "n_workers": 0,
+  "omp_threads": 8
+}

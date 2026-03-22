@@ -1,0 +1,12 @@
+{
+  "1_setup": 12.6,
+  "2_incoherent": 204.3,
+  "4_extrinsic": 118.1,
+  "5_coherent": 97.4,
+  "6_postprocess": 6.9,
+  "total": 439.201,
+  "label": "benchmark_mp_8w",
+  "module": "mp_inference",
+  "n_workers": 8,
+  "omp_threads": 1
+}

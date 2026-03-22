@@ -1,0 +1,20 @@
+{
+    "n_effective": 8440.224461012713,
+    "n_effective_i": 328.01012734564006,
+    "n_effective_e": 111.71735910013962,
+    "bestfit_lnlike_max": 70.8652243067513,
+    "lnl_marginalized_max": 64.30970349224292,
+    "n_i_inds_used": 39318,
+    "ln_evidence": 30.278550431239317,
+    "ln_evidence_discarded": -Infinity,
+    "n_distance_marginalizations": 644186112,
+    "n_banks": 1,
+    "per_bank_results": {
+        "bank_0": {
+            "ln_evidence": 30.278550431239317,
+            "n_effective": 8440.22446101271,
+            "n_inds_used": 39318,
+            "N_k": 17179869184
+        }
+    }
+}

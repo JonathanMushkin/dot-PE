@@ -1,0 +1,12 @@
+{
+  "1_setup": 6.3,
+  "2_incoherent": 169.9,
+  "4_extrinsic": 119.8,
+  "5_coherent": 101.2,
+  "6_postprocess": 6.5,
+  "total": 406.854,
+  "label": "benchmark_dask_8w",
+  "module": "dask_inference",
+  "n_workers": 8,
+  "omp_threads": 1
+}

@@ -1,0 +1,12 @@
+{
+  "1_setup": 6.1,
+  "2_incoherent": 47.3,
+  "4_extrinsic": 117.9,
+  "5_coherent": 59.0,
+  "6_postprocess": 6.4,
+  "total": 236.695,
+  "label": "benchmark_mp_32w",
+  "module": "mp_inference",
+  "n_workers": 32,
+  "omp_threads": 1
+}

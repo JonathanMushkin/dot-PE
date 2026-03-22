@@ -1,0 +1,50 @@
+[Dask] LocalCluster with 32 workers
+Setting paths & loading configurations...
+Creating COGWHEEL objects...
+Setting reference from injection.
+Running inference with 1 bank(s)
+  [RSS] after Stage 1 + del coherent_posterior: cur=1071 MB  peak=3273 MB
+
+=== Incoherent selection per bank (Dask) ===
+
+Processing bank: bank_0
+  [Dask] incoherent: 32 chunks submitted
+Bank bank_0: 1048576 intrinsic samples evaluated.
+  [RSS] after Stage 2 incoherent + gc/trim: cur=1140 MB  peak=3273 MB
+
+=== Cross-bank threshold selection ===
+Global maximum incoherent lnlike: 76.74
+Global threshold: 56.74
+Bank bank_0: 39318 intrinsic samples passed global threshold.
+
+=== Extrinsic sample generation ===
+Generating extrinsic samples (global, multibank)...
+  [RSS] after Stage 4 extrinsic + gc/trim: cur=1293 MB  peak=4199 MB
+
+=== Coherent inference per bank (Dask, thin workers) ===
+
+Processing bank: bank_0
+  [Dask] pre-computing coherent setup for bank bank_0...
+  [thin] pre-computing dt_linfree for 39318 selected indices...
+  [thin] coherent setup saved to /home/jonatahm/dot-pe-future/gpu/artifacts/benchmark_scaling/benchmark_dask_32w/dask_coherent_setup_bank_0
+  [RSS] after precompute + gc/trim (before Dask coherent submit): cur=1294 MB  peak=4199 MB
+  [Dask] coherent: 20 i_blocks submitted
+
+=== Combining results ===
+
+Combining prob_samples across banks...
+Standardizing samples...
+Standardizing samples done in 1.5 seconds.
+Saving samples to file...
+Samples saved to:
+ /home/jonatahm/dot-pe-future/gpu/artifacts/benchmark_scaling/benchmark_dask_32w/samples.feather
+
+Stage timings:
+  Stage 1 (setup)              6.6 s
+  Stage 2 (incoherent)         57.4 s
+  Stage 3 (cross-bank)         0.0 s
+  Stage 4 (extrinsic)          121.6 s
+  Stage 5 (coherent)           62.0 s
+  Stage 6 (postprocess)        6.7 s
+
+Total wall-clock time: 257.8 s

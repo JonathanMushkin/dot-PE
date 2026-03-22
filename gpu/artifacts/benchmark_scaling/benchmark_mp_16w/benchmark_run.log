@@ -1,0 +1,51 @@
+[MP] n_workers = 16
+Setting paths & loading configurations...
+Creating COGWHEEL objects...
+Setting reference from injection.
+Running inference with 1 bank(s)
+  [RSS] after Stage 1 + del coherent_posterior: cur=1025 MB  peak=3229 MB
+
+=== Incoherent selection per bank (MP) ===
+
+Processing bank: bank_0
+  [MP] incoherent: 16 chunks -> 16 workers
+Bank bank_0: 1048576 intrinsic samples evaluated.
+  [RSS] after Stage 2 incoherent + gc/trim: cur=1049 MB  peak=3229 MB
+
+=== Cross-bank threshold selection ===
+Global maximum incoherent lnlike: 76.74
+Global threshold: 56.74
+Bank bank_0: 39318 intrinsic samples passed global threshold.
+
+=== Extrinsic sample generation ===
+Generating extrinsic samples (global, multibank)...
+  [RSS] after Stage 4 extrinsic + gc/trim: cur=1152 MB  peak=4105 MB
+
+=== Coherent inference per bank (MP, thin workers) ===
+
+Processing bank: bank_0
+  [MP] pre-computing coherent setup for bank bank_0...
+  [thin] pre-computing dt_linfree for 39318 selected indices...
+  [thin] coherent setup saved to /home/jonatahm/dot-pe-future/gpu/artifacts/benchmark_scaling/benchmark_mp_16w/mp_coherent_setup_bank_0
+  [RSS] after precompute + gc/trim (before coherent pool): cur=1151 MB  peak=4105 MB
+  [RSS] after load_thin_setup (coherent Pool fork point): cur=1173 MB  peak=4105 MB
+  [MP] coherent: 20 i_blocks -> 16 workers
+
+=== Combining results ===
+
+Combining prob_samples across banks...
+Standardizing samples...
+Standardizing samples done in 1.22 seconds.
+Saving samples to file...
+Samples saved to:
+ /home/jonatahm/dot-pe-future/gpu/artifacts/benchmark_scaling/benchmark_mp_16w/samples.feather
+
+Stage timings:
+  Stage 1 (setup)              6.4 s
+  Stage 2 (incoherent)         83.9 s
+  Stage 3 (cross-bank)         0.0 s
+  Stage 4 (extrinsic)          118.4 s
+  Stage 5 (coherent)           75.8 s
+  Stage 6 (postprocess)        6.0 s
+
+Total wall-clock time: 290.6 s

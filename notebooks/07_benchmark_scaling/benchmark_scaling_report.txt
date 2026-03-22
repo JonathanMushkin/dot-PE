@@ -1,0 +1,160 @@
+Scaling Benchmark Implementation Report
+=======================================
+Date: 2026-03-19
+Branch: dev/mp
+
+
+OVERVIEW
+--------
+This report documents the implementation of a scaling benchmark comparing
+serial, multiprocessing (Pool), and Dask inference on a 1M-sample bank.
+The benchmark has been set up and is ready to run; timing results will be
+populated once the notebook is executed.
+
+
+WHAT WAS DONE
+-------------
+
+1. Restored Pool-based inference modules from main
+   - dot_pe/mp_inference.py      — Pool-based parallel inference (stages 2, 4, 5)
+   - dot_pe/parallel_extrinsic.py — Pool-based extrinsic sampling (stage 4)
+   These had been overwritten by Dask code on dev/mp.  Restoring them makes
+   the Pool implementation the official dot_pe.mp_inference API again.
+
+2. Created dot_pe/dask_inference.py (new file)
+   Self-contained Dask module.  Public API mirrors mp_inference:
+     run(..., n_workers, scheduler_address) -> Path
+     run_and_profile(**kwargs) -> Path
+   Contains all Dask worker functions and orchestrators extracted from the
+   dev/mp versions of mp_inference.py and parallel_extrinsic.py:
+     _incoherent_chunk_worker_dask     (Stage 2 worker)
+     _collect_incoherent_dask          (Stage 2 orchestrator)
+     _extrinsic_partition_worker_dask  (Stage 4 worker)
+     collect_marg_info_dask            (Stage 4 orchestrator)
+     draw_extrinsic_samples_dask       (Stage 4 public function)
+     _thin_coherent_worker_dask        (Stage 5 worker)
+     _run_coherent_dask                (Stage 5 orchestrator)
+   Backend selection:
+     scheduler_address=None  -> LocalCluster(n_workers=n_workers, threads_per_worker=1)
+     scheduler_address=host:port -> Client(scheduler_address) [external cluster]
+
+3. Created benchmark notebook
+   notebooks/07_benchmark_scaling/07_benchmark_scaling.ipynb
+   Runs 7 configurations sequentially (each in an isolated subprocess),
+   produces a results table, three plots, and a CSV.
+
+
+BENCHMARK CONFIGURATIONS
+------------------------
+
+  Config      Module           n_workers   OMP threads
+  -------     ------           ---------   -----------
+  Serial      inference        —           8  (numpy/BLAS multi-threaded)
+  MP 8w       mp_inference     8           1  per worker
+  MP 16w      mp_inference     16          1  per worker
+  MP 32w      mp_inference     32          1  per worker
+  Dask 8w     dask_inference   8           1  per worker
+  Dask 16w    dask_inference   16          1  per worker
+  Dask 32w    dask_inference   32          1  per worker
+
+Note on serial thread count: the serial baseline runs with OMP_NUM_THREADS=8
+so numpy/BLAS can use 8 cores.  MP and Dask workers each use OMP_NUM_THREADS=1
+(one thread per process).  Both are set in each subprocess before numpy loads,
+ensuring clean isolation.  SERIAL_N_THREADS is configurable in Cell 1.
+
+Each config runs in its own subprocess to guarantee:
+  - No thread count leakage between runs
+  - No shared numpy/LAL state
+  - Clean wall-clock timing via perf_counter
+
+
+EVENT AND BANK
+--------------
+
+  Event:   gpu/artifacts/nb04/nb04_event.npz
+  Bank:    gpu/artifacts/profile_run/test_bank_1048576/
+             1,048,576 samples, blocksize=1024, IMRPhenomXODE
+
+  Run kwargs (shared across all configs):
+    n_ext=512, n_phi=32, n_t=64
+    blocksize=2048, single_detector_blocksize=2048
+    mchirp_guess=None, seed=42
+    max_incoherent_lnlike_drop=20.0
+
+
+OUTPUT STRUCTURE
+----------------
+
+  gpu/artifacts/benchmark_scaling/
+    benchmark_serial/           — Serial run output
+    benchmark_mp_8w/            — MP 8-worker output
+    benchmark_mp_16w/
+    benchmark_mp_32w/
+    benchmark_dask_8w/          — Dask 8-worker output
+    benchmark_dask_16w/
+    benchmark_dask_32w/
+    benchmark_results.csv       — Wall-clock per stage per config
+    benchmark_stages.png        — Grouped bar chart: stage x config
+    benchmark_total.png         — Total wall-clock per config
+    benchmark_speedup.png       — Speedup (stages 2, 4, 5) vs serial
+
+
+HOW TO RUN THE BENCHMARK
+------------------------
+
+  1. Open the notebook:
+       notebooks/07_benchmark_scaling/07_benchmark_scaling.ipynb
+
+  2. Run all cells in order.  Total runtime is dominated by the 7 full
+     inference runs; expect several hours on the 1M-sample bank.
+
+  3. Results are printed in Cell 4 (results table), Cell 8 (speedup table),
+     and saved to gpu/artifacts/benchmark_scaling/.
+
+
+STAGES TIMED
+------------
+
+  Stage 1 — Setup          (serial in all configs)
+  Stage 2 — Incoherent     (parallel in MP / Dask; threaded in Serial)
+  Stage 3 — Cross-bank     (serial in all configs)
+  Stage 4 — Extrinsic      (parallel in MP / Dask; threaded in Serial)
+  Stage 5 — Coherent       (parallel in MP / Dask; threaded in Serial)
+  Stage 6 — Postprocess    (serial in all configs)
+
+  Stages 2, 4, 5 are expected to show speedup with more workers.
+  Stages 1, 3, 6 are serial baselines and should be ~equal across configs.
+
+
+TEST RESULTS (pre-benchmark)
+----------------------------
+
+  13/14 tests pass.
+
+  PASSED  tests/test_basic.py::test_import
+  PASSED  tests/test_conditional_sampling.py::test_precessing_mode
+  PASSED  tests/test_conditional_sampling.py::test_aligned_spin_mode
+  PASSED  tests/test_conditional_sampling.py::test_json_serialization
+  PASSED  tests/test_conditional_sampling.py::test_vectorized_sampling
+  PASSED  tests/test_conditional_sampling.py::test_zoomer_with_weights
+  FAILED  tests/test_disjoint_bank_weights.py::test_multi_bank_inference_3_banks
+            Evidence mismatch: 33.50 vs 32.40 (pre-existing failure, unrelated
+            to this implementation)
+  PASSED  tests/test_evidence_calibration.py (2 tests)
+  PASSED  tests/test_q_max.py (4 tests)
+
+  Smoke tests:
+    python -c "from dot_pe import mp_inference; print('Pool OK')"   -> Pool OK
+    python -c "from dot_pe import dask_inference; print('Dask OK')" -> Dask OK
+
+
+FILES MODIFIED / CREATED
+-------------------------
+
+  Modified (restored from main):
+    dot_pe/mp_inference.py
+    dot_pe/parallel_extrinsic.py
+
+  Created:
+    dot_pe/dask_inference.py
+    notebooks/07_benchmark_scaling/07_benchmark_scaling.ipynb

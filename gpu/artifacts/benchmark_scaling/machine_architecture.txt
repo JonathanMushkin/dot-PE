@@ -1,0 +1,215 @@
+Machine Architecture — walle
+=============================
+Written: 2026-03-19
+Machine: walle.weizmann.ac.il
+
+
+THE MACHINE
+-----------
+One physical server. Inside it sit two AMD EPYC 9654 processors plugged
+into two CPU sockets on the same motherboard. Each socket has 96 physical
+cores. With hyperthreading (2 logical threads per core), the OS sees 384
+CPUs total. When you ask for 32 workers — no problem, that is 8% of the
+machine.
+
+
+SOCKET vs NUMA NODE — SAME THING HERE
+--------------------------------------
+On this machine, "socket" and "NUMA node" are 1:1. A socket is a
+physical CPU package — the piece of silicon you plug into the
+motherboard. A NUMA node is an OS abstraction: a group of cores that
+share a local memory bank. Because each socket has its own DDR5 DIMMs
+wired directly to it, the OS exposes one NUMA node per socket. So
+node 0 = socket 0 = the left EPYC chip; node 1 = socket 1 = the right
+EPYC chip. In other server configurations (e.g. some AMD designs with
+sub-NUMA clustering enabled) you can have multiple NUMA nodes per
+socket, but that is not the case here.
+
+
+NUMA: NON-UNIFORM MEMORY ACCESS
+---------------------------------
+Each socket has its own bank of RAM physically wired to it — ~377 GB
+each, ~754 GB total. This is a NUMA (Non-Uniform Memory Access) design.
+
+The inter-socket link (AMD's Infinity Fabric) connects the two chips,
+but crossing it costs latency. The hardware reports:
+
+  same socket  (local access)  : latency = 10  (arbitrary units)
+  cross-socket (remote access) : latency = 32  (~3x slower)
+
+If a process running on socket 0 needs data that was allocated in
+socket 1's RAM, it pays that 3x penalty on every cache-miss. For our
+benchmarks: workers that stay on one socket are fast. Workers spread
+across both sockets can hit that cross-socket penalty silently.
+
+
+THE CACHE HIERARCHY — FOUR LEVELS OF MEMORY SPEED
+---------------------------------------------------
+This is the classic memory pyramid. Closer to the core = faster + smaller.
+
+    [Core 0]  [Core 1] ... [Core 7]    <- 8 physical cores in one chiplet
+        |           |
+      L1d+L1i     L1d+L1i              <- 32 KB each, private to each core
+        |           |
+        L2          L2                 <- 1 MB each, private to each core
+        |           |
+        +-----------+------ L3 ------  <- 32 MB, shared by all 8 cores
+                                          in the chiplet
+
+L1 — 32 KB, ~1 ns
+  Split into data cache (L1d) and instruction cache (L1i).
+  Private to one physical core (shared between its 2 hyperthreads).
+  Almost as fast as a register. Holds the "hot" working set of whatever
+  the core is computing right now.
+
+L2 — 1 MB, ~4 ns
+  Still private to one core. The L1 overflow bin.
+  1 MB sounds small, but for inference workers doing waveform arithmetic
+  on chunks of ~2048 samples x a few arrays, a lot of the hot data fits.
+
+L3 — 32 MB per chiplet, ~30 ns
+  Shared by 8 cores within a chiplet.
+  AMD builds EPYC as 12 chiplets per socket (called CCDs — Core Complex
+  Dies), each a small silicon die with 8 cores sharing 32 MB of L3.
+
+    12 chiplets x  8 cores = 96 cores per socket       (matches lscpu)
+    12 chiplets x 32 MB    = 384 MB L3 per socket
+     2 sockets  x 384 MB   = 768 MB L3 total            (matches lscpu)
+
+  For our 8-worker benchmarks: if all 8 workers land on the same chiplet,
+  they compete for 32 MB of L3. Spread across chiplets, each worker gets
+  its own 32 MB slice — much better.
+
+RAM — 377 GB per socket, ~80 ns
+  Main memory. When L3 misses, the CPU goes here.
+  3x slower if you are hitting the wrong NUMA node (see above).
+
+
+WHAT THIS MEANS FOR OUR BENCHMARKS
+------------------------------------
+Each inference worker loads ~500 MB of waveform data per run (thin_setup).
+That is way too big for any cache — it lives entirely in RAM. The
+computation is dominated by memory bandwidth, not raw arithmetic.
+
+This is why:
+  - Stage 2 (incoherent): scales nearly linearly 8w -> 32w. Each worker
+    streams its own independent chunk of the bank with no overlap.
+  - Stage 5 (coherent): scales less perfectly. All workers pull large
+    arrays from RAM simultaneously, and they can start saturating the
+    memory bus at high worker counts.
+
+The OMP_NUM_THREADS=1 setting enforced per worker is critical here.
+Without it, numpy/BLAS would try to spawn multiple threads per worker.
+With 8 workers x 8 BLAS threads = 64 competing threads all hammering
+L3/RAM bandwidth at once — they would all slow each other down. One
+thread per worker keeps each worker's memory access pattern clean and
+predictable.
+
+
+WHAT THE BENCHMARK RESULTS TELL US
+------------------------------------
+MP and Dask are essentially the same, and both are substantially faster
+than serial. At 32 workers: MP 237s, Dask 258s, Serial 1523s — roughly
+6x total speedup for both parallel backends.
+
+Stage 2 (incoherent match filter) is where parallelism pays off most.
+It scales nearly linearly: 32 workers give ~25x speedup over serial.
+This stage is embarrassingly parallel — each worker streams an
+independent chunk of the bank from RAM with no shared state — so the
+machine's 754 GB of RAM and high aggregate bandwidth are the only
+limits.
+
+Stage 5 (coherent) scales less well (~3x at 32w). All workers access
+overlapping large arrays simultaneously, which starts to saturate the
+memory bus. Still a solid gain, but the architecture caps it earlier.
+
+Stage 4 (extrinsic) barely parallelizes (~1.1x) because it uses an
+early-stopping serial path: it shuffles candidates and stops as soon as
+it has found enough MI objects (~200 out of 39K). There is no
+meaningful work to distribute.
+
+WHY MP ≈ DASK, AND WHEN THAT WOULD CHANGE
+------------------------------------------
+The root cause of the equality is that the workload is memory-bandwidth-
+bound and embarrassingly parallel. Once a worker is running, it streams
+data from RAM as fast as the memory bus allows. The scheduler overhead
+(Dask's task graph + pickle round-trip vs MP's fork + COW) is measured
+in milliseconds per chunk while each chunk takes tens of seconds. So
+the dispatch mechanism is irrelevant — it is dwarfed by the actual work.
+
+What this tells us about other configurations and machines:
+
+  OMP_NUM_THREADS > 1
+  -------------------
+  If you set OMP_NUM_THREADS=4 with 8 workers, you now have 32 BLAS
+  threads drawing from RAM simultaneously instead of 8. For a compute-
+  bound workload (dense linear algebra on data already in cache), BLAS
+  multi-threading is efficient and you would see a speedup. For this
+  workload — waveform chunks that are too large for any cache — each
+  additional BLAS thread adds another RAM-streaming lane competing for
+  the same memory bus bandwidth, while also increasing L3 contention
+  within the chiplet. The net effect would likely be slower, not faster.
+  The correct rule here: total threads = total cores you want to use;
+  distribute as one thread per process (worker), not multiple threads
+  per process.
+
+  Fewer cores per node (e.g. a laptop or a small cloud VM)
+  ---------------------------------------------------------
+  On a machine with, say, 8 cores total, 32 workers is not an option.
+  If worker count is constrained to 4-8, Stage 2 would not scale as far,
+  but the MP vs Dask comparison would remain the same — both are limited
+  by the same hardware, not by the scheduler.
+
+  Unequal work chunks
+  -------------------
+  Our benchmark divides the bank into equal-size chunks per worker.
+  If chunk sizes varied significantly (e.g. because templates have
+  different lengths, or some pass a filter early), MP's static
+  distribution (Pool.map with fixed chunks) would leave fast workers
+  idle while slow workers finish. Dask's work-stealing scheduler would
+  reassign idle workers dynamically. This is the main case where Dask
+  is structurally better than MP on a single machine, independent of
+  hardware. For this pipeline the chunks are effectively equal so it
+  does not apply.
+
+  Multiple machines (the real Dask use case)
+  -------------------------------------------
+  MP cannot span machine boundaries — it is restricted to shared memory
+  within one OS instance. Dask was designed for distributed clusters.
+  If you had, say, 4 servers × 32 cores = 128 workers, Dask would
+  handle the network communication, serialization, and fault tolerance
+  transparently; MP would require a fundamentally different
+  implementation (MPI or similar). This is where the choice of Dask
+  pays off: on this single machine it costs nothing relative to MP,
+  but it keeps the door open to scaling out horizontally.
+
+  NUMA-aware placement
+  --------------------
+  On this machine, workers are spread across both sockets by the OS
+  scheduler. A worker pinned to socket 0 that accesses data allocated
+  on socket 1 pays the 3x cross-socket latency penalty. Neither MP nor
+  Dask does NUMA-aware placement automatically. You could enforce it
+  with numactl (e.g. numactl --cpunodebind=0 --membind=0 per worker),
+  but we have not done so. At 32 workers — 16 per socket — the OS
+  typically keeps workers close to their data anyway, which is why
+  Stage 2 still scales nearly linearly. At much higher worker counts
+  this could degrade.
+
+
+QUICK REFERENCE
+---------------
+Sockets (physical CPUs)  : 2
+Cores per socket          : 96
+Logical CPUs (w/ HT)     : 384  (192 per socket)
+RAM per socket            : ~377 GB
+RAM total                 : ~754 GB
+NUMA nodes                : 2  (one per socket)
+NUMA local latency        : 10
+NUMA remote latency       : 32  (~3x slower cross-socket)
+L1 cache                  : 32 KB per core  (data + instruction, separate)
+L2 cache                  : 1 MB per core
+L3 cache                  : 32 MB per 8-core chiplet (CCD)
+L3 total                  : 768 MB  (24 chiplets x 32 MB)
+Chiplets (CCDs) per socket: 12
+CPU model                 : AMD EPYC 9654 (Genoa architecture)
+Max boost clock           : 3707 MHz

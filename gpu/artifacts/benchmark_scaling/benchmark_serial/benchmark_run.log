@@ -1,0 +1,42 @@
+Setting paths & loading configurations...
+Creating COGWHEEL objects...
+Setting reference from injection.
+Running inference with 1 bank(s)
+
+=== Incoherent selection per bank ===
+
+Processing bank: bank_0
+Collecting intrinsic samples for bank bank_0...
+Bank bank_0: 1048576 intrinsic samples evaluated.
+
+=== Cross-bank threshold selection ===
+Global maximum incoherent lnlike: 76.74
+Global threshold: 56.74
+Bank bank_0: 39318 intrinsic samples passed global threshold.
+
+=== Extrinsic sample generation ===
+Generating extrinsic samples (global, multibank)...
+
+=== Coherent inference per bank ===
+
+Processing bank: bank_0
+Creating 20 x 1 likelihood blocks...
+
+=== Combining results ===
+
+Combining prob_samples across banks...
+Standardizing samples...
+Standardizing samples done in 1.24 seconds.
+Saving samples to file...
+Samples saved to:
+ /home/jonatahm/dot-pe-future/gpu/artifacts/benchmark_scaling/benchmark_serial/samples.feather
+
+Stage timings:
+  Stage 1 (setup)              5.8 s
+  Stage 2 (incoherent)         1166.3 s
+  Stage 3 (cross-bank)         0.0 s
+  Stage 4 (extrinsic)          134.6 s
+  Stage 5 (coherent)           200.3 s
+  Stage 6 (postprocess)        16.1 s
+
+Total wall-clock time: 1523.1 s
