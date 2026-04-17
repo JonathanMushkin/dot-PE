@@ -512,6 +512,8 @@ def run(
         None,
     ] = None,
     profile: bool = False,
+    load_inds: bool = False,
+    inds_path: Union[Path, str, Dict[str, Union[Path, str]], None] = None,
 ) -> Path:
     """Run inference with multiprocessing.  Drop-in for inference.run().
 
@@ -522,6 +524,15 @@ def run(
     n_ext_workers : int
         Workers for extrinsic MarginalizationInfo collection
         (Stage 4).  1 = serial.
+    load_inds : bool
+        If True, skip Stage 2 (incoherent selection) and load pre-computed
+        indices from *inds_path* instead.  Useful for experiments that reuse
+        the same intrinsic sample set with different extrinsic sampling.
+    inds_path : str, Path, or dict mapping bank_id -> path
+        Path(s) to intrinsic_samples.npz produced by a previous run.
+        Required when load_inds=True.  For single-bank runs a bare path is
+        accepted; for multi-bank runs supply a dict {bank_id: path}.
+        Each npz must contain 'inds', 'incoherent_lnlikes', and 'lnlikes_di'.
     """
     t0 = time.time()
     t_stages = {}
@@ -580,32 +591,58 @@ def run(
 
     # ── Stage 2: incoherent selection (parallelized) ──────────────────
     _t = time.perf_counter()
-    print("\n=== Incoherent selection per bank (MP) ===")
     candidate_inds_by_bank = {}
     lnlikes_by_bank = {}
     lnlikes_di_by_bank = {}
 
-    for bank_id, bank_path in ctx["banks"].items():
-        print(f"\nProcessing bank: {bank_id}")
-        inds, lnlike_di, incoherent_lnlikes = _collect_incoherent_mp(
-            event_data=ctx["event_data"],
-            par_dic_0=ctx["par_dic_0"],
-            bank_folder=Path(bank_path),
-            fbin=ctx["fbin"],
-            approximant=ctx["approximant"],
-            m_arr=ctx["m_arr"],
-            n_int=ctx["n_int_dict"][bank_id],
-            n_phi=n_phi,
-            n_t=n_t,
-            batch_size=single_detector_blocksize,
-            size_limit=size_limit,
-            n_workers=n_workers,
-            profile_dir=str(profiles_dir) if profiles_dir else None,
-        )
-        candidate_inds_by_bank[bank_id] = inds
-        lnlikes_by_bank[bank_id] = incoherent_lnlikes
-        lnlikes_di_by_bank[bank_id] = lnlike_di
-        print(f"Bank {bank_id}: {len(inds)} intrinsic samples evaluated.")
+    if load_inds:
+        print("\n=== Stage 2: loading pre-computed incoherent indices ===")
+        if inds_path is None:
+            raise ValueError("load_inds=True requires inds_path to be set")
+        if isinstance(inds_path, dict):
+            inds_path_by_bank = {k: Path(v) for k, v in inds_path.items()}
+        else:
+            bank_ids = list(ctx["banks"].keys())
+            if len(bank_ids) != 1:
+                raise ValueError(
+                    "load_inds with a bare inds_path is only supported for "
+                    f"single-bank runs; got banks: {bank_ids}"
+                )
+            inds_path_by_bank = {bank_ids[0]: Path(inds_path)}
+
+        for bank_id in ctx["banks"]:
+            npz_path = inds_path_by_bank[bank_id]
+            print(f"  Bank {bank_id}: loading from {npz_path}")
+            npz = np.load(npz_path, allow_pickle=False)
+            candidate_inds_by_bank[bank_id] = npz["inds"]
+            lnlikes_by_bank[bank_id] = npz["incoherent_lnlikes"]
+            lnlikes_di_by_bank[bank_id] = npz["lnlikes_di"]
+            print(
+                f"  Bank {bank_id}: {len(npz['inds'])} pre-computed indices loaded."
+            )
+    else:
+        print("\n=== Incoherent selection per bank (MP) ===")
+        for bank_id, bank_path in ctx["banks"].items():
+            print(f"\nProcessing bank: {bank_id}")
+            inds, lnlike_di, incoherent_lnlikes = _collect_incoherent_mp(
+                event_data=ctx["event_data"],
+                par_dic_0=ctx["par_dic_0"],
+                bank_folder=Path(bank_path),
+                fbin=ctx["fbin"],
+                approximant=ctx["approximant"],
+                m_arr=ctx["m_arr"],
+                n_int=ctx["n_int_dict"][bank_id],
+                n_phi=n_phi,
+                n_t=n_t,
+                batch_size=single_detector_blocksize,
+                size_limit=size_limit,
+                n_workers=n_workers,
+                profile_dir=str(profiles_dir) if profiles_dir else None,
+            )
+            candidate_inds_by_bank[bank_id] = inds
+            lnlikes_by_bank[bank_id] = incoherent_lnlikes
+            lnlikes_di_by_bank[bank_id] = lnlike_di
+            print(f"Bank {bank_id}: {len(inds)} intrinsic samples evaluated.")
 
     # Free incoherent pool overhead (fragmented heap pages, inter-
     # process communication buffers) before Stage 3/4/5 so all
@@ -811,6 +848,17 @@ def main():
         default=None,
         help="path to cached extrinsic_samples.feather to skip re-drawing",
     )
+    p.add_argument(
+        "--load-inds",
+        action="store_true",
+        default=False,
+        help="skip Stage 2 and load pre-computed intrinsic indices from --inds-path",
+    )
+    p.add_argument(
+        "--inds-path",
+        default=None,
+        help="path to intrinsic_samples.npz from a prior run (required with --load-inds)",
+    )
     args = p.parse_args()
 
     run(
@@ -831,6 +879,8 @@ def main():
         max_bestfit_lnlike_diff=args.max_bestfit_lnlike_diff,
         draw_subset=args.draw_subset,
         extrinsic_samples=args.extrinsic_samples,
+        load_inds=args.load_inds,
+        inds_path=args.inds_path,
     )
 
 
