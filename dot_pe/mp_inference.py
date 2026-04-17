@@ -859,6 +859,12 @@ def main():
         default=None,
         help="path to intrinsic_samples.npz from a prior run (required with --load-inds)",
     )
+    p.add_argument(
+        "--profile",
+        action="store_true",
+        default=False,
+        help="enable per-worker cProfile; writes worker_profiles/ + profile_output.prof/.txt to rundir",
+    )
     args = p.parse_args()
 
     run(
@@ -881,6 +887,7 @@ def main():
         extrinsic_samples=args.extrinsic_samples,
         load_inds=args.load_inds,
         inds_path=args.inds_path,
+        profile=args.profile,
     )
 
 
