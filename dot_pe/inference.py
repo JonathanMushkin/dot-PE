@@ -1037,6 +1037,22 @@ def select_intrinsic_samples_per_bank_incoherently(
             n_phi_incoherent = (
                 n_phi_incoherent if n_phi_incoherent is not None else n_phi
             )
+            bank_preselected = (
+                preselected_indices_dict.get(bank_id) if preselected_indices_dict else None
+            )
+            if bank_preselected is not None:
+                if isinstance(bank_preselected, (str, Path)):
+                    bank_preselected_n = len(np.load(bank_preselected))
+                else:
+                    bank_preselected_n = len(bank_preselected)
+                if n_int_k < bank_preselected_n:
+                    warnings.warn(
+                        f"Bank {bank_id}: n_int ({n_int_k}) is smaller than the "
+                        f"number of preselected indices ({bank_preselected_n}). "
+                        "Stage 2 will evaluate all preselected indices, but "
+                        "downstream bookkeeping still uses n_int.",
+                        stacklevel=2,
+                    )
             inds, lnlikes_di, incoherent_lnlikes = (
                 collect_int_samples_from_single_detectors(
                     event_data=event_data,
@@ -1048,9 +1064,7 @@ def select_intrinsic_samples_per_bank_incoherently(
                     bank_folder=bank_path,
                     i_int_start=0,
                     max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
-                    preselected_indices=preselected_indices_dict.get(bank_id)
-                    if preselected_indices_dict
-                    else None,
+                    preselected_indices=bank_preselected,
                     apply_threshold=False,
                 )
             )

@@ -56,6 +56,7 @@ import pstats
 
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
@@ -128,7 +129,8 @@ def _incoherent_chunk_worker_inner(sample_start, sample_end, s):
     size_limit = s["size_limit"]
     batch_size = s["batch_size"]
 
-    chunk_inds = np.arange(sample_start, sample_end)
+    intrinsic_indices = s["intrinsic_indices"]
+    chunk_inds = intrinsic_indices[sample_start:sample_end]
     n_chunk = len(chunk_inds)
     n_det = len(event_data.detector_names)
     lnlike_di = np.zeros((n_det, n_chunk))
@@ -222,25 +224,50 @@ def _collect_incoherent_mp(
     batch_size,
     size_limit,
     n_workers,
+    preselected_indices=None,
     profile_dir=None,
 ):
     """
     Parallel replacement for collect_int_samples_from_single_detectors().
 
-    Splits [0, n_int) into n_workers chunks.  Workers inherit large
+    Splits the selected intrinsic indices into n_workers chunks. Workers inherit large
     shared objects via copy-on-write (COW) fork from _incoherent_setup.
     Returns (inds, lnlike_di, incoherent_lnlikes) with no threshold.
     """
     global _incoherent_setup
 
+    if preselected_indices is not None:
+        if isinstance(preselected_indices, (str, Path)):
+            intrinsic_indices = np.load(preselected_indices)
+        elif isinstance(preselected_indices, list):
+            intrinsic_indices = np.array(preselected_indices, dtype=np.int_)
+        elif isinstance(preselected_indices, np.ndarray):
+            intrinsic_indices = preselected_indices
+        else:
+            raise TypeError(
+                "preselected_indices must be array, list, str, Path, or None, "
+                f"got {type(preselected_indices)}"
+            )
+    else:
+        intrinsic_indices = np.arange(n_int, dtype=np.int_)
+
+    n_total = len(intrinsic_indices)
+    if n_total == 0:
+        n_det = len(event_data.detector_names)
+        return (
+            np.array([], dtype=np.int_),
+            np.zeros((n_det, 0), dtype=np.float64),
+            np.array([], dtype=np.float64),
+        )
+
     # Round chunk size up so it aligns with batch_size boundaries.
-    raw_chunk = max(batch_size, (n_int + n_workers - 1) // n_workers)
+    raw_chunk = max(batch_size, (n_total + n_workers - 1) // n_workers)
     chunk_size = ((raw_chunk + batch_size - 1) // batch_size) * batch_size
 
     sample_ranges = []
     s = 0
-    while s < n_int:
-        sample_ranges.append((s, min(s + chunk_size, n_int)))
+    while s < n_total:
+        sample_ranges.append((s, min(s + chunk_size, n_total)))
         s += chunk_size
 
     worker_args = [(s, e) for s, e in sample_ranges]
@@ -259,6 +286,7 @@ def _collect_incoherent_mp(
         "n_t": n_t,
         "size_limit": size_limit,
         "batch_size": batch_size,
+        "intrinsic_indices": intrinsic_indices,
         "_profile_dir": profile_dir,
     }
     try:
@@ -514,11 +542,23 @@ def run(
     profile: bool = False,
     load_inds: bool = False,
     inds_path: Union[Path, str, Dict[str, Union[Path, str]], None] = None,
+    preselected_indices: Union[
+        Dict[str, Union[NDArray[np.int_], List[int], str, Path]],
+        NDArray[np.int_],
+        List[int],
+        str,
+        Path,
+        None,
+    ] = None,
 ) -> Path:
     """Run inference with multiprocessing.  Drop-in for inference.run().
 
     Parameters
     ----------
+    n_int : int, list[int], dict[str, int], or None
+        Number of intrinsic samples per bank when Stage 2 evaluates samples
+        from the bank directly (default behavior).
+        Ignored for index generation when ``preselected_indices`` is provided.
     n_workers : int or None
         Workers for incoherent + coherent stages.  None -> os.cpu_count().
     n_ext_workers : int
@@ -533,6 +573,29 @@ def run(
         Required when load_inds=True.  For single-bank runs a bare path is
         accepted; for multi-bank runs supply a dict {bank_id: path}.
         Each npz must contain 'inds', 'incoherent_lnlikes', and 'lnlikes_di'.
+    preselected_indices : dict, np.ndarray, list[int], str, Path, or None
+        Optional intrinsic indices to evaluate in Stage 2 (when
+        ``load_inds=False``). Can be an in-memory array/list or a path to
+        ``.npy``. For multi-bank runs, a dict ``{bank_id: indices_or_path}``
+        is supported via the Python API.
+
+    Notes
+    -----
+    Stage 2 index source precedence:
+      1) ``load_inds=True``: load indices/likelihoods from ``inds_path`` and
+         ignore ``preselected_indices`` and ``n_int`` for Stage 2 selection.
+         ``inds_path`` is required.
+      2) ``load_inds=False`` and ``preselected_indices is not None``:
+         evaluate exactly the provided indices; ``n_int`` is ignored for
+         index generation.
+      3) ``load_inds=False`` and ``preselected_indices is None``:
+         evaluate a contiguous range per bank, always starting at 0:
+         ``np.arange(n_int_k)``.
+         Here ``n_int_k`` is the bank-specific value produced from ``n_int``:
+         - ``n_int`` is ``None``: use all intrinsic samples in each bank.
+         - ``n_int`` is an ``int``: use that many samples for every bank.
+         - ``n_int`` is a ``list``: one value per bank in bank order.
+         - ``n_int`` is a ``dict``: explicit ``{bank_id: n_int_k}``.
     """
     t0 = time.time()
     t_stages = {}
@@ -566,7 +629,7 @@ def run(
         mchirp_guess=mchirp_guess,
         extrinsic_samples=extrinsic_samples,
         n_phi_incoherent=None,
-        preselected_indices=None,
+        preselected_indices=preselected_indices,
         bank_logw_override=bank_logw_override,
         coherent_posterior_kwargs={},
     )
@@ -595,6 +658,10 @@ def run(
     lnlikes_by_bank = {}
     lnlikes_di_by_bank = {}
 
+    # Stage 2 precedence:
+    #   load_inds -> use inds_path
+    #   else preselected_indices -> use explicit indices
+    #   else -> use n_int-derived range per bank
     if load_inds:
         print("\n=== Stage 2: loading pre-computed incoherent indices ===")
         if inds_path is None:
@@ -624,6 +691,23 @@ def run(
         print("\n=== Incoherent selection per bank (MP) ===")
         for bank_id, bank_path in ctx["banks"].items():
             print(f"\nProcessing bank: {bank_id}")
+            bank_preselected = None
+            if ctx.get("preselected_indices_dict") is not None:
+                bank_preselected = ctx["preselected_indices_dict"].get(bank_id)
+            if bank_preselected is not None:
+                if isinstance(bank_preselected, (str, Path)):
+                    bank_preselected_n = len(np.load(bank_preselected))
+                else:
+                    bank_preselected_n = len(bank_preselected)
+                n_int_k = ctx["n_int_dict"][bank_id]
+                if n_int_k < bank_preselected_n:
+                    warnings.warn(
+                        f"Bank {bank_id}: n_int ({n_int_k}) is smaller than the "
+                        f"number of preselected indices ({bank_preselected_n}). "
+                        "Stage 2 will evaluate all preselected indices, but "
+                        "downstream bookkeeping still uses n_int.",
+                        stacklevel=2,
+                    )
             inds, lnlike_di, incoherent_lnlikes = _collect_incoherent_mp(
                 event_data=ctx["event_data"],
                 par_dic_0=ctx["par_dic_0"],
@@ -637,6 +721,7 @@ def run(
                 batch_size=single_detector_blocksize,
                 size_limit=size_limit,
                 n_workers=n_workers,
+                preselected_indices=bank_preselected,
                 profile_dir=str(profiles_dir) if profiles_dir else None,
             )
             candidate_inds_by_bank[bank_id] = inds
@@ -861,6 +946,11 @@ def main():
         help="path to intrinsic_samples.npz from a prior run (required with --load-inds)",
     )
     p.add_argument(
+        "--preselected-indices",
+        default=None,
+        help="path to .npy file of intrinsic indices to evaluate",
+    )
+    p.add_argument(
         "--profile",
         action="store_true",
         default=False,
@@ -888,6 +978,7 @@ def main():
         extrinsic_samples=args.extrinsic_samples,
         load_inds=args.load_inds,
         inds_path=args.inds_path,
+        preselected_indices=args.preselected_indices,
         profile=args.profile,
     )
 
