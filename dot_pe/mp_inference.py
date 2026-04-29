@@ -711,6 +711,7 @@ def run(
         pr=ctx["pr"],
         n_draws=n_draws,
         draw_subset=draw_subset,
+        size_limit=size_limit,
     )
 
     t_stages["6_postprocess"] = time.perf_counter() - _t

@@ -1414,8 +1414,15 @@ def aggregate_and_save_results(
     pr: Prior,
     n_draws: Optional[int],
     draw_subset: bool,
+    size_limit: int,
 ) -> Path:
-    """Aggregate results across banks and save final outputs."""
+    """Aggregate results across banks and save final outputs.
+
+    After concatenating per-bank ``prob_samples``, if the merged table has more
+    than ``size_limit`` rows, only the ``size_limit`` largest ``bestfit_lnlike``
+    rows are kept (same rule as per-bank coherent caps), then
+    ``ln_weight_unnormalized`` / ``weights`` apply to that trimmed set.
+    """
     print("\n=== Combining results ===")
 
     N_total = sum(r["N_k"] for r in per_bank_results)
@@ -1427,6 +1434,9 @@ def aggregate_and_save_results(
     lnZ_values = [r["lnZ_k"] for r in per_bank_results]
     lnZ_total = safe_logsumexp(lnZ_values)
 
+    # lnZ_discarded_* is summed across banks like lnZ_k; it does not include
+    # contributions from rows dropped only at merged prob_samples trim time.
+    # Multi-bank behaviour for ln_evidence_discarded is not covered by tests.
     lnZ_discarded_values = [r["lnZ_discarded_k"] for r in per_bank_results]
     lnZ_discarded_total = safe_logsumexp(lnZ_discarded_values)
 
@@ -1452,6 +1462,11 @@ def aggregate_and_save_results(
             combined_prob_samples.loc[mask, "ln_weight_unnormalized"] = (
                 combined_prob_samples.loc[mask, "ln_posterior"] - np.log(n_k)
             )
+
+    if len(combined_prob_samples) > size_limit:
+        combined_prob_samples = combined_prob_samples.nlargest(
+            size_limit, "bestfit_lnlike"
+        ).reset_index(drop=True)
 
     combined_prob_samples["weights"] = exp_normalize(
         combined_prob_samples["ln_weight_unnormalized"].values
@@ -1695,6 +1710,7 @@ def run(
         pr=ctx["pr"],
         n_draws=n_draws,
         draw_subset=draw_subset,
+        size_limit=size_limit,
     )
 
 
@@ -1826,6 +1842,7 @@ def run_timed(**kwargs) -> Path:
         pr=ctx["pr"],
         n_draws=kwargs.get("n_draws"),
         draw_subset=kwargs.get("draw_subset", True),
+        size_limit=kwargs.get("size_limit", 10**7),
     )
     t_stages["6_postprocess"] = _time.perf_counter() - _t
 

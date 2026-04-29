@@ -714,7 +714,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
             )
 
             # Concatenate `self.prob_samples` and `new_samples_df` in a safe manner.
-            if self.prob_samples.size:
+            if len(self.prob_samples) > 0:
                 self.prob_samples = pd.concat(
                     [
                         self.prob_samples.iloc[prob_samples_accepted_inds],
@@ -729,7 +729,7 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         self.prob_samples.reset_index(drop=True, inplace=True)
         # if prob_samples is at maximum allowed size, accept only
         # samples with likelihood higher than its minimum likelihood.
-        if self.prob_samples.size == self.size_limit:
+        if len(self.prob_samples) == self.size_limit:
             self.min_bestfit_lnlike_to_keep = np.max(
                 (
                     self.prob_samples["bestfit_lnlike"].values.min(),
