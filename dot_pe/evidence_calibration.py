@@ -24,7 +24,14 @@ from cogwheel.utils import read_json
 
 from . import likelihood_calculating, sample_processing
 from .likelihood_calculating import LinearFree
-from .utils import inds_to_blocks, parse_bank_folders, safe_logsumexp, validate_bank_configs
+from .utils import (
+    inds_to_blocks,
+    parse_bank_folders,
+    resolve_bank_modes,
+    safe_logsumexp,
+    validate_bank_configs,
+    waveform_generator_from_config,
+)
 
 # Threshold for dropping (i,e,o) combinations with approx lnlike below max - cut.
 # Large value = keep almost all non-negligible contributions.
@@ -193,24 +200,22 @@ def _compute_evidence_per_bank_slim(
     ln_evidence_discarded : float
         Always -np.inf (we do not track discarded in slim path).
     """
-    from cogwheel.waveform import WaveformGenerator
-
     bank_path = Path(bank_path)
     waveform_dir = bank_path / "waveforms"
     bank_file_path = bank_path / "intrinsic_sample_bank.feather"
     with open(bank_path / "bank_config.json", "r", encoding="utf-8") as f:
         bank_config = json.load(f)
         fbin = np.array(bank_config["fbin"])
-        approximant = bank_config["approximant"]
 
-    wfg = WaveformGenerator.from_event_data(event_data, approximant)
+    wfg = waveform_generator_from_config(event_data, bank_config)
     likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
 
     intrinsic_sample_processor = sample_processing.IntrinsicSampleProcessor(
         likelihood_linfree, waveform_dir
     )
+    _, resolved_m_arr = resolve_bank_modes(bank_config)
     likelihood_calc = likelihood_calculating.LikelihoodCalculator(
-        n_phi=n_phi, m_arr=np.array(m_arr)
+        n_phi=n_phi, m_arr=resolved_m_arr
     )
     dh_weights_dmpb, hh_weights_dmppb = intrinsic_sample_processor.get_summary()
 
@@ -441,7 +446,7 @@ def compute_evidence_on_noise(
     banks = parse_bank_folders(bank_folder)
     bank_paths = list(banks.values())
     bank_config = validate_bank_configs(bank_paths)
-    m_arr = np.array(bank_config["m_arr"])
+    _, m_arr = resolve_bank_modes(bank_config)
 
     n_ext = int(run_kwargs["n_ext"])
     n_phi = int(run_kwargs["n_phi"])

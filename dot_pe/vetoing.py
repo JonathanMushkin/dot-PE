@@ -22,7 +22,11 @@ from cogwheel.utils import get_rundir, mkdirs, NumpyEncoder
 from cogwheel.waveform import WaveformGenerator
 
 from .likelihood_calculating import LinearFree
-from .utils import get_event_data
+from .utils import (
+    get_event_data,
+    resolve_bank_modes,
+    waveform_generator_from_config,
+)
 from .single_detector import SingleDetectorProcessor
 
 
@@ -350,11 +354,10 @@ def get_block_likelihood(
     waveform_dir = bank_folder / "waveforms"
     with open(bank_folder / "bank_config.json", "r") as f:
         bank_config = json.load(f)
-        approximant = bank_config["approximant"]
         fbin = np.array([bank_config["fbin"]])
-        m_arr = np.array(bank_config["m_arr"])
+    _, m_arr = resolve_bank_modes(bank_config)
     event_data = get_event_data(event)
-    wfg = WaveformGenerator.from_event_data(event_data, approximant=approximant)
+    wfg = waveform_generator_from_config(event_data, bank_config)
 
     likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
     block_likelihood = SingleDetectorProcessor(

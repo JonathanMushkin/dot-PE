@@ -37,7 +37,7 @@ from cogwheel.gw_utils import DETECTORS, get_geocenter_delays  # noqa: E402
 from cogwheel.likelihood import RelativeBinningLikelihood, LookupTable  # noqa: E402
 from cogwheel.posterior import Posterior  # noqa: E402
 from cogwheel.utils import exp_normalize, get_rundir, mkdirs, read_json  # noqa: E402
-from cogwheel.waveform import WaveformGenerator  # noqa: E402
+  # noqa: E402
 from cogwheel.prior import Prior  # noqa: E402
 from .base_sampler_free_sampling import (  # noqa: E402
     get_n_effective_total_i_e,
@@ -53,8 +53,10 @@ from .utils import (  # noqa: E402
     get_event_data,
     inds_to_blocks,
     parse_bank_folders,
+    resolve_bank_modes,
     safe_logsumexp,
     validate_bank_configs,
+    waveform_generator_from_config,
 )
 from .single_detector import SingleDetectorProcessor  # noqa: E402
 from .sample_processing import (  # noqa: E402
@@ -76,10 +78,13 @@ def _create_single_detector_processor(
     size_limit: int,
 ) -> SingleDetectorProcessor:
     """Create a SingleDetectorProcessor for a given detector."""
+    bank_folder = Path(bank_folder)
+    with open(bank_folder / "bank_config.json", "r", encoding="utf-8") as f:
+        bank_config = json.load(f)
     event_data_1d = extract_single_detector_event_data(event_data, det_name)
-    wfg = WaveformGenerator.from_event_data(event_data_1d, approximant)
+    wfg = waveform_generator_from_config(event_data_1d, bank_config)
     likelihood_linfree = LinearFree(event_data_1d, wfg, par_dic_0, fbin)
-    bank_file_path = Path(bank_folder) / "intrinsic_sample_bank.feather"
+    bank_file_path = bank_folder / "intrinsic_sample_bank.feather"
     waveform_dir = Path(bank_folder) / "waveforms"
 
     return SingleDetectorProcessor(
@@ -347,9 +352,8 @@ def run_coherent_inference(
     with open(bank_folder / "bank_config.json", "r", encoding="utf-8") as f:
         bank_config = json.load(f)
         fbin = np.array(bank_config["fbin"])
-        approximant = bank_config["approximant"]
 
-    wfg = WaveformGenerator.from_event_data(event_data, approximant)
+    wfg = waveform_generator_from_config(event_data, bank_config)
 
     likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
 
@@ -857,7 +861,7 @@ def prepare_run_objects(
     fbin = np.array(bank_config["fbin"])
     approximant = bank_config["approximant"]
     f_ref = bank_config["f_ref"]
-    m_arr = np.array(bank_config["m_arr"])
+    _harmonic_modes, m_arr = resolve_bank_modes(bank_config)
 
     print("Creating COGWHEEL objects...")
     coherent_posterior_kwargs = (
@@ -1235,7 +1239,9 @@ def draw_extrinsic_samples(
     first_bank_path = list(banks.values())[0]
     waveform_dir = first_bank_path / "waveforms"
     bank_file_path = first_bank_path / "intrinsic_sample_bank.feather"
-    wfg = WaveformGenerator.from_event_data(event_data, approximant)
+    with open(first_bank_path / "bank_config.json", "r", encoding="utf-8") as f:
+        first_bank_config = json.load(f)
+    wfg = waveform_generator_from_config(event_data, first_bank_config)
     marg_ext_like = MarginalizationExtrinsicSamplerFreeLikelihood(
         event_data, wfg, par_dic_0, fbin, coherent_score=coherent_score_kwargs
     )
