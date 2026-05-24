@@ -76,10 +76,12 @@ def precompute_coherent_setup(
     bank_file_path = bank_path / "intrinsic_sample_bank.feather"
     waveform_dir = bank_path / "waveforms"
 
-    from cogwheel.waveform import WaveformGenerator
     from .likelihood_calculating import LinearFree
+    from .utils import waveform_generator_from_config
 
-    wfg = WaveformGenerator.from_event_data(event_data, approximant)
+    with open(bank_path / "bank_config.json", "r", encoding="utf-8") as f:
+        bank_config = json.load(f)
+    wfg = waveform_generator_from_config(event_data, bank_config)
     likelihood_linfree = LinearFree(event_data, wfg, par_dic_0, fbin)
 
     clp = CoherentLikelihoodProcessor(

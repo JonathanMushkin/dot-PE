@@ -6,7 +6,7 @@ import gc
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Any, Dict, List, Sequence, Tuple, Union
 
 from numpy.typing import NDArray
 
@@ -20,6 +20,7 @@ from torch.types import Device
 from cogwheel.data import EventData
 from cogwheel import gw_utils
 from cogwheel.utils import read_json
+from cogwheel.waveform import APPROXIMANTS, WaveformGenerator
 
 
 def validate_q_bounds(q_min: float, q_max: float) -> None:
@@ -300,6 +301,122 @@ def sample_k_from_N(N, k):
     return arr[:k]
 
 
+def normalize_harmonic_modes(
+    harmonic_modes: Sequence[Sequence[int]],
+) -> List[Tuple[int, int]]:
+    """Convert JSON-style [[l, m], ...] to list of (l, m) tuples."""
+    return [tuple(int(x) for x in mode) for mode in harmonic_modes]
+
+
+def m_arr_from_harmonic_modes(
+    harmonic_modes: Sequence[Tuple[int, int]],
+) -> NDArray[np.int_]:
+    """
+    Unique m values in order of first appearance.
+
+    Order matches cogwheel ``WaveformGenerator``.
+    """
+    seen = []
+    for _l, m in harmonic_modes:
+        if m not in seen:
+            seen.append(m)
+    return np.asarray(seen, dtype=int)
+
+
+def default_harmonic_modes_for_approximant(
+    approximant: str,
+) -> List[Tuple[int, int]]:
+    """
+    Default (l, m) pairs for an approximant.
+
+    Same source as ``WaveformGenerator`` (``waveform.APPROXIMANTS``).
+    """
+    if approximant == "IMRPhenomXODE":
+        # Registers IMRPhenomXODE in APPROXIMANTS (side effect on import).
+        from cogwheel.waveform_models import xode as _  # noqa: F401
+
+    if approximant not in APPROXIMANTS:
+        raise ValueError(
+            f"Unknown approximant {approximant!r}; "
+            "add it to cogwheel.waveform.APPROXIMANTS."
+        )
+    return [tuple(mode) for mode in APPROXIMANTS[approximant].harmonic_modes]
+
+
+def harmonic_modes_from_config(
+    bank_config: Dict[str, Any],
+) -> List[Tuple[int, int]]:
+    """
+    Resolve harmonic_modes from bank config.
+
+    If harmonic_modes is present, use it. Otherwise filter the approximant's
+    default modes to those with m in bank_config['m_arr'] (legacy banks).
+    """
+    if "harmonic_modes" in bank_config:
+        return normalize_harmonic_modes(bank_config["harmonic_modes"])
+
+    approximant = bank_config["approximant"]
+    if "m_arr" not in bank_config:
+        raise ValueError("bank_config must contain 'harmonic_modes' or 'm_arr'")
+    m_allowed = set(int(m) for m in bank_config["m_arr"])
+    return [
+        mode
+        for mode in default_harmonic_modes_for_approximant(approximant)
+        if mode[1] in m_allowed
+    ]
+
+
+def resolve_bank_modes(
+    bank_config: Dict[str, Any],
+) -> Tuple[List[Tuple[int, int]], NDArray[np.int_]]:
+    """
+    Return (harmonic_modes, m_arr) for a bank config.
+
+    Legacy (m_arr only): returned m_arr equals config m_arr unchanged.
+
+    New (harmonic_modes): m_arr is derived; if m_arr is also present it must
+    match.
+    """
+    harmonic_modes = harmonic_modes_from_config(bank_config)
+    derived_m_arr = m_arr_from_harmonic_modes(harmonic_modes)
+
+    if "harmonic_modes" in bank_config:
+        if "m_arr" in bank_config:
+            config_m_arr = np.asarray(bank_config["m_arr"], dtype=int)
+            if not np.array_equal(config_m_arr, derived_m_arr):
+                raise ValueError(
+                    "bank_config m_arr does not match m values derived from "
+                    f"harmonic_modes: config {config_m_arr.tolist()}, "
+                    f"derived {derived_m_arr.tolist()}"
+                )
+        return harmonic_modes, derived_m_arr
+
+    return harmonic_modes, np.asarray(bank_config["m_arr"], dtype=int)
+
+
+def harmonic_modes_to_json(
+    harmonic_modes: Sequence[Sequence[int]],
+) -> List[List[int]]:
+    """Serialize harmonic_modes for bank_config.json."""
+    normalized = normalize_harmonic_modes(harmonic_modes)
+    return [[int(l), int(m)] for l, m in normalized]
+
+
+def waveform_generator_from_config(
+    event_data: EventData,
+    bank_config: Dict[str, Any],
+    **kwargs,
+) -> WaveformGenerator:
+    """Build WaveformGenerator using modes resolved from bank_config."""
+    harmonic_modes, _ = resolve_bank_modes(bank_config)
+    return WaveformGenerator.from_event_data(
+        event_data,
+        bank_config["approximant"],
+        harmonic_modes=harmonic_modes,
+        **kwargs,
+    )
+
+
 def validate_bank_configs(bank_paths: List[Path]) -> Dict:
     """
     Validate that all bank configs match on critical parameters.
@@ -337,6 +454,9 @@ def validate_bank_configs(bank_paths: List[Path]) -> Dict:
     ref_fbin = np.array(ref_config["fbin"])
     ref_f_ref = ref_config["f_ref"]
     ref_m_arr = np.array(ref_config["m_arr"])
+    ref_has_harmonic_modes = "harmonic_modes" in ref_config
+    if ref_has_harmonic_modes:
+        ref_harmonic_modes = harmonic_modes_from_config(ref_config)
 
     # Validate against reference (q_min/q_max are intentionally not checked:
     # regular banks and low-q banks have non-overlapping q ranges by design)
@@ -363,6 +483,23 @@ def validate_bank_configs(bank_paths: List[Path]) -> Dict:
             errors.append(
                 f"m_arr mismatch: bank {i} has different m_arr than reference"
             )
+
+        if ref_has_harmonic_modes:
+            if "harmonic_modes" not in config:
+                errors.append(
+                    f"harmonic_modes missing: bank {i} has no harmonic_modes "
+                    "but reference bank does"
+                )
+            elif harmonic_modes_from_config(config) != ref_harmonic_modes:
+                errors.append(
+                    f"harmonic_modes mismatch: bank {i} has different "
+                    "harmonic_modes than reference"
+                )
+            _, derived_m = resolve_bank_modes(config)
+            if not np.array_equal(derived_m, np.array(config["m_arr"])):
+                errors.append(
+                    f"bank {i}: m_arr inconsistent with harmonic_modes"
+                )
 
         if errors:
             error_msg = "Bank config validation failed:\n" + "\n".join(errors)

@@ -701,7 +701,7 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
             timeshifts_dbt,
             self.likelihood.asd_drift,
             n_phi,
-            self.likelihood.waveform_generator.m_arr,
+            self.likelihood_calculator.m_arr,
         )
         return r_iotp, lnlike_iot
 

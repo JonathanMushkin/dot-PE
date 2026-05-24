@@ -17,7 +17,11 @@ from cogwheel import data, waveform
 from cogwheel.utils import mkdirs
 
 from . import config
-from .utils import setup_logger
+from .utils import (
+    harmonic_modes_to_json,
+    setup_logger,
+    waveform_generator_from_config,
+)
 
 
 def get_waveform(wfg, int_dic, fbin, override_dic=None):
@@ -223,6 +227,7 @@ def create_waveform_bank_from_samples(
     i_end=None,
     i_list=None,
     approximant="IMRPhenomXODE",
+    harmonic_modes=None,
 ):
     """
     Load a sample bank from a feather file, generate linear-free time
@@ -257,16 +262,24 @@ def create_waveform_bank_from_samples(
             config_dict = json.load(fp)
             fbin = np.array(config_dict["fbin"])
             f_ref = config_dict["f_ref"]
+            config_dict.setdefault("approximant", approximant)
     else:
         fbin = config.DEFAULT_FBIN
         f_ref = config.DEFAULT_F_REF
+        config_dict = {"approximant": approximant}
+
+    if harmonic_modes is not None:
+        config_dict["harmonic_modes"] = harmonic_modes_to_json(harmonic_modes)
+        if bank_config_path is not None:
+            with open(bank_config_path, "w", encoding="utf-8") as fp:
+                json.dump(config_dict, fp, indent=4)
 
     intrinsic_samples = pd.read_feather(samples_path)
     event_data = data.EventData.gaussian_noise("", **config.EVENT_DATA_KWARGS)
 
     # access waveform.APPROXIMANTS only after wfg is created, due to
     # importing scheme. May crash otherwise.
-    wfg = waveform.WaveformGenerator.from_event_data(event_data, approximant)
+    wfg = waveform_generator_from_config(event_data, config_dict)
     if waveform.APPROXIMANTS[approximant].aligned_spins:
         intrinsic_samples[["s1x_n", "s1y_n", "s2x_n", "s2y_n"]] = 0.0
         intrinsic_samples.to_feather(samples_path)
@@ -325,14 +338,16 @@ def create_waveform_bank_from_samples(
         + f"{runtime_seconds:.3g} seconds "
         + f"({runtime_minutes:.3g} minutes)."
     )
-    with open(bank_config_path, "r", encoding="utf-8") as fp:
-        config_dict = json.load(fp)
-    config_dict["approximant"] = approximant
-    config_dict["m_arr"] = wfg.m_arr.tolist()
-    config_dict["blocksize"] = blocksize
+    if bank_config_path is not None:
+        with open(bank_config_path, "r", encoding="utf-8") as fp:
+            config_dict = json.load(fp)
+        config_dict["approximant"] = approximant
+        config_dict["harmonic_modes"] = harmonic_modes_to_json(wfg.harmonic_modes)
+        config_dict["m_arr"] = wfg.m_arr.tolist()
+        config_dict["blocksize"] = blocksize
 
-    with open(bank_config_path, "w", encoding="utf-8") as fp:
-        json.dump(config_dict, fp, indent=4)
+        with open(bank_config_path, "w", encoding="utf-8") as fp:
+            json.dump(config_dict, fp, indent=4)
 
 
 def submit_to_lsf(
