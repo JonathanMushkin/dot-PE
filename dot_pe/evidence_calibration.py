@@ -67,6 +67,8 @@ def _create_noise_from_event_psd(
     )
     # Bins with wht_filter=0 are excluded by fslice; use finite asd for generation
     np.nan_to_num(asd, copy=False, nan=1.0, posinf=1.0, neginf=1.0)
+    # rng.normal requires scale > 0; asd can be negative when wht_filter < 0
+    asd = np.maximum(np.asarray(asd, dtype=float), 1e-30)
 
     duration = 1.0 / original.df
     rng = np.random.default_rng(seed)

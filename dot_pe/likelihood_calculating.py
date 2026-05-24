@@ -348,6 +348,12 @@ class LikelihoodCalculator:
         h_norm = np.sqrt(hh_ieo).astype(np.float32)
         z = dh_ieo / h_norm
         i_inds, e_inds, o_inds = np.where(z > MIN_Z_FOR_LNL_DIST_MARG_APPROX)
+        if len(i_inds) == 0:
+            return (
+                np.array([], dtype=np.intp),
+                np.array([], dtype=np.intp),
+                np.array([], dtype=np.intp),
+            )
         lnl_approx = (
             z[i_inds, e_inds, o_inds] ** 2 / 2
             + 3 * np.log(h_norm[i_inds, e_inds, o_inds])
