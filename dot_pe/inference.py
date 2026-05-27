@@ -891,6 +891,11 @@ def prepare_run_objects(
         ref_wf_finder_kwargs=ref_wf_finder_kwargs,
         **posterior_kwargs,
     )
+    coherent_posterior.likelihood.waveform_generator = waveform_generator_from_config(
+        event_data, bank_config
+    )
+    coherent_posterior.likelihood.par_dic_0 = coherent_posterior.likelihood.par_dic_0
+    coherent_posterior.likelihood._get_dh_hh_by_m_polarization_detector.cache_clear()
     par_dic_0 = coherent_posterior.likelihood.par_dic_0.copy()
 
     coherent_posterior.to_json(dirname=rundir, overwrite=True)
