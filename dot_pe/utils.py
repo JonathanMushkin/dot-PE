@@ -12,10 +12,8 @@ from numpy.typing import NDArray
 
 import numpy as np
 import pandas as pd
-import torch
 from numba import njit
 from scipy.special import logsumexp
-from torch.types import Device
 
 from cogwheel.data import EventData
 from cogwheel import gw_utils
@@ -29,77 +27,6 @@ def validate_q_bounds(q_min: float, q_max: float) -> None:
         raise ValueError(f"q_min ({q_min}) must be strictly less than q_max ({q_max})")
     if q_max > 1.0:
         raise ValueError(f"q_max ({q_max}) must be <= 1.0")
-
-
-def is_dtype_supported(device: Device, dtype: torch.dtype) -> bool:
-    try:
-        _ = torch.empty(1, dtype=dtype, device=device)
-        return True
-    except (RuntimeError, TypeError):
-        return False
-
-
-def get_device_for_dtype(preferred_device: Device, dtype: torch.dtype) -> Device:
-    fallback = "cpu"
-    return torch.device(
-        preferred_device if is_dtype_supported(preferred_device, dtype) else fallback
-    )
-
-
-def get_device_per_dtype(
-    preferred_devices: List[Device], dtypes: List[torch.dtype]
-) -> List[Device]:
-    """ "
-    Args:
-        preferred_devices (List[Device]): A list of preferred devices.
-        dtypes (List[torch.dtype]): A list of data types corresponding
-                                    to each device.
-
-    Returns:
-        List[Device]: A list of devices set for each dtype based on user
-        preference.
-
-    Example:
-        get_device_per_dtype(["mps", "mps"], [torch.complex128,
-        torch.float32])
-        Output: [device(type='mps'), device(type='mps')]
-    """
-
-    return [
-        get_device_for_dtype(device, dtype)
-        for device, dtype in zip(preferred_devices, dtypes)
-    ]
-
-
-def torch_dtype(dtype):
-    if isinstance(dtype, str):
-        dtype = getattr(torch, dtype.split(".")[-1])
-    return dtype
-
-
-def safe_move_and_cast(
-    tensor: torch.Tensor, dtype: torch.dtype, device: Union[Device, str]
-) -> torch.Tensor:
-    try:
-        output = tensor.to(device=device).to(dtype=dtype)
-    except TypeError:
-        try:
-            output = tensor.to(dtype=dtype).to(device=device)
-        except TypeError as e:
-            message = (
-                "Failed to move tensor "
-                + f"from device {tensor.device} and dtype {tensor.dtype}"
-                + f"to device {device} and dtype {dtype}: {e}"
-            )
-            raise RuntimeError(message)
-
-    return output
-
-
-def clear_cache(device: Device) -> None:
-    if hasattr(getattr(torch, device), "empty_cache"):
-        getattr(torch, device).empty_cache()
-    gc.collect()
 
 
 def setup_logger(
@@ -497,9 +424,7 @@ def validate_bank_configs(bank_paths: List[Path]) -> Dict:
                 )
             _, derived_m = resolve_bank_modes(config)
             if not np.array_equal(derived_m, np.array(config["m_arr"])):
-                errors.append(
-                    f"bank {i}: m_arr inconsistent with harmonic_modes"
-                )
+                errors.append(f"bank {i}: m_arr inconsistent with harmonic_modes")
 
         if errors:
             error_msg = "Bank config validation failed:\n" + "\n".join(errors)

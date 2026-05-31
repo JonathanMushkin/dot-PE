@@ -5,6 +5,5 @@ channels:
 dependencies:
   - python>=3.9
   - numpy<=2.2
-  - pytorch
   - tqdm
   - cogwheel-pe>=1.4.1
