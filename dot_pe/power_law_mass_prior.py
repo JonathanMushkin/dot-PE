@@ -24,19 +24,16 @@ from cogwheel.gw_prior.miscellaneous import (
 
 class PowerLawChirpMassPrior(Prior):
     """
-    Power-law prior for detector-frame chirp mass: P(M_c) \propto M_c^{-1.7}
+    Power-law prior for detector-frame chirp mass: P(M_c) ∝ M_c^alpha.
 
-    Sampled variables are mchirp_p = mchirp^{-0.7}, lnq.
-    These are transformed to m1, m2.
+    Default alpha=-1.7 gives P(M_c) ∝ M_c^{-1.7}. Sampled variables are
+    mchirp_p = mchirp^{alpha+1} and lnq, transformed to m1, m2.
     The prior integrates to 1 over mchirp_p and lnq ranges.
     """
 
     standard_params = ["m1", "m2"]
     range_dic = {"mchirp_p": None, "lnq": None}
     reflective_params = ["lnq"]
-
-    ALPHA = -1.7  # P(M_c) ∝ M_c^{ALPHA}
-    TRANSFORM_POWER = -0.7  # mchirp_p = mchirp^{TRANSFORM_POWER}
 
     def __init__(
         self,
@@ -45,17 +42,25 @@ class PowerLawChirpMassPrior(Prior):
         q_min=0.05,
         q_max=1.0,
         symmetrize_lnq=False,
+        alpha=-1.7,
         **kwargs,
     ):
+        if alpha == -1:
+            raise ValueError(
+                "alpha=-1 gives transform_power=0; choose alpha != -1."
+            )
+        self._alpha = float(alpha)
+        self._transform_power = self._alpha + 1
+
         lnq_min = np.log(q_min)
         lnq_max = -lnq_min * symmetrize_lnq if symmetrize_lnq else np.log(q_max)
 
         mchirp_min, mchirp_max = mchirp_range
         mchirp_p_min = min(
-            mchirp_min**self.TRANSFORM_POWER, mchirp_max**self.TRANSFORM_POWER
+            mchirp_min**self._transform_power, mchirp_max**self._transform_power
         )
         mchirp_p_max = max(
-            mchirp_min**self.TRANSFORM_POWER, mchirp_max**self.TRANSFORM_POWER
+            mchirp_min**self._transform_power, mchirp_max**self._transform_power
         )
 
         self.range_dic = {
@@ -77,34 +82,28 @@ class PowerLawChirpMassPrior(Prior):
             *self.range_dic["mchirp_p"],
         )[0]
 
-    @staticmethod
-    @utils.lru_cache()
-    def _mchirp_p_to_mchirp(mchirp_p):
-        return mchirp_p ** (-10 / 7)
+    def _mchirp_p_to_mchirp(self, mchirp_p):
+        return mchirp_p ** (1 / self._transform_power)
 
-    @staticmethod
-    @utils.lru_cache()
-    def transform(mchirp_p, lnq):
-        mchirp = PowerLawChirpMassPrior._mchirp_p_to_mchirp(mchirp_p)
+    def transform(self, mchirp_p, lnq):
+        mchirp = self._mchirp_p_to_mchirp(mchirp_p)
         q = np.exp(-np.abs(lnq))
         m1 = mchirp * (1 + q) ** 0.2 / q**0.6
         return {"m1": m1, "m2": m1 * q}
 
-    @staticmethod
-    def inverse_transform(m1, m2):
+    def inverse_transform(self, m1, m2):
         q = m2 / m1
         mchirp = m1 * q**0.6 / (1 + q) ** 0.2
-        mchirp_p = mchirp**PowerLawChirpMassPrior.TRANSFORM_POWER
+        mchirp_p = mchirp**self._transform_power
         return {"mchirp_p": mchirp_p, "lnq": np.log(q)}
 
-    @staticmethod
-    def ln_jacobian_determinant(m1, m2):
+    def ln_jacobian_determinant(self, m1, m2):
         ln_jac_mchirp_lnq = -np.log((m1 * m2) ** 2 * (m1 + m2)) / 5
         q = m2 / m1
         mchirp = m1 * q**0.6 / (1 + q) ** 0.2
-        ln_jac_mchirp_p = np.log(
-            np.abs(PowerLawChirpMassPrior.TRANSFORM_POWER)
-        ) - 1.7 * np.log(mchirp)
+        ln_jac_mchirp_p = np.log(np.abs(self._transform_power)) + self._alpha * np.log(
+            mchirp
+        )
         return ln_jac_mchirp_lnq + ln_jac_mchirp_p
 
     @utils.lru_cache()
@@ -118,12 +117,13 @@ class PowerLawChirpMassPrior(Prior):
             "q_min": self._q_min,
             "q_max": self._q_max,
             "symmetrize_lnq": self._symmetrize_lnq,
+            "alpha": self._alpha,
         }
 
 
 class PowerLawIntrinsicIASPrior(CombinedPrior):
     """
-    IntrinsicIASPrior with power-law chirp mass distribution: P(M_c) ∝ M_c^{-1.7}
+    IntrinsicIASPrior with power-law chirp mass: P(M_c) ∝ M_c^alpha (default -1.7).
     """
 
     default_likelihood_class = IntrinsicIASPrior.default_likelihood_class
@@ -140,6 +140,7 @@ class PowerLawMassAlignedSpinIASPrior(RegisteredPriorMixin, CombinedPrior):
     Intrinsic aligned-spin prior with power-law chirp mass distribution.
 
     Produces intrinsic samples over (m1, m2, s1z, s2z) with no in-plane spin or tides.
+    P(M_c) ∝ M_c^alpha with default alpha=-1.7.
     """
 
     default_likelihood_class = MarginalizedExtrinsicLikelihoodQAS
