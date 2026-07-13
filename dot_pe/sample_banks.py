@@ -1,6 +1,5 @@
 """
 Generate intrinsic samples and waveforms for a bank.
-# TDOD: Add m_arr to the `bank_config.json` file.
 """
 
 import argparse
@@ -20,7 +19,11 @@ from cogwheel.gw_utils import m1m2_to_mchirp
 from cogwheel.utils import NumpyEncoder
 
 from . import waveform_banks
-from .utils import validate_q_bounds
+from .utils import (
+    validate_q_bounds,
+    default_harmonic_modes_for_approximant,
+    harmonic_modes_to_json,
+)
 
 
 class IntrinsicSamplesGenerator:
@@ -669,6 +672,7 @@ def main(
     seed=None,
     approximant="IMRPhenomXODE",
     resume=True,
+    harmonic_modes=None,
 ):
     """
     Generate intrinsic samples and waveforms for a given bank.
@@ -704,6 +708,11 @@ def main(
 
         if isinstance(fbin, (str, Path)):
             fbin = np.load(fbin)
+        resolved_modes = (
+            harmonic_modes
+            if harmonic_modes is not None
+            else default_harmonic_modes_for_approximant(approximant)
+        )
         # save to file
         with open(bank_config_path, "w", encoding="utf-8") as fp:
             json.dump(
@@ -718,6 +727,7 @@ def main(
                     "bank_size": bank_size,
                     "inc_faceon_factor": inc_faceon_factor,
                     "approximant": approximant,
+                    "harmonic_modes": harmonic_modes_to_json(resolved_modes),
                 },
                 fp=fp,
                 cls=NumpyEncoder,
@@ -774,6 +784,7 @@ def main(
         i_end=i_end,
         i_list=i_list,
         approximant=approximant,
+        harmonic_modes=harmonic_modes,
     )
 
     print("waveform bank created at", waveform_dir)
@@ -850,9 +861,30 @@ def parse_args():
         action="store_false",
         help="Overwrite existing files instead of resuming",
     )
+    parser.add_argument(
+        "--harmonic_modes",
+        type=int,
+        nargs="*",
+        default=None,
+        metavar="L_M",
+        help=(
+            "Harmonic modes as flat pairs of ints, e.g. --harmonic_modes 2 2 2 1 3 3. "
+            "Default: all modes for the chosen approximant."
+        ),
+    )
 
     args = parser.parse_args()
-    return vars(args)
+
+    # Reshape flat [l0, m0, l1, m1, ...] into [[l0, m0], [l1, m1], ...]
+    flat = args.pop("harmonic_modes")
+    if flat is not None:
+        if len(flat) % 2 != 0:
+            parser.error("--harmonic_modes requires an even number of integers (l m pairs)")
+        args["harmonic_modes"] = [[flat[i], flat[i + 1]] for i in range(0, len(flat), 2)]
+    else:
+        args["harmonic_modes"] = None
+
+    return args
 
 
 if __name__ == "__main__":

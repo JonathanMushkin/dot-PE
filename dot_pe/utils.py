@@ -276,15 +276,17 @@ def harmonic_modes_from_config(
     """
     Resolve harmonic_modes from bank config.
 
-    If harmonic_modes is present, use it. Otherwise filter the approximant's
-    default modes to those with m in bank_config['m_arr'] (legacy banks).
+    Priority:
+    1. Explicit ``harmonic_modes`` key — used directly.
+    2. ``m_arr`` key only — approximant defaults filtered to those m values.
+    3. Neither key — full defaults for the approximant.
     """
     if "harmonic_modes" in bank_config:
         return normalize_harmonic_modes(bank_config["harmonic_modes"])
 
     approximant = bank_config["approximant"]
     if "m_arr" not in bank_config:
-        raise ValueError("bank_config must contain 'harmonic_modes' or 'm_arr'")
+        return default_harmonic_modes_for_approximant(approximant)
     m_allowed = set(int(m) for m in bank_config["m_arr"])
     return [
         mode
@@ -299,10 +301,9 @@ def resolve_bank_modes(
     """
     Return (harmonic_modes, m_arr) for a bank config.
 
-    Legacy (m_arr only): returned m_arr equals config m_arr unchanged.
-
-    New (harmonic_modes): m_arr is derived; if m_arr is also present it must
-    match.
+    Delegates mode resolution to ``harmonic_modes_from_config``.
+    If both ``harmonic_modes`` and ``m_arr`` are present, they must be
+    consistent; raises ``ValueError`` otherwise.
     """
     harmonic_modes = harmonic_modes_from_config(bank_config)
     derived_m_arr = m_arr_from_harmonic_modes(harmonic_modes)
@@ -318,7 +319,10 @@ def resolve_bank_modes(
                 )
         return harmonic_modes, derived_m_arr
 
-    return harmonic_modes, np.asarray(bank_config["m_arr"], dtype=int)
+    if "m_arr" in bank_config:
+        return harmonic_modes, np.asarray(bank_config["m_arr"], dtype=int)
+
+    return harmonic_modes, derived_m_arr
 
 
 def harmonic_modes_to_json(
