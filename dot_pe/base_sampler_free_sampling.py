@@ -102,7 +102,11 @@ def get_n_effective_total_i_e(samples, assume_normalized=False):
     Parameters
     ----------
     samples : pandas.DataFrame,
-        Has columns 'weights', 'i', 'e'.
+        Has columns 'weights', 'i', 'e', and optionally 'bank_id'.
+        If 'bank_id' is present, intrinsic identity is ('bank_id', 'i')
+        since the intrinsic index restarts at 0 in every bank; extrinsic
+        samples are shared across banks, so extrinsic identity is 'e'
+        alone.
     assume_normalized: Boolian,
         if assume_normalized==False, normalization is imposed in
         the code.
@@ -119,11 +123,14 @@ def get_n_effective_total_i_e(samples, assume_normalized=False):
 
     if samples is None or len(samples) == 0:
         return 0, 0, 0
+    if samples["weights"].sum() <= 0:
+        return 0, 0, 0
     if not assume_normalized:
         samples = samples.copy()
         samples["weights"] /= samples["weights"].sum()
 
-    p_i = samples.groupby("i")["weights"].sum().values
+    i_keys = ["bank_id", "i"] if "bank_id" in samples.columns else "i"
+    p_i = samples.groupby(i_keys)["weights"].sum().values
     p_e = samples.groupby("e")["weights"].sum().values
     p = samples["weights"].values
 

@@ -1511,31 +1511,14 @@ def aggregate_and_save_results(
     samples.to_feather(samples_path)
     print(f"Samples saved to:\n {samples_path}")
 
-    total_weight = combined_prob_samples["weights"].sum()
-    if total_weight <= 0:
-        n_effective_total = 0.0
-    else:
-        n_effective_total = 1.0 / (
-            (combined_prob_samples["weights"] ** 2).sum() / total_weight
-        )
-
-    n_eff_weights = [r["N_k"] for r in per_bank_results]
-    n_effective_i_total = (
-        np.average(
-            [r["n_effective_i_k"] for r in per_bank_results],
-            weights=n_eff_weights,
-        )
-        if sum(n_eff_weights) > 0
-        else 0.0
-    )
-    n_effective_e_total = (
-        np.average(
-            [r["n_effective_e_k"] for r in per_bank_results],
-            weights=n_eff_weights,
-        )
-        if sum(n_eff_weights) > 0
-        else 0.0
-    )
+    # Pooled effective sample counts over the globally normalized weights;
+    # intrinsic identity is (bank_id, i), extrinsic samples are shared
+    # across banks so extrinsic identity is e alone.
+    (
+        n_effective_total,
+        n_effective_i_total,
+        n_effective_e_total,
+    ) = get_n_effective_total_i_e(combined_prob_samples)
 
     summary_dict = {
         "n_effective": float(n_effective_total),
