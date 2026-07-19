@@ -530,6 +530,7 @@ def run(
     event_dir: Union[str, Path, None] = None,
     rundir: Union[str, Path, None] = None,
     max_incoherent_lnlike_drop: float = 20,
+    min_incoherent_survivors: int = 100,
     max_bestfit_lnlike_diff: float = 20,
     mchirp_guess: Optional[float] = None,
     extrinsic_samples: Union[str, Path, None] = None,
@@ -625,6 +626,7 @@ def run(
         rundir=rundir,
         coherent_score_min_n_effective_prior=100,
         max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
+        min_incoherent_survivors=min_incoherent_survivors,
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
         mchirp_guess=mchirp_guess,
         extrinsic_samples=extrinsic_samples,
@@ -753,6 +755,7 @@ def run(
             max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
             banks_dir=ctx["banks_dir"],
             event_data=ctx["event_data"],
+            min_incoherent_survivors=min_incoherent_survivors,
         )
     )
     t_stages["3_crossbank"] = time.perf_counter() - _t
@@ -927,6 +930,13 @@ def main():
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--mchirp-guess", type=float, default=None)
     p.add_argument("--max-incoherent-lnlike-drop", type=float, default=20.0)
+    p.add_argument(
+        "--min-incoherent-survivors",
+        type=int,
+        default=100,
+        help="if the incoherent threshold leaves fewer samples than this, "
+        "keep the top this-many samples by incoherent lnlike instead",
+    )
     p.add_argument("--max-bestfit-lnlike-diff", type=float, default=20.0)
     p.add_argument("--no-draw-subset", action="store_false", dest="draw_subset")
     p.add_argument(
@@ -973,6 +983,7 @@ def main():
         rundir=args.rundir,
         mchirp_guess=args.mchirp_guess,
         max_incoherent_lnlike_drop=args.max_incoherent_lnlike_drop,
+        min_incoherent_survivors=args.min_incoherent_survivors,
         max_bestfit_lnlike_diff=args.max_bestfit_lnlike_diff,
         draw_subset=args.draw_subset,
         extrinsic_samples=args.extrinsic_samples,

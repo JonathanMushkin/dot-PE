@@ -644,10 +644,15 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         hh_iopp = np.moveaxis(hh_ippo.real, (1, 2, 3), (2, 3, 1))
 
         # 2x2 inverse per (i, o)
-        hh_det_iopp_reciptocal = 1 / (
+        # hh_iopp is a Gram matrix of the (+, x) responses, so det <= 0 can
+        # only arise from float cancellation (near-degenerate polarizations);
+        # such entries are masked below.
+        hh_det_io = (
             hh_iopp[..., 0, 0] * hh_iopp[..., 1, 1]
             - hh_iopp[..., 0, 1] * hh_iopp[..., 1, 0]
         )
+        with np.errstate(divide="ignore"):
+            hh_det_iopp_reciptocal = 1 / hh_det_io
         hh_inv_iopp = np.empty_like(hh_iopp)
         hh_inv_iopp[..., 0, 0] = hh_iopp[..., 1, 1] * hh_det_iopp_reciptocal
         hh_inv_iopp[..., 0, 1] = -hh_iopp[..., 0, 1] * hh_det_iopp_reciptocal
@@ -660,6 +665,17 @@ class SingleDetectorProcessor(JSONMixin, Loggable):
         # r[i,o,t,:] = hh_inv_iopp[i,o,:,:] @ dh_iotp[i,o,t,:]; contract over P
         r_iotp = np.einsum("iopP,iotP->iotp", hh_inv_iopp, dh_iotp, optimize=True)
         lnlike_iot = 0.5 * (r_iotp * dh_iotp).sum(axis=-1)
+        # The unconstrained 2x2 solve can return a huge response when
+        # hh_iopp is near-singular (a phase/polarization combination
+        # drives <h|h> toward zero), i.e. an unphysically small best-fit
+        # distance d_best = 1/||r|| (Mpc, zenith sky). Mask those so they
+        # cannot poison relative-to-max selections downstream.
+        with np.errstate(divide="ignore"):
+            d_best_iot = 1.0 / np.linalg.norm(r_iotp, axis=-1)
+        valid_iot = (d_best_iot >= likelihood_calculating.MIN_D_LUMINOSITY) & (
+            hh_det_io[..., None] > 0
+        )
+        lnlike_iot = np.where(valid_iot, lnlike_iot, -np.inf)
         return r_iotp, lnlike_iot
 
     def get_response_over_distance_and_lnlike_for_bank_samples(

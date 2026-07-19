@@ -783,6 +783,7 @@ def prepare_run_objects(
         None,
     ],
     coherent_posterior_kwargs: Dict,
+    min_incoherent_survivors: int = 100,
 ) -> Dict[str, Any]:
     """Prepare shared objects for inference run."""
     print("Setting paths & loading configurations...")
@@ -835,6 +836,7 @@ def prepare_run_objects(
                     coherent_score_min_n_effective_prior
                 ),
                 "max_incoherent_lnlike_drop": float(max_incoherent_lnlike_drop),
+                "min_incoherent_survivors": int(min_incoherent_survivors),
                 "mchirp_guess": float(mchirp_guess)
                 if mchirp_guess is not None
                 else None,
@@ -1091,18 +1093,26 @@ def select_intrinsic_samples_across_banks_by_incoherent_likelihood(
     max_incoherent_lnlike_drop: float,
     banks_dir: Path,
     event_data: EventData,
+    min_incoherent_survivors: int = 100,
 ) -> Tuple[
     Dict[str, NDArray[np.int_]],
     Optional[Dict[str, NDArray[np.float64]]],
     Optional[Dict[str, NDArray[np.float64]]],
 ]:
-    """Select intrinsic samples across banks by applying global threshold."""
+    """Select intrinsic samples across banks by applying global threshold.
+
+    If the relative-to-max threshold leaves fewer than
+    `min_incoherent_survivors` samples across all banks (e.g. because one
+    anomalously high lnlike poisons the maximum), fall back to keeping
+    the top `min_incoherent_survivors` samples by incoherent lnlike.
+    """
     print("\n=== Cross-bank threshold selection ===")
-    valid_maxima = [
-        np.max(lnlikes)
+    valid_lnlikes = [
+        lnlikes
         for lnlikes in incoherent_lnlikes_by_bank.values()
         if lnlikes is not None and len(lnlikes) > 0
     ]
+    valid_maxima = [np.max(lnlikes) for lnlikes in valid_lnlikes]
 
     selected_inds_by_bank = {}
     selected_lnlikes_by_bank = {}
@@ -1113,6 +1123,16 @@ def select_intrinsic_samples_across_banks_by_incoherent_likelihood(
         global_threshold = global_max_lnlike - max_incoherent_lnlike_drop
         print(f"Global maximum incoherent lnlike: {global_max_lnlike:.2f}")
         print(f"Global threshold: {global_threshold:.2f}")
+        all_lnlikes = np.concatenate(valid_lnlikes)
+        n_pass = int(np.count_nonzero(all_lnlikes >= global_threshold))
+        if n_pass < min(min_incoherent_survivors, len(all_lnlikes)):
+            n_keep = min(min_incoherent_survivors, len(all_lnlikes))
+            global_threshold = np.partition(all_lnlikes, -n_keep)[-n_keep]
+            print(
+                f"Warning: only {n_pass} samples passed the relative "
+                f"threshold; falling back to keeping the top {n_keep} "
+                f"samples (effective threshold: {global_threshold:.2f})."
+            )
     else:
         print(
             "Warning: No banks have valid incoherent likelihoods. Skipping threshold selection."
@@ -1592,6 +1612,7 @@ def run(
     rundir: Union[str, Path] = None,
     coherent_score_min_n_effective_prior: int = 100,
     max_incoherent_lnlike_drop: float = 20,
+    min_incoherent_survivors: int = 100,
     max_bestfit_lnlike_diff: float = 20,
     mchirp_guess: float = None,
     extrinsic_samples: Union[str, Path] = None,
@@ -1635,6 +1656,7 @@ def run(
         preselected_indices=preselected_indices,
         bank_logw_override=bank_logw_override,
         coherent_posterior_kwargs=coherent_posterior_kwargs,
+        min_incoherent_survivors=min_incoherent_survivors,
     )
 
     # Step 2: Incoherent selection per bank
@@ -1666,6 +1688,7 @@ def run(
             max_incoherent_lnlike_drop=max_incoherent_lnlike_drop,
             banks_dir=ctx["banks_dir"],
             event_data=ctx["event_data"],
+            min_incoherent_survivors=min_incoherent_survivors,
         )
     )
 
@@ -1792,6 +1815,7 @@ def run_timed(**kwargs) -> Path:
             max_incoherent_lnlike_drop=kwargs.get("max_incoherent_lnlike_drop", 20),
             banks_dir=ctx["banks_dir"],
             event_data=ctx["event_data"],
+            min_incoherent_survivors=kwargs.get("min_incoherent_survivors", 100),
         )
     )
     t_stages["3_crossbank"] = _time.perf_counter() - _t

@@ -28,6 +28,15 @@ lalsimulation_commands = FORCE_NNLO_ANGLES
 # We approximate the RHS of this inequality with 4
 MIN_Z_FOR_LNL_DIST_MARG_APPROX = 4
 
+# The distance-optimized likelihood lnl = <d|h>^2 / (2 <h|h>) is unbounded
+# in distance: some (phase, polarization, sky) combinations drive <h|h>
+# toward zero, and the optimum compensates with an unphysically small
+# best-fit distance d_best = <h|h>/<d|h> (in Mpc, at the 1 Mpc reference),
+# yielding a huge lnl. Since selections are relative-to-max, one such
+# sample can poison the entire selection. Discard samples whose best-fit
+# distance is below this threshold.
+MIN_D_LUMINOSITY = 1.0
+
 
 def compute_hplus_hcross_safe(
     f, par_dic, approximant, harmonic_modes, harmonic_modes_by_m, lal_dic=None
@@ -347,7 +356,11 @@ class LikelihoodCalculator:
         """
         h_norm = np.sqrt(hh_ieo).astype(np.float32)
         z = dh_ieo / h_norm
-        i_inds, e_inds, o_inds = np.where(z > MIN_Z_FOR_LNL_DIST_MARG_APPROX)
+        # d_best = h_norm / z; z > h_norm / MIN_D_LUMINOSITY means
+        # d_best < MIN_D_LUMINOSITY (unphysical fit, see constant).
+        i_inds, e_inds, o_inds = np.where(
+            (z > MIN_Z_FOR_LNL_DIST_MARG_APPROX) & (z <= h_norm / MIN_D_LUMINOSITY)
+        )
         if len(i_inds) == 0:
             return (
                 np.array([], dtype=np.intp),
@@ -378,7 +391,13 @@ class LikelihoodCalculator:
         Return three arrays with intrinsic, extrinsic and phi sample
         indices.
         """
-        lnl_approx = 0.5 * (dh_ieo**2) / hh_ieo * (dh_ieo > 0)
+        # d_best = hh / dh (Mpc at the 1 Mpc reference); mask unphysically
+        # close best-fit distances before the relative-to-max cut so an
+        # unbounded distance optimum cannot poison the selection.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            d_best = hh_ieo / dh_ieo
+        valid = (dh_ieo > 0) & (d_best >= MIN_D_LUMINOSITY)
+        lnl_approx = np.where(valid, 0.5 * (dh_ieo**2) / hh_ieo, -np.inf)
         i_inds, e_inds, o_inds = np.where(lnl_approx > lnl_approx.max() - cut_threshold)
         return (i_inds, e_inds, o_inds)
 
