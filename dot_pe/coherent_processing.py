@@ -320,6 +320,22 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
 
         bestfit_lnlike = 0.5 * (dh_ieo**2) / hh_ieo * (dh_ieo > 0)
 
+        # Mask corrupted inner products (same family as the min-distance
+        # fix in likelihood_calculating): non-positive <h|h> from float
+        # cancellation in the mode-pair recombination, and unphysically
+        # close best-fit distances (d_best = hh/dh < MIN_D_LUMINOSITY at
+        # the 1 Mpc reference). Unmasked, a tiny positive hh blows up the
+        # running min_bestfit_lnlike_to_keep threshold and discards every
+        # genuine sample, and a negative hh reaches the distance-
+        # marginalization lookup table where sqrt(hh) = NaN corrupts all
+        # weights ("weights sum to zero").
+        with np.errstate(divide="ignore", invalid="ignore"):
+            invalid = (hh_ieo <= 0) | (
+                (dh_ieo > 0)
+                & (hh_ieo / dh_ieo < likelihood_calculating.MIN_D_LUMINOSITY)
+            )
+        bestfit_lnlike = np.where(invalid, -np.inf, bestfit_lnlike)
+
         # in case of too low / non existing minimal besfit-likelihood
         # to be accepted into
 
