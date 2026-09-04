@@ -16,6 +16,8 @@ from cogwheel.likelihood.marginalization.base import MarginalizationInfoHM
 from cogwheel.likelihood.marginalization.coherent_score_hm import _flip_psi
 from cogwheel.utils import exp_normalize, n_effective
 
+from . import likelihood_calculating
+
 
 class CoherentScoreSamplerFree(CoherentScoreHM):
     """
@@ -243,7 +245,20 @@ class CoherentScoreSamplerFree(CoherentScoreHM):
 
         """
         flip_psi = np.signbit(dh_qo)  # qo
-        max_over_distance_lnl = 0.5 * dh_qo**2 / hh_qo  # qo
+        # Mask corrupted inner products before thresholding (same family
+        # as the min-distance fix): non-positive <h|h> from float
+        # cancellation, and best-fit distances below MIN_D_LUMINOSITY.
+        # Unmasked, a tiny positive hh dominates the threshold and the
+        # proposal component, and an all-negative-hh template would send
+        # hh < 0 into the lookup table (sqrt -> NaN).
+        with np.errstate(divide="ignore", invalid="ignore"):
+            invalid = (hh_qo <= 0) | (
+                (dh_qo > 0)
+                & (hh_qo / dh_qo < likelihood_calculating.MIN_D_LUMINOSITY)
+            )
+            max_over_distance_lnl = np.where(
+                invalid, -np.inf, 0.5 * dh_qo**2 / hh_qo
+            )  # qo
         threshold = np.max(max_over_distance_lnl) - self.DLNL_THRESHOLD
         important = np.where(max_over_distance_lnl > threshold)
 
