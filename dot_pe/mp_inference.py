@@ -507,6 +507,41 @@ def _run_coherent_mp(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def restrict_seed_pool(
+    selected_inds_by_bank: Dict[str, NDArray],
+    selected_lnlikes_by_bank: Dict[str, NDArray],
+    lnlike_drop: float,
+    min_pool: int = 256,
+) -> Dict[str, NDArray]:
+    """Keep, per bank, the selected samples whose incoherent lnlike is within
+    `lnlike_drop` of the global maximum.  If fewer than `min_pool` samples pass,
+    keep the top `min_pool` by lnlike across banks instead.  Every bank keeps
+    its key (possibly with an empty array), as draw_extrinsic_samples expects."""
+    out = {b: np.asarray(v, dtype=int)[:0] for b, v in selected_inds_by_bank.items()}
+    bank_ids = [b for b in selected_inds_by_bank if len(selected_inds_by_bank[b])]
+    if not bank_ids:
+        return out
+    all_lnl = np.concatenate([selected_lnlikes_by_bank[b] for b in bank_ids])
+    threshold = all_lnl.max() - lnlike_drop
+    n_pass = int((all_lnl >= threshold).sum())
+    if n_pass < min_pool:
+        k = min(min_pool, len(all_lnl))
+        threshold = np.sort(all_lnl)[-k]
+        print(
+            f"Seed pool: only {n_pass} samples within {lnlike_drop} of the "
+            f"incoherent maximum; keeping the top {k} instead."
+        )
+    for b in bank_ids:
+        keep = np.asarray(selected_lnlikes_by_bank[b]) >= threshold
+        out[b] = np.asarray(selected_inds_by_bank[b], dtype=int)[keep]
+        print(f"Seed pool bank {b}: {int(keep.sum())} of {len(keep)} selected samples.")
+    print(
+        f"Seed pool: {sum(len(v) for v in out.values())} samples "
+        f"(lnlike >= {threshold:.2f}) for the extrinsic proposal."
+    )
+    return out
+
+
 def run(
     event: Union[str, Path],
     bank_folder: Union[
@@ -543,6 +578,7 @@ def run(
     profile: bool = False,
     load_inds: bool = False,
     inds_path: Union[Path, str, Dict[str, Union[Path, str]], None] = None,
+    seed_pool_lnlike_drop: Optional[float] = None,
     preselected_indices: Union[
         Dict[str, Union[NDArray[np.int_], List[int], str, Path]],
         NDArray[np.int_],
@@ -617,8 +653,8 @@ def run(
         single_detector_blocksize=single_detector_blocksize,
         i_int_start=0,
         seed=seed,
-        load_inds=False,
-        inds_path=None,
+        load_inds=load_inds,
+        inds_path=inds_path,
         size_limit=size_limit,
         draw_subset=draw_subset,
         n_draws=n_draws,
@@ -634,6 +670,13 @@ def run(
         preselected_indices=preselected_indices,
         bank_logw_override=bank_logw_override,
         coherent_posterior_kwargs={},
+        extra_run_kwargs={
+            "seed_pool_lnlike_drop": (
+                float(seed_pool_lnlike_drop)
+                if seed_pool_lnlike_drop is not None
+                else None
+            ),
+        },
     )
     # coherent_posterior is not used beyond Stage 1 (only ctx["pr"]
     # is needed for Stage 6).  Drop it now so its likelihood can be
@@ -746,7 +789,7 @@ def run(
 
     # ── Stage 3: cross-bank threshold (serial) ────────────────────────
     _t = time.perf_counter()
-    (selected_inds_by_bank, _, _) = (
+    (selected_inds_by_bank, selected_lnlikes_by_bank, _) = (
         inference.select_intrinsic_samples_across_banks_by_incoherent_likelihood(
             banks=ctx["banks"],
             candidate_inds_by_bank=candidate_inds_by_bank,
@@ -760,6 +803,19 @@ def run(
     )
     t_stages["3_crossbank"] = time.perf_counter() - _t
 
+    # Seed pool for the extrinsic proposal (Stage 4 only): the 16 intrinsic
+    # samples that seed the proposal are drawn in shuffled order from this
+    # pool, so with a wide incoherent cut they are typically far below the
+    # peak.  seed_pool_lnlike_drop restricts the pool to the top survivors;
+    # Stage 5 still uses the full selection.
+    seed_inds_by_bank = selected_inds_by_bank
+    if seed_pool_lnlike_drop is not None:
+        seed_inds_by_bank = restrict_seed_pool(
+            selected_inds_by_bank,
+            selected_lnlikes_by_bank,
+            seed_pool_lnlike_drop,
+        )
+
     # ── Stage 4: extrinsic sampling ───────────────────────────────────
     _t = time.perf_counter()
     if n_ext_workers > 1 and extrinsic_samples is None:
@@ -769,7 +825,7 @@ def run(
             par_dic_0=ctx["par_dic_0"],
             fbin=ctx["fbin"],
             approximant=ctx["approximant"],
-            selected_inds_by_bank=selected_inds_by_bank,
+            selected_inds_by_bank=seed_inds_by_bank,
             coherent_score_kwargs=ctx["coherent_score_kwargs"],
             seed=seed,
             n_ext=n_ext,
@@ -783,7 +839,7 @@ def run(
             par_dic_0=ctx["par_dic_0"],
             fbin=ctx["fbin"],
             approximant=ctx["approximant"],
-            selected_inds_by_bank=selected_inds_by_bank,
+            selected_inds_by_bank=seed_inds_by_bank,
             coherent_score_kwargs=ctx["coherent_score_kwargs"],
             seed=seed,
             n_ext=n_ext,
