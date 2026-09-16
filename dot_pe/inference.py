@@ -784,8 +784,13 @@ def prepare_run_objects(
     ],
     coherent_posterior_kwargs: Dict,
     min_incoherent_survivors: int = 100,
+    extra_run_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Prepare shared objects for inference run."""
+    """Prepare shared objects for inference run.
+
+    `extra_run_kwargs` are recorded verbatim in run_kwargs.json (provenance of
+    caller-level options such as seed_pool_lnlike_drop) and not used otherwise.
+    """
     print("Setting paths & loading configurations...")
 
     banks = parse_bank_folders(bank_folder)
@@ -852,6 +857,7 @@ def prepare_run_objects(
                 "bank_logw_override": (
                     "dict" if bank_logw_override is not None else None
                 ),
+                **(extra_run_kwargs or {}),
             },
             fp,
             indent=4,
