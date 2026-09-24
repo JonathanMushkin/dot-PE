@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from .coherent_processing import CoherentLikelihoodProcessor
-from .likelihood_calculating import LikelihoodCalculator
+from .likelihood_calculating import LikelihoodCalculator, invalid_bestfit_mask
 from .sample_processing import IntrinsicSampleProcessor
 from .utils import safe_logsumexp, inds_to_blocks
 
@@ -251,6 +251,14 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
         )
 
         bestfit_ieo = 0.5 * (dh_ieo ** 2) / hh_ieo * (dh_ieo > 0)
+
+        # Same mask as the serial coherent stage: corrupted inner products would
+        # otherwise poison the running min_bestfit threshold and reach the
+        # distance-marginalization lookup table (see invalid_bestfit_mask).
+        bestfit_ieo = np.where(
+            invalid_bestfit_mask(dh_ieo, hh_ieo), -np.inf, bestfit_ieo
+        )
+
         accepted = bestfit_ieo > min_bestfit
 
         # ── Accepted samples ──────────────────────────────────────────────

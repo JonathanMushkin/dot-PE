@@ -329,12 +329,11 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         # genuine sample, and a negative hh reaches the distance-
         # marginalization lookup table where sqrt(hh) = NaN corrupts all
         # weights ("weights sum to zero").
-        with np.errstate(divide="ignore", invalid="ignore"):
-            invalid = (hh_ieo <= 0) | (
-                (dh_ieo > 0)
-                & (hh_ieo / dh_ieo < likelihood_calculating.MIN_D_LUMINOSITY)
-            )
-        bestfit_lnlike = np.where(invalid, -np.inf, bestfit_lnlike)
+        bestfit_lnlike = np.where(
+            likelihood_calculating.invalid_bestfit_mask(dh_ieo, hh_ieo),
+            -np.inf,
+            bestfit_lnlike,
+        )
 
         # in case of too low / non existing minimal besfit-likelihood
         # to be accepted into

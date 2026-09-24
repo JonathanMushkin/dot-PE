@@ -164,6 +164,27 @@ class LinearFree(BaseLinearFree):
         raise NotImplementedError
 
 
+def invalid_bestfit_mask(dh, hh):
+    """True where the distance-optimized fit lnl = <d|h>^2 / (2 <h|h>) is unusable.
+
+    Two failure modes of the mode-pair recombination, same family:
+      * non-positive <h|h> from float cancellation — `sqrt(hh)` in the
+        distance-marginalization lookup table is then NaN, and one NaN corrupts
+        every weight of the pooled posterior ("weights sum to zero");
+      * a best-fit distance d_best = <h|h>/<d|h> below MIN_D_LUMINOSITY — a tiny
+        positive <h|h> gives a huge lnl that poisons any relative-to-maximum
+        selection (measured: GW240630_212937, dh 3095.37, hh 50.81, lnl 94287.6,
+        d_best 16 kpc).
+
+    Every selection that thresholds relative to a maximum must apply this before
+    thresholding; both the serial coherent stage (`coherent_processing.
+    CoherentLikelihoodProcessor.select_and_get_lnlike`) and the multiprocessing
+    one (`thin_coherent.run_thin_iblock`) do.
+    """
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return (hh <= 0) | ((dh > 0) & (hh / dh < MIN_D_LUMINOSITY))
+
+
 class LikelihoodCalculator:
     """
     A class that receives as input the components of intrinsic and
