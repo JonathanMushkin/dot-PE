@@ -42,7 +42,7 @@ from cogwheel.prior import Prior  # noqa: E402
 from .base_sampler_free_sampling import (  # noqa: E402
     get_n_effective_total_i_e,
 )
-from .likelihood_calculating import LinearFree  # noqa: E402
+from .likelihood_calculating import LinearFree, incoherent_lookup  # noqa: E402
 from .marginalization import MarginalizationExtrinsicSamplerFreeLikelihood  # noqa: E402
 from .coherent_processing import (  # noqa: E402
     CoherentLikelihoodProcessor,
@@ -319,6 +319,7 @@ def run_coherent_inference(
     intrinsic_logw_lookup=None,
     size_limit: int = 10**7,
     max_bestfit_lnlike_diff: float = 20,
+    incoherent_lnlikes: Optional[NDArray[np.float64]] = None,
 ) -> Tuple[float, float, float, float, float, int]:
     """
     Perform the heavy computation phase of coherent inference.
@@ -330,6 +331,9 @@ def run_coherent_inference(
         Directory for bank-specific outputs (CLP, prob_samples, cache).
     top_rundir : Path
         Top-level rundir where shared extrinsic samples are stored.
+    incoherent_lnlikes : array, optional
+        Stage 3 incoherent log-likelihoods aligned with `inds`; bounds each
+        template's coherent best fit (`incoherent_bound_mask`). None = no bound.
 
     Returns
     -------
@@ -375,6 +379,10 @@ def run_coherent_inference(
     clp.load_extrinsic_samples_data(top_rundir)
     # Save CLP to bank-specific rundir
     clp.to_json(bank_rundir, overwrite=True)
+    if incoherent_lnlikes is not None:
+        clp.incoherent_lnlike_by_i = incoherent_lookup(
+            len(clp.full_log_prior_weights_i), inds, incoherent_lnlikes
+        )
     # perform the run
     print(f"Creating {len(i_blocks)} x {len(e_blocks)} likelihood blocks...")
 
@@ -1354,8 +1362,10 @@ def run_coherent_inference_per_bank(
     size_limit: int,
     max_bestfit_lnlike_diff: float,
     bank_logw_override_dict: Optional[Dict],
+    selected_lnlikes_by_bank: Optional[Dict[str, NDArray[np.float64]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Run coherent inference for each bank."""
+    """Run coherent inference for each bank. `selected_lnlikes_by_bank` (Stage 3,
+    aligned with `selected_inds_by_bank`) bounds the coherent best fit; None = no bound."""
     print("\n=== Coherent inference per bank ===")
     bank_results = []
     all_prob_samples = []
@@ -1426,6 +1436,11 @@ def run_coherent_inference_per_bank(
             intrinsic_logw_lookup=intrinsic_logw_lookup,
             size_limit=size_limit,
             max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
+            incoherent_lnlikes=(
+                None
+                if selected_lnlikes_by_bank is None
+                else selected_lnlikes_by_bank[bank_id]
+            ),
         )
 
         prob_samples_k = pd.read_feather(bank_rundir / "prob_samples.feather")
@@ -1729,6 +1744,7 @@ def run(
         size_limit=size_limit,
         max_bestfit_lnlike_diff=max_bestfit_lnlike_diff,
         bank_logw_override_dict=ctx["bank_logw_override_dict"],
+        selected_lnlikes_by_bank=selected_lnlikes_by_bank,
     )
 
     # Step 6: Aggregate and save
@@ -1812,7 +1828,7 @@ def run_timed(**kwargs) -> Path:
 
     # Stage 3
     _t = _time.perf_counter()
-    selected_inds_by_bank, _, _ = (
+    selected_inds_by_bank, selected_lnlikes_by_bank, _ = (
         select_intrinsic_samples_across_banks_by_incoherent_likelihood(
             banks=ctx["banks"],
             candidate_inds_by_bank=candidate_inds_by_bank,
@@ -1860,6 +1876,7 @@ def run_timed(**kwargs) -> Path:
         size_limit=kwargs.get("size_limit", 10**7),
         max_bestfit_lnlike_diff=kwargs.get("max_bestfit_lnlike_diff", 20),
         bank_logw_override_dict=ctx["bank_logw_override_dict"],
+        selected_lnlikes_by_bank=selected_lnlikes_by_bank,
     )
     t_stages["5_coherent"] = _time.perf_counter() - _t
 

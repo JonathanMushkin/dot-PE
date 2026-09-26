@@ -64,6 +64,7 @@ from cogwheel.utils import exp_normalize
 from dot_pe import inference, thin_coherent
 from dot_pe.base_sampler_free_sampling import get_n_effective_total_i_e
 from dot_pe.coherent_processing import CoherentLikelihoodProcessor
+from dot_pe.likelihood_calculating import incoherent_lookup
 from dot_pe.inference import (
     _create_single_detector_processor,
     run_for_single_detector,
@@ -331,9 +332,14 @@ def _run_coherent_mp(
     fbin,
     approximant,
     profile_dir=None,
+    selected_lnlikes_by_bank=None,
 ):
     """
     Parallel replacement for run_coherent_inference_per_bank().
+
+    `selected_lnlikes_by_bank` (Stage 3 incoherent log-likelihoods, aligned with
+    `selected_inds_by_bank`) bounds each template's coherent best fit
+    (`likelihood_calculating.incoherent_bound_mask`); None disables the bound.
 
     Pre-computes summary weights and per-sample arrival-time-shift (dt)
     cache once per bank in the main process, then dispatches thin
@@ -417,6 +423,10 @@ def _run_coherent_mp(
         # Load setup into main process; workers inherit via COW fork
         _thin_setup = thin_coherent.load_thin_setup(setup_dir, rundir)
         _thin_setup["_profile_dir"] = profile_dir  # None when not profiling
+        if selected_lnlikes_by_bank is not None:
+            _thin_setup["incoherent_lnlike_i"] = incoherent_lookup(
+                len(_thin_setup["logw_i"]), inds, selected_lnlikes_by_bank[bank_id]
+            )
         _log_rss("after load_thin_setup (coherent Pool fork point)")
 
         waveform_dir = str(Path(bank_path) / "waveforms")
@@ -877,6 +887,7 @@ def run(
         fbin=ctx["fbin"],
         approximant=ctx["approximant"],
         profile_dir=str(profiles_dir) if profiles_dir else None,
+        selected_lnlikes_by_bank=selected_lnlikes_by_bank,
     )
     t_stages["5_coherent"] = time.perf_counter() - _t
 

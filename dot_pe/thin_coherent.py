@@ -29,7 +29,11 @@ import numpy as np
 import pandas as pd
 
 from .coherent_processing import CoherentLikelihoodProcessor
-from .likelihood_calculating import LikelihoodCalculator, invalid_bestfit_mask
+from .likelihood_calculating import (
+    LikelihoodCalculator,
+    incoherent_bound_mask,
+    invalid_bestfit_mask,
+)
 from .sample_processing import IntrinsicSampleProcessor
 from .utils import safe_logsumexp, inds_to_blocks
 
@@ -224,6 +228,7 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
     n_phi         = setup["n_phi"]
     m_arr         = setup["m_arr"]
     max_diff      = setup["max_bestfit_lnlike_diff"]
+    incoherent_i  = setup.get("incoherent_lnlike_i")  # bank-indexed; None = no bound
 
     # Load raw waveforms and apply pre-cached dt correction (pure numpy)
     amp, phase = IntrinsicSampleProcessor._load_amp_and_phase(waveform_dir, i_block)
@@ -258,6 +263,12 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
         bestfit_ieo = np.where(
             invalid_bestfit_mask(dh_ieo, hh_ieo), -np.inf, bestfit_ieo
         )
+        if incoherent_i is not None:
+            bestfit_ieo = np.where(
+                incoherent_bound_mask(bestfit_ieo, incoherent_i[i_block]),
+                -np.inf,
+                bestfit_ieo,
+            )
 
         accepted = bestfit_ieo > min_bestfit
 
