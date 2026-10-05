@@ -542,6 +542,34 @@ def restrict_seed_pool(
     return out
 
 
+def explicit_seed_pool(
+    selected_inds_by_bank: Dict[str, NDArray],
+    seed_pool_inds: Dict[str, Union[NDArray[np.int_], List[int]]],
+) -> Dict[str, NDArray]:
+    """Seed pool given explicitly as {bank_id: intrinsic indices}.  Every index
+    must be in that bank's incoherent selection; banks not listed get empty
+    arrays (every bank keeps its key, as draw_extrinsic_samples expects)."""
+    unknown = set(seed_pool_inds) - set(selected_inds_by_bank)
+    if unknown:
+        raise ValueError(f"seed_pool_inds names unknown banks: {sorted(unknown)}")
+    out = {}
+    for b, sel in selected_inds_by_bank.items():
+        sel = np.asarray(sel, dtype=int)
+        pool = np.unique(np.asarray(seed_pool_inds.get(b, []), dtype=int))
+        missing = np.setdiff1d(pool, sel)
+        if len(missing):
+            raise ValueError(
+                f"seed_pool_inds bank {b}: {len(missing)} indices are not in the "
+                f"incoherent selection (e.g. {missing[:5].tolist()})"
+            )
+        out[b] = pool
+        print(f"Seed pool bank {b}: {len(pool)} given indices.")
+    if not any(len(v) for v in out.values()):
+        raise ValueError("seed_pool_inds is empty")
+    print(f"Seed pool: {sum(len(v) for v in out.values())} given samples.")
+    return out
+
+
 def run(
     event: Union[str, Path],
     bank_folder: Union[
@@ -579,6 +607,7 @@ def run(
     load_inds: bool = False,
     inds_path: Union[Path, str, Dict[str, Union[Path, str]], None] = None,
     seed_pool_lnlike_drop: Optional[float] = None,
+    seed_pool_inds: Optional[Dict[str, Union[NDArray[np.int_], List[int]]]] = None,
     preselected_indices: Union[
         Dict[str, Union[NDArray[np.int_], List[int], str, Path]],
         NDArray[np.int_],
@@ -615,6 +644,13 @@ def run(
         ``load_inds=False``). Can be an in-memory array/list or a path to
         ``.npy``. For multi-bank runs, a dict ``{bank_id: indices_or_path}``
         is supported via the Python API.
+    seed_pool_inds : dict mapping bank_id -> intrinsic indices, or None
+        Explicit seed pool for the extrinsic proposal (Stage 4 only): the
+        16 seeds are drawn, in shuffled order, from these indices instead of
+        from the whole incoherent selection.  Every index must be in that
+        bank's selection; banks not listed contribute no seeds.  Stage 5
+        still uses the full selection.  Cannot be combined with
+        ``seed_pool_lnlike_drop``.
 
     Notes
     -----
@@ -634,6 +670,8 @@ def run(
          - ``n_int`` is a ``list``: one value per bank in bank order.
          - ``n_int`` is a ``dict``: explicit ``{bank_id: n_int_k}``.
     """
+    if seed_pool_inds is not None and seed_pool_lnlike_drop is not None:
+        raise ValueError("seed_pool_inds and seed_pool_lnlike_drop are exclusive")
     t0 = time.time()
     t_stages = {}
     if n_workers is None:
@@ -674,6 +712,11 @@ def run(
             "seed_pool_lnlike_drop": (
                 float(seed_pool_lnlike_drop)
                 if seed_pool_lnlike_drop is not None
+                else None
+            ),
+            "seed_pool_inds": (
+                {b: [int(i) for i in v] for b, v in seed_pool_inds.items()}
+                if seed_pool_inds is not None
                 else None
             ),
         },
@@ -815,6 +858,8 @@ def run(
             selected_lnlikes_by_bank,
             seed_pool_lnlike_drop,
         )
+    elif seed_pool_inds is not None:
+        seed_inds_by_bank = explicit_seed_pool(selected_inds_by_bank, seed_pool_inds)
 
     # ── Stage 4: extrinsic sampling ───────────────────────────────────
     _t = time.perf_counter()
