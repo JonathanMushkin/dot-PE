@@ -33,3 +33,4 @@ One row per decision, design approval, gate outcome or LSF job. Times are local 
 | 2026-11-22 11:30 | LSF 422140 done | E1 analysis: N̂(c) = 7.40e8 rows (68 % interval 7.34e8 to 7.47e8), 74 times `size_limit`; N̂ at x = 24.38 (run_2's floor) 9.1e6, consistent with the 1e7 rows run_2 kept there; T holds 9.12e7 rows. |
 | 2026-11-22 11:31 | LSF 422551, 422555, 422558, 422561, 422564, 422567 | E3 rules d, c, a, b, e, f; 100 seeds for a, b, e, f; o4a-pe, 1 core, 48000 MB, physics-short. k = 9.12e7 × 1e7 / 7.40e8 ≈ 1.23e6. |
 | 2026-11-22 11:31 | LSF 422570 | E4 `rho.py`, 1 core, 16000 MB. |
+| 2026-11-22 11:32 | LSF 422570 done | E4: ρ(c) = 9.20 rows per pair (9.18 to 9.22), ρ at run_2's floor 4.55; 22 s. E1 and E4 reports drafted; E1 report sent to both reviewers. |
