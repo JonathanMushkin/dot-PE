@@ -70,7 +70,8 @@ the solution experiment evaluates the same F.
 - (d|h), (h|h): the matched-filter inner products of data and template, and of template with
   itself, at the sample's distance (cogwheel) or at 1 Mpc (dot-PE `d_h_1Mpc`, `h_h_1Mpc`);
   cogwheel stores `lnl` = (d|h) − (h|h)/2 and `h_h` = (h|h).
-- best fit: the largest b over a run's rows (dot-PE `bestfit_lnlike_max`) or over cogwheel's
+- best fit: the largest b over a run's kept rows (dot-PE `prob_samples.feather`; not the summary
+  field `bestfit_lnlike_max`, which is the maximum over the posterior draws) or over cogwheel's
   samples.
 - offset: dot-PE's best fit minus cogwheel's best fit.
 - W_IAS, W_LVK: the handoff's names for M_cog(F) under the IAS and LVK priors.

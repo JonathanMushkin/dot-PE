@@ -6,7 +6,7 @@ limit; it claims no flaw (that is E0). E2, E3 and E4 read its outputs.
 ## Question
 
 How many rows of GW240525_201644's production run (o4b-pe-paper `run_2`) have a
-distance-maximized log-likelihood b at or above the nominal cut c = 15.29?
+distance-maximized log-likelihood b at or above the nominal cut c = 16.379 (design note of 2026-11-22 10:35)?
 
 No prediction: the request carries no hypothesis about this number. (Known bounds, not a
 prediction: it is at least 1e7, since rows down to b = 24.35 already filled `size_limit`, and at
@@ -46,7 +46,7 @@ in run_2's `summary_results.json`.)
 
 ## Variable swept and held fixed
 
-Swept: the threshold x on b, from c = 15.29 to the best fit 35.29. Held fixed: run_2's selected
+Swept: the threshold x on b, from c = 16.379 to the best fit over rows, 36.379. Held fixed: run_2's selected
 templates, extrinsic samples, setup and blocking; the dot-PE worker code (branch `research`).
 
 ## Measure
