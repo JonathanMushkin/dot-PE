@@ -22,3 +22,4 @@ One row per decision, design approval, gate outcome or LSF job. Times are local 
 | 2026-11-22 10:36 | E3 code check | `thin.staged` on a synthetic table (12 blocks × 5000 rows, 3000 seeds): estimates of Σw and Σw·x unbiased within 0.4 standard errors for one-stage and three-stage priority sampling (scratch script, not part of the report). |
 | 2026-11-22 10:37 | log fix | Timestamps of five earlier rows corrected to the clock (they had been written ahead of it). |
 | 2026-11-22 10:37 | E4 design | `phase-marginalization/design.md` reviewed: no blocking findings, 6 minor, all applied; approved. |
+| 2026-11-22 10:38 | LSF 390492 done | E0 rerun: 364 s, exit 0; numbers identical to 384729; figures replaced. E0 problem report drafted, sent to the two report reviewers. |
