@@ -81,3 +81,5 @@ once E1 has reported.
     python research/sample-headroom/headroom.py     # env o4a-pe, login node, seconds
 
 Output: `artifacts/research/sample-headroom/headroom.csv` and `research/sample-headroom/review/`.
+
+Line numbers in citations of `dot_pe/` refer to commit 38f92b4 (before `row_thinning` was added).

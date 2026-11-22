@@ -121,3 +121,5 @@ factor of 81, to N̂(c) = 7.40e8.
 Output: `artifacts/research/rows-above-cut/` (`result.json`, `n_hat.csv`, `per_block.csv`,
 `blocks/`) and `research/rows-above-cut/review/`. One block takes 460 to 630 s on one core and
 peaks at 8.9 GB.
+
+Line numbers in citations of `dot_pe/` refer to commit 38f92b4 (before `row_thinning` was added).
