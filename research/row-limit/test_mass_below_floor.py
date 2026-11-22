@@ -109,7 +109,7 @@ def figures(df, hist, tag) -> None:
     rev.mkdir(exist_ok=True)
     def panel(ax, ev):
         bd, bc, cw, F, cut = hist[ev]
-        lo = min(cut, np.percentile(bc, 0.1)) - 1
+        lo = min(cut, F) - 4
         hi = max(bd.max(), bc.max()) + 1
         bins = np.linspace(lo, hi, 60)
         ax.hist(bc, bins, weights=cw / cw.sum(), histtype="step", color="k", label="cogwheel")
