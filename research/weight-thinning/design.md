@@ -7,7 +7,7 @@ applied offline to E1's rows.
 
 ## Question
 
-At the row budget production runs face, does each of the thinning rules (a), (b) and (e) below
+At the row budget production runs face, does each of the thinning rules (a), (b), (e) and (f) below
 pass the acceptance test, which asks that it reproduce the posterior of all rows above the
 nominal cut without bias and with bounded spread?
 
@@ -82,10 +82,10 @@ these ceilings: 0.05 for the evidence ratio; 0.1 × T's posterior standard devia
 parameter for each quantile; 0.02 for P_LVK; and its mean n_effective_i is not below that of
 rule (d). Rules (c) and (d) are deterministic (spread 0) and are comparators only; their
 absolute errors against T are reported. Among passing rules, the
-one with the smallest spread of P_LVK is chosen for E5; ties go to the simpler rule
-((a) < (b) < (e)). If (a) passes and (b) does not, the block-level cap is the problem and E5 must
-remove it. If no rule passes, the outcome is reported as a null result and direction 3 (E4)
-becomes the next question.
+one with the smallest spread of P_LVK is chosen for E5; ties (spreads within 10 % of each other)
+go to the simpler rule, in the order (a) < (b) < (f) < (e). If (a) passes and (b) does not, the block-level cap is the problem and E5 must
+remove it. If no rule passes, the outcome is reported as a null result and the next question is a
+larger row budget combined with the best rule (direction 1), sized from E1's N̂(x).
 
 ## Glossary
 
@@ -102,10 +102,10 @@ becomes the next question.
 ## Figure chain
 
 1. For seed 0: where in b do the kept rows of each rule lie, against T? (histograms of b, T and
-   rules (d), (a), (b), (e), log count)
+   rules (d), (a), (b), (e), (f), log count)
 2. For seed 0: what chi_eff posterior under the LVK spin prior does each rule give, against T?
    (weighted histograms)
-3. Across seeds: what is P_LVK per seed and rule? (strip plot of the 100 values per rule, line
+3. Across seeds: what is P_LVK per seed and rule, for (a), (b), (e), (f)? (strip plot of the 100 values per rule, line
    at T's value)
 4. Across measures: bias and spread of every measure per rule (table).
 
@@ -136,14 +136,17 @@ User, 2026-11-22: "try to use both phase marginalization and the thinning method
 added; nothing else changes.
 
 - (f) phase-marginalized priority sampling: T's rows are grouped by pair (bank, i, e). A pair's
-  weight is W = Σ_o w over its rows in T (rows below c carry at most e^(−20) of the best row's
-  weight and are absent from T; the sum over the 100-phase grid is the phase marginalization on
-  dot-PE's own grid, on top of the distance marginalization already in `lnl_marginalized`).
+  weight is W = Σ_o w over its rows in T, the sum over those of its 100 grid phases that have
+  b ≥ c, on top of the distance marginalization already in `lnl_marginalized`. For a pair near c
+  its phases below c can carry weight comparable to its kept ones, so W is T's pair sum, not a
+  full phase marginalization; the comparison with T's reference is unaffected, since T has the
+  same rows.
   Each pair keeps one phase o*, drawn with probability w_o / W from the same seed's generator,
   and its row is (i, e, o*) with b, chi_eff, mchirp, q of that row. The pairs are then thinned
   exactly as in rule (b), with ln W in place of ln w, the same k and the same block caps, now
   counted in pairs. A kept pair's weight is max(W, e^τ); its LVK weight is that times the
-  template's LVK spin-prior ratio (constant over phase). Every sum over rows of a function of
+  template's LVK spin-prior ratio (constant over phase). A kept pair is stored as one row, so the
+  budget of k pairs is the same storage as k rows. Every sum over rows of a function of
   (i, e) is unbiased; a function of phase is unbiased in expectation over the phase draw.
 - Accept/reject and measures as for the other rules. In production the per-pair sum is local to
   one worker call (all phases of an (i, e) pair are computed together, `thin_coherent.py:251`),
