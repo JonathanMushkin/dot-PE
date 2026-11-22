@@ -133,9 +133,9 @@ def figures(df, hist, tag) -> None:
     for prior, c, dx in (("IAS", "k", 0.98), ("LVK", "#1f77b4", 1.02)):
         ax.errorbar(df.dot_best * dx, df[f"dW_{prior}"], df[f"dW_err_{prior}"], fmt="o",
                     color=c, ms=4, capsize=2, label=f"{prior} prior")
-    for r in df.itertuples():
-        ax.annotate(r.event, (r.dot_best, r.dW_IAS), fontsize=6, xytext=(3, 3),
-                    textcoords="offset points")
+    for n, r in enumerate(df.itertuples()):
+        ax.annotate(r.event, (r.dot_best, r.dW_IAS), fontsize=6,
+                    xytext=(5, -12 if n % 2 else 5), textcoords="offset points")
     ax.axhline(0, color="0.6", lw=0.8)
     ax.set_xscale("log")
     ax.set_xlabel("dot-PE best-fit log-likelihood")

@@ -23,3 +23,5 @@ One row per decision, design approval, gate outcome or LSF job. Times are local 
 | 2026-11-22 10:37 | log fix | Timestamps of five earlier rows corrected to the clock (they had been written ahead of it). |
 | 2026-11-22 10:37 | E4 design | `phase-marginalization/design.md` reviewed: no blocking findings, 6 minor, all applied; approved. |
 | 2026-11-22 10:38 | LSF 390492 done | E0 rerun: 364 s, exit 0; numbers identical to 384729; figures replaced. E0 problem report drafted, sent to the two report reviewers. |
+| 2026-11-22 10:40 | LSF 395074 | E0 rerun for figure 3 label offsets (design note 10:40). E0 report revised after both report reviewers (FIX: 13 and 12 items); re-review follows. |
+| 2026-11-22 10:48 | LSF 395074 done; E0 report | Figure 3 regenerated (labels offset; numbers identical). Report re-check: reviewer 1 FIX (commit hash, output name, SNR, rounding), reviewer 2 FIX (the stated control-selection rule picks GW240615_113620, not the control used). Fixed; design note 10:48 corrects the control's description (chosen by hand as the smallest larger of W_IAS and W_LVK among the six events with best fit > 200 and offset < 2). |

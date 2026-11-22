@@ -117,3 +117,17 @@ runs are fixed in the script. It is run in conda env `o4a-pe` (it imports o4b-pe
 reweighting). It reads about 10 posterior files; it runs as one LSF job on the `analysis`
 profile (1 core, 8000 MB). Output: `artifacts/research/row-limit/mass_below_floor.csv`, and the
 figures under `review/`.
+
+## Design note, 2026-11-22 10:40 (after the first results)
+
+The output file is `mass_below_floor_<tag>.csv` (tag `production` for the problem run, a new tag
+for the solution run), not `mass_below_floor.csv`; figure 3 labels were offset so that event names
+do not overlap. Neither change affects any number.
+
+## Design note, 2026-11-22 10:48 (correction of the control's description)
+
+The control's selection rule written under "Event choice" ("best fit > 200, |offset| < 2 and the
+smallest W_IAS above 0") does not pick GW240621_195059; it picks GW240615_113620 (W_IAS 0.003,
+W_LVK 0.025). GW240621_195059 was chosen by hand from the six events with best fit > 200 and
+|offset| < 2 as the one whose larger of W_IAS and W_LVK is smallest (0.004). The event is
+unchanged; only its description is corrected.
