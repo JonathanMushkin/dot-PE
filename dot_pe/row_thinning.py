@@ -60,6 +60,8 @@ def pair_reduce(i_k, e_k, ln_post_k, rng):
     hit = np.flatnonzero(gs == np.repeat(gmax, sizes))
     group = np.repeat(np.arange(len(starts)), sizes)[hit]
     first = hit[np.r_[True, group[1:] != group[:-1]]]
+    if len(first) != len(starts):
+        raise ValueError("pair_reduce: a pair has no finite ln_posterior (NaN in the input)")
     mx = np.maximum.reduceat(lw, starts)
     ln_w_pair = mx + np.log(np.add.reduceat(np.exp(lw - np.repeat(mx, sizes)), starts))
     return order[first], ln_w_pair

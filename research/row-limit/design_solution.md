@@ -2,7 +2,7 @@
 
 Class: bug fix, solution experiment for `research/row-limit/design.md` (E0). It runs E0's test,
 `test_mass_below_floor.py`, unchanged, on dot-PE runs made with the fix, and adds the cost and the
-handoff's acceptance numbers. The fix is `row_thinning="pairs"` (dot-PE commit 6454106 on branch
+handoff's acceptance numbers. The fix is `row_thinning="pairs"` (dot-PE commit 6003d04 and later on branch
 `research`, `dot_pe/row_thinning.py`), rule (f) of E3 (`research/weight-thinning/`).
 
 ## Question
@@ -35,7 +35,7 @@ production run (`load_inds`, `inds_path`, `extrinsic_samples`, as in o4b-pe-pape
 `dev/row_limit_check/rerun_gw240525.py`). LSF: the `pe` profile, 8 cores and 128 000 MB,
 physics-medium, 7 workers, as production. Expected cost: the coherent stage computes the same
 rows as production; the fix adds a per-pair reduction on the accepted rows of each worker call
-(sorting by pair) and three extra columns. Expected peak memory: production's (40 GB for
+(no sort: the rows arrive grouped by pair) and three extra columns. Expected peak memory: production's (40 GB for
 GW240525_201644 run_2) plus at most 30 %; a run above 1.3 × production's peak or 1.5 × its wall
 time is reported as a cost failure. These expectations are checked before submission against a
 pilot: `smoke_pairs_block.py` (LSF) times one production i-block of GW240525_201644 run_2 over 4

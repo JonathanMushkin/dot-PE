@@ -68,3 +68,9 @@ Held fixed: everything else; the measure reads existing summaries only.
 
 `headroom.py` in this folder, env `o4a-pe`, reads 2 × 288 small JSON files; login node (seconds).
 Output `artifacts/research/sample-headroom/headroom.csv` and `review/`.
+
+## Design note, 2026-11-22 12:05 (after the results)
+
+H as defined (max(1, h_i) × max(1, h_e)) is 1 or more for a run that already fails a minimum,
+which reads as "no reduction possible" only implicitly. The report states H only for the runs
+that pass both minima and marks the others as failing; the definition is unchanged.
