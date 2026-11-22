@@ -56,8 +56,8 @@ fit, the largest b over run_2's kept rows?
 ![rho(x)](review/fig2_rho.png)
 
 ρ(x) falls from 9.20 at c to 4.55 at x = 24.38, next to the floor, the lowest b run_2 kept. The
-earlier o4b-pe-paper estimate of about 3 phases per pair, from the top 1e7 rows of production
-runs (`dev/row_limit_check/phase_multiplicity.md`), compares with ρ = 4.55 at run_2's floor.
+request's estimate of about 3 phases per pair, from the top 1e7 rows of production
+runs (o4b-pe-paper `dev/row_limit_check/phase_multiplicity.md`), compares with ρ = 4.55 at run_2's floor.
 
 ## Limitations
 
@@ -66,7 +66,8 @@ runs (`dev/row_limit_check/phase_multiplicity.md`), compares with ρ = 4.55 at r
   for T's pairs.
 - ρ(x) is a ratio of two estimated sums, with a small ratio-estimator bias; the bootstrap
   interval carries its spread.
-- ρ counts points of the 100-phase grid; a coarser grid would change it in proportion.
+- ρ counts points of the 100-phase grid, so a different grid changes it; this is not measured
+  here.
 - One event; ρ depends on how sharply the likelihood varies with phase, which depends on the
   signal's higher modes and inclination.
 - A phase-marginalized row must also carry what is needed to draw a phase later; its storage cost

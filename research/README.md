@@ -18,8 +18,8 @@ None yet.
 | id | folder | class | question | status |
 |---|---|---|---|---|
 | E0 | `row-limit/` | bug fix, problem | ΔW, cogwheel minus dot-PE posterior mass below the production floor | report: `2026-11-22_problem.md` |
-| E1 | `rows-above-cut/` | measurement | How many rows of GW240525_201644 run_2 lie above the nominal cut? | running (LSF) |
+| E1 | `rows-above-cut/` | measurement | How many rows of GW240525_201644 run_2 lie above the nominal cut? | report: `2026-11-22_measurement.md` (7.4e8) |
 | E2 | `sample-headroom/` | measurement | By how much could fewer templates and fewer extrinsic samples shrink the rows? | run; report in review, needs E1 |
 | E3 | `weight-thinning/` | feature, correctness | Does each thinning rule pass the acceptance test at the production row budget? | design approved, needs E1 |
-| E4 | `phase-marginalization/` | measurement | How many fewer rows does marginalizing over phase leave? | design approved, needs E1 |
+| E4 | `phase-marginalization/` | measurement | How many fewer rows does marginalizing over phase leave? | report: `2026-11-22_measurement.md` (ρ(c) = 9.2) |
 | E5 | `row-limit/` | bug fix, solution | E0's test on the chosen fix | planned, needs E3 |
