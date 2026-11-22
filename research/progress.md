@@ -29,3 +29,7 @@ One row per decision, design approval, gate outcome or LSF job. Times are local 
 | 2026-11-22 11:00 | E3 design note | User: "if the report comes in, and nothing else changes, try to use both phase marginalization and the thinning method". Rule (f) added to E3 before any E3 result: pairs (bank, i, e) weighted by the sum over phases, one phase drawn per pair, then the staged priority sampling of rule (b). |
 | 2026-11-22 11:01 | E3 code check | Rule (f) on a synthetic table (10 659 rows, 3600 pairs, 3000 seeds): phase-draw frequencies match w_o / W; Σŵ and Σŵ·x unbiased within 1.2 standard errors (scratch script). |
 | 2026-11-22 11:01 | E3 design note | Reviewed: rule and code correct; REVISE (blocking: (f) missing from question, figure chain and selection rules); fixed, with the null branch now pointing to a larger budget plus the best rule; approved. |
+| 2026-11-22 11:28 | LSF 389634 … 389728 done | E1: all 20 jobs exit 0; 120 blocks; peak 8.6 GB; 3.9 GB of block files. |
+| 2026-11-22 11:30 | LSF 422140 done | E1 analysis: N̂(c) = 7.40e8 rows (68 % interval 7.34e8 to 7.47e8), 74 times `size_limit`; N̂ at x = 24.38 (run_2's floor) 9.1e6, consistent with the 1e7 rows run_2 kept there; T holds 9.12e7 rows. |
+| 2026-11-22 11:31 | LSF 422551, 422555, 422558, 422561, 422564, 422567 | E3 rules d, c, a, b, e, f; 100 seeds for a, b, e, f; o4a-pe, 1 core, 48000 MB, physics-short. k = 9.12e7 × 1e7 / 7.40e8 ≈ 1.23e6. |
+| 2026-11-22 11:31 | LSF 422570 | E4 `rho.py`, 1 core, 16000 MB. |
