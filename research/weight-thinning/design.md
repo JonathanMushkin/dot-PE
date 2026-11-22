@@ -129,3 +129,22 @@ becomes the next question.
 `thin.py` (rules and measures) and `run.py` in this folder. One LSF job per rule, env `o4a-pe`
 (needs `lvk_reweight`; `dot_pe` is not imported), 1 core, memory 3 × the size of T in memory
 (set from E1's output), physics-short.
+
+## Design note, 2026-11-22 11:00 (before any E3 result exists; user instruction)
+
+User, 2026-11-22: "try to use both phase marginalization and the thinning method". One rule is
+added; nothing else changes.
+
+- (f) phase-marginalized priority sampling: T's rows are grouped by pair (bank, i, e). A pair's
+  weight is W = Σ_o w over its rows in T (rows below c carry at most e^(−20) of the best row's
+  weight and are absent from T; the sum over the 100-phase grid is the phase marginalization on
+  dot-PE's own grid, on top of the distance marginalization already in `lnl_marginalized`).
+  Each pair keeps one phase o*, drawn with probability w_o / W from the same seed's generator,
+  and its row is (i, e, o*) with b, chi_eff, mchirp, q of that row. The pairs are then thinned
+  exactly as in rule (b), with ln W in place of ln w, the same k and the same block caps, now
+  counted in pairs. A kept pair's weight is max(W, e^τ); its LVK weight is that times the
+  template's LVK spin-prior ratio (constant over phase). Every sum over rows of a function of
+  (i, e) is unbiased; a function of phase is unbiased in expectation over the phase draw.
+- Accept/reject and measures as for the other rules. In production the per-pair sum is local to
+  one worker call (all phases of an (i, e) pair are computed together, `thin_coherent.py:251`),
+  so (f) needs no extra communication.

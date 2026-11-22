@@ -2,7 +2,7 @@
 """E3: thinning rules applied offline to T, the complete rows of E1's sampled i-blocks.
 
 Design: research/weight-thinning/design.md. Env o4a-pe (needs o4a_pe_paper.pe_lib.lvk_reweight).
-Usage: python thin.py --rule a|b|c|d|e [--seeds 100]
+Usage: python thin.py --rule a|b|c|d|e|f [--seeds 100]
 Writes artifacts/research/weight-thinning/<rule>.csv (one row per seed) and, for seed 0,
 <rule>_seed0.npz (kept rows' b, chi_eff and weights) for the figures.
 """
@@ -164,9 +164,52 @@ def apply_rule(rule, T, meta, seed, lnw, lnr, ln_def):
     return kept, w_ias, w_lvk
 
 
+class Pairs:
+    """Phase-marginalized pairs (bank, i, e) of T, for rule (f)."""
+
+    def __init__(self, T: pd.DataFrame, lnw: np.ndarray):
+        key = (T["bank"].to_numpy(np.int64) << 48) | (T["i"].to_numpy(np.int64) << 16) \
+            | T["e"].to_numpy(np.int64)
+        order = np.argsort(key, kind="stable")
+        ks = key[order]
+        starts = np.flatnonzero(np.r_[True, ks[1:] != ks[:-1]])
+        self.order, self.starts = order, starts
+        lw = lnw[order]
+        mx = np.maximum.reduceat(lw, starts)
+        rep = np.repeat(mx, np.diff(np.r_[starts, len(lw)]))
+        s = np.add.reduceat(np.exp(lw - rep), starts)
+        self.ln_W = mx + np.log(s)
+        # within-pair cumulative probability, offset by the pair's index
+        pid = np.repeat(np.arange(len(starts)), np.diff(np.r_[starts, len(lw)]))
+        c = np.exp(lw - rep) / np.repeat(s, np.diff(np.r_[starts, len(lw)]))
+        cs = np.cumsum(c)
+        cs -= np.repeat(cs[starts] - c[starts], np.diff(np.r_[starts, len(lw)]))
+        self.cum = pid + np.minimum(cs, 1.0)
+        first = order[starts]
+        self.table = T.iloc[first][["blk", "bank"]].reset_index(drop=True)
+        self.first = first
+
+    def draw_rows(self, kept_pairs: np.ndarray, rng) -> np.ndarray:
+        """One phase per kept pair, with probability w_o / W; returns row indices into T."""
+        target = kept_pairs + rng.random(len(kept_pairs))
+        pos = np.searchsorted(self.cum, target, side="left")
+        pos = np.minimum(pos, np.r_[self.starts[1:], len(self.cum)][kept_pairs] - 1)
+        return self.order[pos]
+
+
+def apply_pairs(P: Pairs, meta, seed, lnr):
+    rng = np.random.default_rng(seed)
+    ln_u = np.log1p(-rng.random(len(P.ln_W)))
+    kept, tau = staged(P.ln_W - ln_u, P.table, meta, "bkg")
+    ln_hat = np.maximum(P.ln_W[kept], tau)
+    rows = P.draw_rows(kept, rng)
+    w_ias = np.exp(ln_hat)
+    return rows, w_ias, w_ias * np.exp(lnr[rows])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--rule", required=True, choices=list("abcde"))
+    ap.add_argument("--rule", required=True, choices=list("abcdef"))
     ap.add_argument("--seeds", type=int, default=100)
     a = ap.parse_args()
     T, meta = load_T()
@@ -190,9 +233,15 @@ def main() -> None:
         np.savez(OUT / "T_hists.npz", **hists(T["bestfit_lnlike"].to_numpy(),
                                               T["chieff"].to_numpy(), w_T_lvk))
     seeds = [0] if a.rule in ("c", "d") else range(a.seeds)
+    P = Pairs(T, lnw) if a.rule == "f" else None
+    if P is not None:
+        print(json.dumps({"n_pairs": len(P.ln_W), "n_rows": len(T)}), flush=True)
     rows = []
     for s in seeds:
-        kept, w_ias, w_lvk = apply_rule(a.rule, T, meta, s, lnw, lnr, ln_def)
+        if P is not None:
+            kept, w_ias, w_lvk = apply_pairs(P, meta, s, lnr)
+        else:
+            kept, w_ias, w_lvk = apply_rule(a.rule, T, meta, s, lnw, lnr, ln_def)
         r = measures(T, kept, w_ias, w_lvk, S)
         r["seed"] = s
         rows.append(r)
