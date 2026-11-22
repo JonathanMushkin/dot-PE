@@ -42,7 +42,9 @@ def main() -> None:
             row = {"rule": r, "measure": m, "reference": refv, "mean": mean, "bias": mean - refv,
                    "spread": sd}
             if r in RAND and m in MEASURES:
-                row["bias_ok"] = abs(mean - refv) <= 2 * sd / np.sqrt(n) + 0.1 * sd
+                tol = 1e-9 * max(1.0, abs(refv))  # design note 2026-11-22 11:45
+                row["bias_ok"] = (abs(mean - refv) <= tol
+                                  or abs(mean - refv) <= 2 * sd / np.sqrt(n) + 0.1 * sd)
                 row["spread_ok"] = sd <= ceil[m]
             rows.append(row)
     tab = pd.DataFrame(rows)

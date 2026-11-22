@@ -151,3 +151,19 @@ added; nothing else changes.
 - Accept/reject and measures as for the other rules. In production the per-pair sum is local to
   one worker call (all phases of an (i, e) pair are computed together, `thin_coherent.py:251`),
   so (f) needs no extra communication.
+
+## Design note, 2026-11-22 11:45 (after the results; numerical correction of the bias test)
+
+On the first evaluation every randomized rule failed the bias test, but in all failures but one
+the quantile was the same template value as the reference in all 100 seeds: the mean over seeds
+differed from the reference by 1e-16 to 7e-15 (floating-point round-off of a mean of identical
+values) and the seed-to-seed standard deviation was of the same size, so the test compared
+round-off with round-off. The test is amended to count a bias of at most 1e-9 × max(1,
+|reference|) as zero. This is a change made after seeing results; it changes no threshold above
+machine precision. The one failure it does not touch, rules (a) and (b) on the 5 % quantile of
+chirp mass (bias −1.0e-3 solar masses, 3.1 standard errors, 4.6e-4 of the posterior standard
+deviation), stands as a failure.
+
+Selection: the user's instruction of 2026-11-22 ("try to use both phase marginalization and the
+thinning method") overrides the rule "smallest spread of P_LVK wins": if (f) passes it goes to
+E5 even if another passing rule has a smaller P_LVK spread; that comparison is reported.
