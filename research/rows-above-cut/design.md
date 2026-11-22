@@ -6,7 +6,7 @@ limit; it claims no flaw (that is E0). E2, E3 and E4 read its outputs.
 ## Question
 
 How many rows of GW240525_201644's production run (o4b-pe-paper `run_2`) have a
-distance-maximized log-likelihood b at or above the nominal cut c = 16.379 (design note of 2026-11-22 10:35)?
+distance-maximized log-likelihood b at or above the nominal cut c = 16.379 (design note of 2026-11-22 10:27)?
 
 No prediction: the request carries no hypothesis about this number. (Known bounds, not a
 prediction: it is at least 1e7, since rows down to b = 24.35 already filled `size_limit`, and at
@@ -57,7 +57,7 @@ phase) rows. The answer is N̂(c) with its 68 % interval.
 ## Glossary
 
 - row, `size_limit`, nominal cut, floor, b: as in `research/row-limit/design.md`.
-- c: the nominal cut of run_2, its best fit over kept rows minus 20, 16.379 (see the design note of 2026-11-22 10:35).
+- c: the nominal cut of run_2, its best fit over kept rows minus 20, 16.379 (see the design note of 2026-11-22 10:27).
 - i-block: a group of up to 512 selected templates of one bank, the unit of work of one coherent
   worker (`dot_pe/mp_inference.py:433`).
 - N_j(x), N̂(x), B_k, n_b: defined under "Method".
@@ -97,7 +97,7 @@ phase) rows. The answer is N̂(c) with its 68 % interval.
 - LSF: env `dot-pe`, 1 core, 16000 MB, physics-short. Per block about 2 min is expected
   (run_2's coherent stage, 5.22 h × 7 workers / 1162 blocks); the pilot measures it.
 
-## Design note, 2026-11-22 10:35 (before any E1 result was read)
+## Design note, 2026-11-22 10:27 (before any E1 result was read)
 
 E0's job showed that run_2's `summary_results.json` `bestfit_lnlike_max` (35.287) is the
 maximum over the 1e4 posterior draws (`dot_pe/inference.py:1568`, `samples["bestfit_lnlike"]`),
