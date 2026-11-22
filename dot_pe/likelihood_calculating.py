@@ -185,6 +185,36 @@ def invalid_bestfit_mask(dh, hh):
         return (hh <= 0) | ((dh > 0) & (hh / dh < MIN_D_LUMINOSITY))
 
 
+# Slack for the incoherent bound: the single-detector stage maximizes on a coarser time
+# grid than the coherent stage, so a genuine row can sit a few nats above it (largest
+# measured over 162 O4b production runs: 13.2 nats, GW240618_071627).
+INCOHERENT_BOUND_TOL = 20.0
+
+
+def incoherent_lookup(n_bank, inds, incoherent_lnlikes):
+    """Bank-indexed array of Stage 2 incoherent log-likelihoods; +inf (no bound) for
+    templates outside `inds`."""
+    out = np.full(int(n_bank), np.inf)
+    out[np.asarray(inds, dtype=int)] = np.asarray(incoherent_lnlikes, dtype=float)
+    return out
+
+
+def incoherent_bound_mask(bestfit_ieo, incoherent_i, tol=INCOHERENT_BOUND_TOL):
+    """True where a row's best-fit log-likelihood exceeds its template's incoherent one.
+
+    For one template, the sum over detectors of the per-detector maximum log-likelihood
+    (Stage 2) bounds the network log-likelihood at any extrinsic point: maximizing each
+    detector separately cannot do worse than maximizing them jointly. A row above that
+    bound is a numerical failure of the mode-pair recombination — a near-cancelled
+    positive <h|h> that `invalid_bestfit_mask` does not catch (measured:
+    GW240630_212937 run_5, best fit 229.6 against an incoherent 46.7, <h|h> at 0.06
+    percent of the same template's largest).
+
+    `bestfit_ieo` has the template index first; `incoherent_i` is aligned with it.
+    """
+    return bestfit_ieo > (np.asarray(incoherent_i)[:, None, None] + tol)
+
+
 class LikelihoodCalculator:
     """
     A class that receives as input the components of intrinsic and

@@ -117,6 +117,9 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         self.intrinsic_bank_file = Path(intrinsic_bank_file)
         self.waveform_dir = Path(waveform_dir)
         self.likelihood = likelihood
+        # Bank-indexed Stage 2 incoherent log-likelihoods; set by the caller to bound
+        # the coherent best fit (select_and_get_lnlike). None = no bound.
+        self.incoherent_lnlike_by_i = None
         self.intrinsic_sample_processor = sample_processing.IntrinsicSampleProcessor(
             self.likelihood, self.waveform_dir
         )
@@ -311,11 +314,15 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
         )
 
     @staticmethod
-    def select_and_get_lnlike(dh_ieo, hh_ieo, min_bestfit_lnlike_to_keep=-np.inf):
+    def select_and_get_lnlike(
+        dh_ieo, hh_ieo, min_bestfit_lnlike_to_keep=-np.inf, incoherent_i=None
+    ):
         """
         Select elements ieo by having distance-fitted lnlike not less
         than cut_threshold below the maximum.
         Return three arrays with intrinsic, extrinsic and phi sample.
+        `incoherent_i` (aligned with the block's templates) bounds each row's
+        best fit (`likelihood_calculating.incoherent_bound_mask`); None = no bound.
         """
 
         bestfit_lnlike = 0.5 * (dh_ieo**2) / hh_ieo * (dh_ieo > 0)
@@ -334,6 +341,14 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
             -np.inf,
             bestfit_lnlike,
         )
+        if incoherent_i is not None:
+            bestfit_lnlike = np.where(
+                likelihood_calculating.incoherent_bound_mask(
+                    bestfit_lnlike, incoherent_i
+                ),
+                -np.inf,
+                bestfit_lnlike,
+            )
 
         # in case of too low / non existing minimal besfit-likelihood
         # to be accepted into
@@ -370,8 +385,13 @@ class CoherentLikelihoodProcessor(JSONMixin, Loggable):
             self.likelihood.asd_drift,
         )
 
+        incoherent_i = (
+            None
+            if self.incoherent_lnlike_by_i is None
+            else self.incoherent_lnlike_by_i[bank_i_inds]
+        )
         (bestfit_lnlike_k, accepted) = self.select_and_get_lnlike(
-            dh_ieo, hh_ieo, self.min_bestfit_lnlike_to_keep
+            dh_ieo, hh_ieo, self.min_bestfit_lnlike_to_keep, incoherent_i
         )
 
         self.n_distance_marginalizations += np.sum(accepted)
