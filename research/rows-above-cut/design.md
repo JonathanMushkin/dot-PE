@@ -57,7 +57,7 @@ phase) rows. The answer is N̂(c) with its 68 % interval.
 ## Glossary
 
 - row, `size_limit`, nominal cut, floor, b: as in `research/row-limit/design.md`.
-- c: the nominal cut of run_2, its best fit minus 20, 15.287 (full precision under Method).
+- c: the nominal cut of run_2, its best fit over kept rows minus 20, 16.379 (see the design note of 2026-11-22 10:35).
 - i-block: a group of up to 512 selected templates of one bank, the unit of work of one coherent
   worker (`dot_pe/mp_inference.py:433`).
 - N_j(x), N̂(x), B_k, n_b: defined under "Method".
@@ -96,3 +96,15 @@ phase) rows. The answer is N̂(c) with its 68 % interval.
   CSV. `analyze.py` computes N̂(x) and the figures.
 - LSF: env `dot-pe`, 1 core, 16000 MB, physics-short. Per block about 2 min is expected
   (run_2's coherent stage, 5.22 h × 7 workers / 1162 blocks); the pilot measures it.
+
+## Design note, 2026-11-22 10:35 (before any E1 result was read)
+
+E0's job showed that run_2's `summary_results.json` `bestfit_lnlike_max` (35.287) is the
+maximum over the 1e4 posterior draws (`dot_pe/inference.py:1568`, `samples["bestfit_lnlike"]`),
+not over the kept rows; the largest `bestfit_lnlike` in run_2's `prob_samples.feather` is
+36.379 (bank_0, template 699179). The nominal cut is therefore c = 36.379 − 20 = 16.379, and the
+analysis uses this c. The harness, already running for the pilot, keeps rows with
+b ≥ 15.287 ≤ c, a superset of the rows with b ≥ c, so it is not changed. A worker's running
+threshold can now reach up to c, so N̂(x) is reported only for x ≥ c. The handoff and
+o4b-pe-paper `dev/row_limit_check/row_limit.csv` take the nominal cut from the same summary
+field; that is recorded in `research/progress.md`, not changed here.
