@@ -48,15 +48,21 @@ def pair_reduce(i_k, e_k, ln_post_k, rng):
     key = (np.asarray(i_k, np.int64) << 32) | np.asarray(e_k, np.int64)
     # Gumbel-max: argmax over the pair of ln w + Gumbel draws with probability w / W.
     g = ln_post_k - np.log(-np.log(1.0 - rng.random(n)))
-    order = np.lexsort((g, key))
-    ks = key[order]
-    last = np.r_[ks[1:] != ks[:-1], True]
+    # Rows from np.where on an (i, e, o) array arrive grouped by pair; sort only otherwise.
+    if np.all(key[1:] >= key[:-1]):
+        order = np.arange(n)
+    else:
+        order = np.argsort(key, kind="stable")
+    ks, gs, lw = key[order], g[order], ln_post_k[order]
     starts = np.flatnonzero(np.r_[True, ks[1:] != ks[:-1]])
-    lw = ln_post_k[order]
-    mx = np.maximum.reduceat(lw, starts)
     sizes = np.diff(np.r_[starts, n])
+    gmax = np.maximum.reduceat(gs, starts)
+    hit = np.flatnonzero(gs == np.repeat(gmax, sizes))
+    group = np.repeat(np.arange(len(starts)), sizes)[hit]
+    first = hit[np.r_[True, group[1:] != group[:-1]]]
+    mx = np.maximum.reduceat(lw, starts)
     ln_w_pair = mx + np.log(np.add.reduceat(np.exp(lw - np.repeat(mx, sizes)), starts))
-    return order[last], ln_w_pair
+    return order[first], ln_w_pair
 
 
 def top_by_key(df: pd.DataFrame, k: int) -> tuple[pd.DataFrame, float]:

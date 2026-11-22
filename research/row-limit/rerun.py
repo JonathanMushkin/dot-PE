@@ -70,19 +70,23 @@ def reweight_lvk(rundir: Path) -> dict:
     from o4a_pe_paper.pe_lib import lvk_reweight as L
 
     orig = pd.read_feather
-    path = str(rundir / "prob_samples.feather")
+    path = (rundir / "prob_samples.feather").resolve()
+    n_corrected = []
 
     def read_with_correction(p, *a, **k):
         df = orig(p, *a, **k)
-        if str(p) == path and "ln_thinning_weight" in df.columns:
+        if Path(p).resolve() == path and "ln_thinning_weight" in df.columns:
             df["ln_posterior"] = df["ln_posterior"] + df["ln_thinning_weight"]
+            n_corrected.append(1)
         return df
 
     L.pd.read_feather = read_with_correction
     try:
-        return L.reweight_rundir(rundir)
+        out = L.reweight_rundir(rundir)
     finally:
         L.pd.read_feather = orig
+    assert n_corrected, "prob_samples.feather was not read through the correction"
+    return out
 
 
 def main() -> None:

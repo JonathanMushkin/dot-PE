@@ -15,7 +15,8 @@ event GW240621_195059?
 
 From E3: rule (f) reproduced the posterior of every row above the nominal cut of
 GW240525_201644 to within its seed-to-seed spread, and those rows reach down to the cut, below F.
-Prediction: with the fix, M_dot(F) for GW240525_201644 rises from 0.0004 to within E0's noise of
+Prediction: with the fix, M_dot(F) for GW240525_201644 rises from about 0 (0.0004 in E0's table,
+F being rounded) to within E0's noise of
 M_cog(F) = 0.31 (IAS prior) and 0.60 (LVK prior), so that |ΔW| ≤ 2σ_ΔW with σ_ΔW < 0.1 under both
 priors; for GW240621_195059, ΔW stays within the same criterion. Disproved if either event fails
 the criterion under either prior.
@@ -36,7 +37,13 @@ physics-medium, 7 workers, as production. Expected cost: the coherent stage comp
 rows as production; the fix adds a per-pair reduction on the accepted rows of each worker call
 (sorting by pair) and three extra columns. Expected peak memory: production's (40 GB for
 GW240525_201644 run_2) plus at most 30 %; a run above 1.3 × production's peak or 1.5 × its wall
-time is reported as a cost failure.
+time is reported as a cost failure. These expectations are checked before submission against a
+pilot: `smoke_pairs_block.py` (LSF) times one production i-block of GW240525_201644 run_2 over 4
+of its 26 extrinsic blocks with the production cap, under both rules, twice each; its numbers are
+recorded in `progress.md` and in the report. Pilot result (LSF 437770, after removing a sort from the
+pair reduction): 25.5 s per call under both rules after the first, peak memory 6.6 GB under both;
+the expected wall time of each rerun is therefore its production wall time within the run-to-run
+scatter, and peak memory production's.
 
 The LVK-prior samples are produced by o4b-pe-paper's `lvk_reweight.reweight_rundir`, with
 `ln_posterior` replaced by `ln_posterior + ln_thinning_weight` when it reads
@@ -55,8 +62,13 @@ modified (`rerun.py`).
 
 ## Pass criterion (fixed now)
 
-The fix passes when measure 1 meets E0's criterion for both events under both priors, and its
-cost is within the bounds above. Measure 2 is reported against the handoff; n_effective below
+E0's pass criterion names three counted events (the control, GW240525_201644 and
+GW230902_150325) and the condition |ΔW| ≤ 2σ_ΔW with σ_ΔW < 0.1 under both priors
+(`research/row-limit/design.md`, "Pass criterion for the solution experiment"). At the user's
+request (one failing and one working event, 2026-11-22) this experiment evaluates it on the
+control and GW240525_201644 only; GW230902_150325 is not rerun, and the report states that E0's
+acceptance is tested only in part. The fix passes when measure 1 meets that condition for both
+events under both priors, and its cost is within the bounds above. Measure 2 is reported against the handoff; n_effective below
 run_2's is reported as a finding, not a failure, since thinning trades rows near the floor for
 rows down to the cut.
 
@@ -68,6 +80,7 @@ they are not rerun; ΔW per event), then:
 
 4. For GW240525_201644: the chi_eff posterior under the LVK prior, production run_2, the rerun
    and cogwheel. (weighted histograms)
+5. Table: measures 2 and 3 for both events, production against the rerun.
 
 ## Confounders and how each is fixed
 
@@ -80,5 +93,14 @@ they are not rerun; ΔW per event), then:
   change no row of GW240525_201644 run_2.
 - Thinning is random (seeded by the run seed); one rerun per event gives one draw, whose spread
   E3 bounds (P_LVK spread 0.002 on T).
+- E3 tested rule (f) on the rows with b ≥ c; in production a pair's weight sums its phases over
+  the worker's accepted rows, which reach down to the worker's running threshold (the block
+  maximum minus 20), which can lie below c. The pair weights are then slightly larger than in
+  E3's T, and correct for the cut production applies.
+- E1's validation of the newer masks covered GW240525_201644 run_2 only, not GW240621_195059
+  run_1 (dot-PE a94bf7c); a changed row there would show as a difference from production at
+  high b.
+- Gates: `tests/test_row_thinning.py` (6 tests) passed before any rerun (login node, 20 s); the
+  full suite runs as LSF job 429572 and must pass before submission.
 - The LVK reweighting adds `ln_thinning_weight` through a wrapper; o4b-pe-paper's own reweighting
   of a thinned run would omit it (required follow-up, noted in the report).

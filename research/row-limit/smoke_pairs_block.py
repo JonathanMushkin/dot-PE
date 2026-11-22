@@ -6,6 +6,8 @@ return one row per (i, e) pair and the sum of its pair weights must equal the su
 weights of the bestfit mode over the same accepted rows.
 """
 
+import resource
+import time
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +28,14 @@ def main():
     e_blocks = inds_to_blocks(np.arange(13312), 512)[:4]
     ln_n = np.log(100 * 13312 * 1048576)
     out = {}
+    for mode in ("bestfit", "pairs", "bestfit", "pairs"):
+        s = dict(setup, row_thinning=mode, ln_N_k=ln_n, thinning_seed=1,
+                 max_output_per_block=64724)
+        t0 = time.time()
+        df, *_ = thin_coherent.run_thin_iblock(i_block, e_blocks, s, Path(BANK) / "waveforms")
+        dt = time.time() - t0
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+        print(f"{mode} with production cap: {len(df)} rows, {dt:.1f} s, maxrss so far {rss:.2f} GB")
     for mode in ("bestfit", "pairs"):
         s = dict(setup, row_thinning=mode, ln_N_k=ln_n, thinning_seed=1)
         df, *_ = thin_coherent.run_thin_iblock(i_block, e_blocks, s, Path(BANK) / "waveforms")
