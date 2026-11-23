@@ -216,7 +216,7 @@ def _compute_evidence_per_bank_slim(
         likelihood_linfree, waveform_dir
     )
     _, resolved_m_arr = resolve_bank_modes(bank_config)
-    likelihood_calc = likelihood_calculating.LikelihoodCalculator(
+    likelihood_calculator = likelihood_calculating.LikelihoodCalculator(
         n_phi=n_phi, m_arr=resolved_m_arr
     )
     dh_weights_dmpb, hh_weights_dmppb = intrinsic_sample_processor.get_summary()
@@ -259,7 +259,7 @@ def _compute_evidence_per_bank_slim(
                 timeshift_subset = timeshift_dbe[..., e_block]
                 log_prior_weights_e_block = full_log_prior_weights_e[e_block]
 
-                dh_ieo, hh_ieo = likelihood_calc.get_dh_hh_ieo(
+                dh_ieo, hh_ieo = likelihood_calculator.get_dh_hh_ieo(
                     dh_weights_dmpb,
                     h_impb,
                     response_subset,
@@ -272,7 +272,7 @@ def _compute_evidence_per_bank_slim(
                     inds_i_k,
                     inds_e_k,
                     inds_o_k,
-                ) = likelihood_calc.select_ieo_by_approx_lnlike_dist_marginalized(
+                ) = likelihood_calculator.select_ieo_by_approx_lnlike_dist_marginalized(
                     dh_ieo,
                     hh_ieo,
                     log_prior_weights_i_block,
@@ -286,7 +286,7 @@ def _compute_evidence_per_bank_slim(
 
                 dh_k = dh_ieo[inds_i_k, inds_e_k, inds_o_k]
                 hh_k = hh_ieo[inds_i_k, inds_e_k, inds_o_k]
-                dist_marg_lnlike_k = likelihood_calc.lookup_table.lnlike_marginalized(
+                dist_marg_lnlike_k = likelihood_calculator.lookup_table.lnlike_marginalized(
                     dh_k, hh_k
                 )
 

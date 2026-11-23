@@ -62,6 +62,7 @@ warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
 from cogwheel.utils import exp_normalize
 from dot_pe import inference, thin_coherent
+from dot_pe import priority_sampling
 from dot_pe.base_sampler_free_sampling import get_n_effective_total_i_e
 from dot_pe.coherent_processing import CoherentLikelihoodProcessor
 from dot_pe.likelihood_calculating import incoherent_lookup
@@ -333,9 +334,15 @@ def _run_coherent_mp(
     approximant,
     profile_dir=None,
     selected_lnlikes_by_bank=None,
+    row_selection="bestfit",
+    selection_seed=None,
 ):
     """
     Parallel replacement for run_coherent_inference_per_bank().
+
+    `row_selection` = "phase_marginalized_priority" keeps rows by phase marginalization and
+    priority sampling (`dot_pe.priority_sampling`) instead of by highest `bestfit_lnlike`;
+    "bestfit" is the original rule.
 
     `selected_lnlikes_by_bank` (Stage 3 incoherent log-likelihoods, aligned with
     `selected_inds_by_bank`) bounds each template's coherent best fit
@@ -423,6 +430,10 @@ def _run_coherent_mp(
         # Load setup into main process; workers inherit via COW fork
         _thin_setup = thin_coherent.load_thin_setup(setup_dir, rundir)
         _thin_setup["_profile_dir"] = profile_dir  # None when not profiling
+        _thin_setup["row_selection"] = row_selection
+        _thin_setup["ln_N_k"] = float(np.log(n_total_samples))
+        _thin_setup["selection_seed"] = selection_seed
+        _thin_setup["bank_index"] = list(banks).index(bank_id)
         if selected_lnlikes_by_bank is not None:
             _thin_setup["incoherent_lnlike_i"] = incoherent_lookup(
                 len(_thin_setup["logw_i"]), inds, selected_lnlikes_by_bank[bank_id]
@@ -441,6 +452,7 @@ def _run_coherent_mp(
         # Incremental merge: process results as they arrive to cap
         # memory rather than collecting all i_block results first.
         accumulated = None
+        tau_bank = -np.inf  # largest priority_key dropped in this bank's merge
         n_disc_total = 0
         logsumexp_disc = -np.inf
         logsumsqrexp_disc = -np.inf
@@ -464,7 +476,11 @@ def _run_coherent_mp(
                         accumulated = df
                     else:
                         accumulated = pd.concat([accumulated, df], ignore_index=True)
-                        if len(accumulated) > size_limit:
+                        if (row_selection == "phase_marginalized_priority"
+                                and len(accumulated) > size_limit):
+                            accumulated, tau = priority_sampling.top_by_key(accumulated, size_limit)
+                            tau_bank = max(tau_bank, tau)
+                        elif len(accumulated) > size_limit:
                             top_idx = np.argpartition(
                                 accumulated["bestfit_lnlike"].values,
                                 -size_limit,
@@ -480,16 +496,22 @@ def _run_coherent_mp(
                 columns=CoherentLikelihoodProcessor.PROB_SAMPLES_COLS
             )
 
-        combined["weights"] = exp_normalize(combined["ln_posterior"].values)
+        if row_selection == "phase_marginalized_priority":
+            combined = priority_sampling.raise_tau(combined, tau_bank)
+            combined["ln_priority_weight"] = priority_sampling.ln_priority_weight(
+                combined, np.log(n_total_samples)
+            )
+        else:
+            combined["ln_priority_weight"] = 0.0
+        ln_w_rows = combined["ln_posterior"].values + combined["ln_priority_weight"].values
+        combined["weights"] = exp_normalize(ln_w_rows)
         combined.to_feather(bank_rundir / "prob_samples.feather")
 
         cache_path = bank_rundir / "intrinsic_sample_processor_cache.json"
         with open(cache_path, "w") as f:
             json.dump({int(k): float(v) for k, v in cached_dt.items()}, f)
 
-        ln_evidence = safe_logsumexp(combined["ln_posterior"].values) - np.log(
-            n_total_samples
-        )
+        ln_evidence = safe_logsumexp(ln_w_rows) - np.log(n_total_samples)
         ln_evidence_discarded = logsumexp_disc - np.log(n_total_samples)
         n_eff, n_eff_i, n_eff_e = get_n_effective_total_i_e(
             combined, assume_normalized=False
@@ -618,6 +640,7 @@ def run(
     inds_path: Union[Path, str, Dict[str, Union[Path, str]], None] = None,
     seed_pool_lnlike_drop: Optional[float] = None,
     seed_pool_inds: Optional[Dict[str, Union[NDArray[np.int_], List[int]]]] = None,
+    row_selection: str = "bestfit",
     preselected_indices: Union[
         Dict[str, Union[NDArray[np.int_], List[int], str, Path]],
         NDArray[np.int_],
@@ -661,6 +684,15 @@ def run(
         bank's selection; banks not listed contribute no seeds.  Stage 5
         still uses the full selection.  Cannot be combined with
         ``seed_pool_lnlike_drop``.
+    row_selection : {"bestfit", "phase_marginalized_priority"}
+        Which coherent rows are kept under ``size_limit``.  "bestfit" (default)
+        keeps the rows of highest ``bestfit_lnlike``.
+        "phase_marginalized_priority" marginalizes each (intrinsic, extrinsic)
+        pair over phase and keeps a priority sample whose weights carry the
+        correction column ``ln_priority_weight`` (``dot_pe.priority_sampling``).
+        Its random draws are seeded by ``seed``; with ``seed=None`` they use
+        seed 0, so two runs without a seed make identical draws (pass
+        different seeds for independent repetitions).
 
     Notes
     -----
@@ -729,6 +761,7 @@ def run(
                 if seed_pool_inds is not None
                 else None
             ),
+            "row_selection": priority_sampling.check_mode(row_selection),
         },
     )
     # coherent_posterior is not used beyond Stage 1 (only ctx["pr"]
@@ -933,6 +966,8 @@ def run(
         approximant=ctx["approximant"],
         profile_dir=str(profiles_dir) if profiles_dir else None,
         selected_lnlikes_by_bank=selected_lnlikes_by_bank,
+        row_selection=row_selection,
+        selection_seed=seed,
     )
     t_stages["5_coherent"] = time.perf_counter() - _t
 
@@ -949,6 +984,7 @@ def run(
         n_draws=n_draws,
         draw_subset=draw_subset,
         size_limit=size_limit,
+        row_selection=row_selection,
     )
 
     t_stages["6_postprocess"] = time.perf_counter() - _t
@@ -1040,6 +1076,14 @@ def main():
     p.add_argument("--blocksize", type=int, default=512)
     p.add_argument("--single-detector-blocksize", type=int, default=512)
     p.add_argument("--seed", type=int, default=None)
+    p.add_argument(
+        "--row-selection",
+        choices=priority_sampling.ROW_SELECTION_MODES,
+        default="bestfit",
+        help="rows kept under size_limit: 'bestfit' keeps the highest bestfit_lnlike; "
+        "'phase_marginalized_priority' marginalizes over phase and keeps a priority sample "
+        "(dot_pe.priority_sampling); its draws use --seed, or seed 0 when --seed is omitted",
+    )
     p.add_argument("--mchirp-guess", type=float, default=None)
     p.add_argument("--max-incoherent-lnlike-drop", type=float, default=20.0)
     p.add_argument(
@@ -1103,6 +1147,7 @@ def main():
         inds_path=args.inds_path,
         preselected_indices=args.preselected_indices,
         profile=args.profile,
+        row_selection=args.row_selection,
     )
 
 

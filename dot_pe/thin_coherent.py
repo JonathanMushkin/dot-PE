@@ -34,6 +34,7 @@ from .likelihood_calculating import (
     incoherent_bound_mask,
     invalid_bestfit_mask,
 )
+from . import priority_sampling
 from .sample_processing import IntrinsicSampleProcessor
 from .utils import safe_logsumexp, inds_to_blocks
 
@@ -229,6 +230,11 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
     m_arr         = setup["m_arr"]
     max_diff      = setup["max_bestfit_lnlike_diff"]
     incoherent_i  = setup.get("incoherent_lnlike_i")  # bank-indexed; None = no bound
+    row_selection = priority_sampling.check_mode(setup.get("row_selection", "bestfit"))
+    use_priority  = row_selection == "phase_marginalized_priority"
+    ln_n_k        = priority_sampling.ln_n_k_of(setup, row_selection)
+    rank_col      = "priority_key" if use_priority else "bestfit_lnlike"
+    tau_blk       = -np.inf  # largest priority_key dropped in this i-block
 
     # Load raw waveforms and apply pre-cached dt correction (pure numpy)
     amp, phase = IntrinsicSampleProcessor._load_amp_and_phase(waveform_dir, i_block)
@@ -236,8 +242,15 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
     phase = phase + 2 * np.pi * dt_i[:, None, None, None] * fbin[None, None, None, :]
     h_impb = amp * np.exp(1j * phase)
 
-    lc = LikelihoodCalculator(n_phi, m_arr)
+    likelihood_calculator = LikelihoodCalculator(n_phi, m_arr)
     rng = np.random.default_rng(int(i_block[0]) if len(i_block) else 0)
+    # Separate stream for the phase and priority-sampling draws,
+    # seeded by the run seed, the bank's position and the i-block.
+    selection_rng = priority_sampling.selection_rng(
+        setup.get("selection_seed"),
+        setup.get("bank_index", 0),
+        int(i_block[0]) if len(i_block) else 0,
+    )
 
     # Running state
     min_bestfit = -np.inf
@@ -248,7 +261,7 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
     n_dist_marg = 0
 
     for e_block in e_blocks:
-        dh_ieo, hh_ieo = lc.get_dh_hh_ieo(
+        dh_ieo, hh_ieo = likelihood_calculator.get_dh_hh_ieo(
             dh_w, h_impb,
             response_dpe[..., e_block],
             timeshift_dbe[..., e_block],
@@ -286,8 +299,26 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
             bank_i_k = i_block[i_k]
             bank_e_k = e_block[e_k]
 
-            lnl_k = lc.lookup_table.lnlike_marginalized(dh_k, hh_k)
+            lnl_k = likelihood_calculator.lookup_table.lnlike_marginalized(dh_k, hh_k)
             ln_post_k = lnl_k + logw_i[bank_i_k] + logw_e[bank_e_k]
+            bestfit_k = bestfit_ieo[i_k, e_k, o_k]
+
+            if use_priority:
+                # Phase-marginalize: one row per (i, e) pair, weight summed over phase.
+                pos, ln_w_marg = priority_sampling.marginalize_phase(
+                    i_k, e_k, ln_post_k, selection_rng
+                )
+                ln_w_marg = ln_w_marg - ln_n_k
+                bank_i_k, bank_e_k, o_k = bank_i_k[pos], bank_e_k[pos], o_k[pos]
+                lnl_k, ln_post_k, bestfit_k = lnl_k[pos], ln_post_k[pos], bestfit_k[pos]
+                dh_k, hh_k = dh_k[pos], hh_k[pos]
+                extra = {
+                    "ln_phase_marginalized_weight": ln_w_marg,
+                    "priority_key": ln_w_marg - np.log1p(-selection_rng.random(len(pos))),
+                    "priority_tau": np.full(len(pos), -np.inf),
+                }
+            else:
+                extra = {}
 
             all_frames.append(pd.DataFrame({
                 "i":               bank_i_k.astype(np.int64),
@@ -295,9 +326,10 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
                 "o":               o_k.astype(np.int64),
                 "lnl_marginalized": lnl_k,
                 "ln_posterior":    ln_post_k,
-                "bestfit_lnlike":  bestfit_ieo[i_k, e_k, o_k],
+                "bestfit_lnlike":  bestfit_k,
                 "d_h_1Mpc":        dh_k,
                 "h_h_1Mpc":        hh_k,
+                **extra,
             }))
 
             # Incremental trim to cap accumulated samples and bound memory.
@@ -306,10 +338,15 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
                 n_acc = sum(len(f) for f in all_frames)
                 if n_acc > 2 * max_per_block:
                     merged = pd.concat(all_frames, ignore_index=True)
-                    top_idx = np.argpartition(
-                        merged["bestfit_lnlike"].values, -max_per_block
-                    )[-max_per_block:]
-                    all_frames = [merged.iloc[top_idx].reset_index(drop=True)]
+                    if use_priority:
+                        merged, tau = priority_sampling.top_by_key(merged, max_per_block)
+                        tau_blk = max(tau_blk, tau)
+                        all_frames = [merged]
+                    else:
+                        top_idx = np.argpartition(
+                            merged[rank_col].values, -max_per_block
+                        )[-max_per_block:]
+                        all_frames = [merged.iloc[top_idx].reset_index(drop=True)]
 
         # ── Discarded samples stats ───────────────────────────────────────
         n_disc_blk = int(np.sum(~accepted))
@@ -332,7 +369,9 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
             lnl_d = np.zeros(len(i_d))
             pos = dh_d > 0
             if np.any(pos):
-                lnl_d[pos] = lc.lookup_table.lnlike_marginalized(dh_d[pos], hh_d[pos])
+                lnl_d[pos] = likelihood_calculator.lookup_table.lnlike_marginalized(
+                    dh_d[pos], hh_d[pos]
+                )
 
             ln_post_d = lnl_d + logw_i[i_block[i_d]] + logw_e[e_block[e_d]]
             sf = np.log(n_disc_blk / len(i_d))
@@ -349,14 +388,21 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
         # The global orchestrator applies a further top-k merge across all blocks.
         max_per_block = setup.get("max_output_per_block")
         if max_per_block is not None and len(prob_samples_df) > max_per_block:
-            top_idx = np.argpartition(
-                prob_samples_df["bestfit_lnlike"].values, -max_per_block
-            )[-max_per_block:]
-            prob_samples_df = prob_samples_df.iloc[top_idx].reset_index(drop=True)
+            if use_priority:
+                prob_samples_df, tau = priority_sampling.top_by_key(prob_samples_df, max_per_block)
+                tau_blk = max(tau_blk, tau)
+            else:
+                top_idx = np.argpartition(
+                    prob_samples_df[rank_col].values, -max_per_block
+                )[-max_per_block:]
+                prob_samples_df = prob_samples_df.iloc[top_idx].reset_index(drop=True)
+        if use_priority:
+            prob_samples_df = priority_sampling.raise_tau(prob_samples_df, tau_blk)
     else:
         prob_samples_df = pd.DataFrame(columns=[
             "i", "e", "o", "lnl_marginalized", "ln_posterior",
             "bestfit_lnlike", "d_h_1Mpc", "h_h_1Mpc",
+            *(priority_sampling.PRIORITY_COLS if use_priority else ()),
         ])
 
     cached_dt_slice = {int(idx): float(dt_linfree[idx]) for idx in i_block}

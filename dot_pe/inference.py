@@ -59,6 +59,7 @@ from .utils import (  # noqa: E402
     waveform_generator_from_config,
 )
 from .single_detector import SingleDetectorProcessor  # noqa: E402
+from . import priority_sampling  # noqa: E402
 from .sample_processing import (  # noqa: E402
     ExtrinsicSampleProcessor,
     IntrinsicSampleProcessor,
@@ -1476,8 +1477,15 @@ def aggregate_and_save_results(
     n_draws: Optional[int],
     draw_subset: bool,
     size_limit: int,
+    row_selection: str = "bestfit",
 ) -> Path:
     """Aggregate results across banks and save final outputs.
+
+    With ``row_selection="phase_marginalized_priority"`` the cross-bank trim keeps the rows of
+    largest ``priority_key`` (priority sampling, ``dot_pe.priority_sampling``) and the final
+    weights include
+    ``ln_priority_weight``; with "bestfit" it keeps the largest ``bestfit_lnlike`` and
+    ``ln_priority_weight`` is 0.
 
     After concatenating per-bank ``prob_samples``, if the merged table has more
     than ``size_limit`` rows, only the ``size_limit`` largest ``bestfit_lnlike``
@@ -1524,13 +1532,34 @@ def aggregate_and_save_results(
                 combined_prob_samples.loc[mask, "ln_posterior"] - np.log(n_k)
             )
 
-    if len(combined_prob_samples) > size_limit:
-        combined_prob_samples = combined_prob_samples.nlargest(
-            size_limit, "bestfit_lnlike"
-        ).reset_index(drop=True)
+    if row_selection == "phase_marginalized_priority":
+        if "priority_key" not in combined_prob_samples.columns:
+            raise ValueError(
+                'row_selection="phase_marginalized_priority" needs per-bank tables made with '
+                "that option (column priority_key); only the multiprocessing path "
+                "(dot_pe.mp_inference) produces them"
+            )
+        combined_prob_samples, tau_glob = priority_sampling.top_by_key(
+            combined_prob_samples, size_limit
+        )
+        combined_prob_samples = priority_sampling.raise_tau(combined_prob_samples, tau_glob)
+        ln_n_k = (
+            combined_prob_samples["ln_posterior"].to_numpy()
+            - combined_prob_samples["ln_weight_unnormalized"].to_numpy()
+        )
+        combined_prob_samples["ln_priority_weight"] = priority_sampling.ln_priority_weight(
+            combined_prob_samples, ln_n_k
+        )
+    else:
+        if len(combined_prob_samples) > size_limit:
+            combined_prob_samples = combined_prob_samples.nlargest(
+                size_limit, "bestfit_lnlike"
+            ).reset_index(drop=True)
+        combined_prob_samples["ln_priority_weight"] = 0.0
 
     combined_prob_samples["weights"] = exp_normalize(
         combined_prob_samples["ln_weight_unnormalized"].values
+        + combined_prob_samples["ln_priority_weight"].values
     )
 
     combined_prob_samples.to_feather(rundir / "prob_samples.feather")
