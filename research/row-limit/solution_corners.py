@@ -13,6 +13,7 @@ Env o4a-pe. Usage: python solution_corners.py --rerun EVENT=RUNDIR [...]
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -96,11 +97,14 @@ def main() -> None:
             ("LVK", (p_lvk, r_lvk, c_lvk),
              "cogwheel, LVK-prior run" if src == "direct" else "cogwheel, reweighted to LVK prior"),
         ):
+            summ = "summary_results.json" if prior == "IAS" else "summary_results_lvc.json"
+            sp, sr = (json.loads((d / summ).read_text()) for d in (prod, rd))
             sets = [
-                (f"dot-PE production {prod.name} (sample ESS {kish(p['weights']):.0f})", cs.COLOR_DOTPE, p),
+                (f"dot-PE production {prod.name} (n_eff_i {sp['n_effective_i']:.0f}, "
+                 f"n_eff_e {sp['n_effective_e']:.0f})", cs.COLOR_DOTPE, p),
                 (f"dot-PE rerun, phase marginalization + priority sampling "
-                 f"(sample ESS {kish(r['weights']):.0f})", RED, r),
-                (f"{cog_note} {cog.name} (sample ESS {kish(c['weights']) if 'weights' in c else len(c):.0f})",
+                 f"(n_eff_i {sr['n_effective_i']:.0f}, n_eff_e {sr['n_effective_e']:.0f})", RED, r),
+                (f"{cog_note} {cog.name} (weight ESS {kish(c['weights']) if 'weights' in c else len(c):.0f})",
                  cs.COLOR_COGWHEEL, c),
             ]
             figure(ev, prior, sets, HERE / "review" / f"fig5_corner_{ev}_{prior}.png")
