@@ -1,15 +1,17 @@
 #!/usr/bin/env python
-"""E5: rerun a production dot-PE run with row_thinning="pairs", then the LVK-prior reweighting.
+"""E5: rerun a production dot-PE run with row_selection="phase_marginalized_priority", then the
+LVK-prior reweighting.
 
 Design: research/row-limit/design_solution.md. Everything as in the production run's
 `run_kwargs.json` except: the dot-PE version (branch `research`), the rundir, the incoherent stage
 and extrinsic samples recycled from the production run (`load_inds`, `inds_path`,
-`extrinsic_samples`), and `row_thinning`. The LVK reweighting is o4b-pe-paper's
-`lvk_reweight.reweight_rundir` with `ln_posterior` replaced by `ln_posterior + ln_thinning_weight`
+`extrinsic_samples`), and `row_selection`. The LVK reweighting is o4b-pe-paper's
+`lvk_reweight.reweight_rundir` with `ln_posterior` replaced by `ln_posterior + ln_priority_weight`
 (that function recomputes weights from `ln_posterior` and would otherwise drop the correction).
 
 Env: dot-pe (this repo) with o4b-pe-paper's `src` on the path for the reweighting.
-Usage: python rerun.py --event GW240525_201644 --run run_2 [--row-thinning pairs] [--tag pairs]
+Usage: python rerun.py --event GW240525_201644 --run run_2
+           [--row-selection phase_marginalized_priority] [--tag NAME]
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ REPO = Path(__file__).resolve().parents[2]
 OUT = REPO / "artifacts/research/row-limit/runs"
 
 
-def run_dotpe(event: str, run: str, row_thinning: str, tag: str, n_workers: int) -> Path:
+def run_dotpe(event: str, run: str, row_selection: str, tag: str, n_workers: int) -> Path:
     import inspect
 
     from dot_pe import mp_inference
@@ -45,7 +47,7 @@ def run_dotpe(event: str, run: str, row_thinning: str, tag: str, n_workers: int)
         load_inds=True,
         inds_path={b: str(src / f"banks/{b}/intrinsic_samples.npz") for b in banks},
         extrinsic_samples=str(src / "extrinsic_samples.feather"),
-        row_thinning=row_thinning,
+        row_selection=row_selection,
         n_workers=n_workers,
     )
     args.pop("i_int_start", None)
@@ -54,7 +56,7 @@ def run_dotpe(event: str, run: str, row_thinning: str, tag: str, n_workers: int)
     mp_inference.run(**args)
     wall = time.time() - t0
     (rundir / "rerun_timing.json").write_text(json.dumps({
-        "event": event, "source_run": str(src), "row_thinning": row_thinning,
+        "event": event, "source_run": str(src), "row_selection": row_selection,
         "wall_seconds": wall, "n_workers": n_workers,
         "maxrss_children_gb": resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1e6,
         "maxrss_self_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6,
@@ -63,7 +65,8 @@ def run_dotpe(event: str, run: str, row_thinning: str, tag: str, n_workers: int)
 
 
 def reweight_lvk(rundir: Path) -> dict:
-    """o4b-pe-paper's reweight_rundir, with the thinning correction folded into ln_posterior."""
+    """o4b-pe-paper's reweight_rundir, with the priority-sampling correction folded into
+    ln_posterior."""
     import pandas as pd
 
     sys.path.insert(0, str(O4B / "src"))
@@ -75,8 +78,8 @@ def reweight_lvk(rundir: Path) -> dict:
 
     def read_with_correction(p, *a, **k):
         df = orig(p, *a, **k)
-        if Path(p).resolve() == path and "ln_thinning_weight" in df.columns:
-            df["ln_posterior"] = df["ln_posterior"] + df["ln_thinning_weight"]
+        if Path(p).resolve() == path and "ln_priority_weight" in df.columns:
+            df["ln_posterior"] = df["ln_posterior"] + df["ln_priority_weight"]
             n_corrected.append(1)
         return df
 
@@ -93,14 +96,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--event", required=True)
     ap.add_argument("--run", required=True, help="production run name, e.g. run_2")
-    ap.add_argument("--row-thinning", default="pairs")
-    ap.add_argument("--tag", default="pairs")
+    ap.add_argument("--row-selection", default="phase_marginalized_priority")
+    ap.add_argument("--tag", default="phase_marginalized_priority")
     ap.add_argument("--n-workers", type=int, default=7)
     ap.add_argument("--lvk-only", action="store_true")
     a = ap.parse_args()
     rundir = OUT / a.event / a.tag
     if not a.lvk_only:
-        rundir = run_dotpe(a.event, a.run, a.row_thinning, a.tag, a.n_workers)
+        rundir = run_dotpe(a.event, a.run, a.row_selection, a.tag, a.n_workers)
     print(json.dumps(reweight_lvk(rundir), indent=1, default=str))
 
 

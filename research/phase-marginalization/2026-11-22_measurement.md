@@ -80,4 +80,4 @@ runs (o4b-pe-paper `dev/row_limit_check/phase_multiplicity.md`), compares with Ï
 Output: `artifacts/research/phase-marginalization/` (`result.json`, `rho.csv`) and
 `research/phase-marginalization/review/`. LSF job 422570, 22 s, 0.25 GB.
 
-Line numbers in citations of `dot_pe/` refer to commit 38f92b4 (before `row_thinning` was added).
+Line numbers in citations of `dot_pe/` refer to commit 38f92b4 (before the phase-marginalization and priority-sampling code was added).

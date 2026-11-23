@@ -79,7 +79,8 @@ def main() -> None:
         prod, cog = rundirs(ev)
         rows.append({"event": ev, **row(f"production {prod.name}", prod,
                                         {"peak_mem_gb": float(prod_mem.get(ev, "nan"))})})
-        rows.append({"event": ev, **row("rerun, row_thinning=pairs", Path(rd),
+        label = "rerun, row_selection=phase_marginalized_priority"
+        rows.append({"event": ev, **row(label, Path(rd),
                                         lsf_numbers(Path(logs[ev])) if ev in logs else None)})
         lvk = next((root_of(ev) / "artifacts/dev/highlights_cogwheel_lvk" / ev).glob("*/*/run_*"),
                    None)
@@ -108,7 +109,7 @@ def main() -> None:
             ("cogwheel", cs, cw, dict(color="k", lw=2)),
             (f"dot-PE production {prod.name}", pd.read_feather(prod / "samples_lvc.feather"),
              None, dict(color="#d62728")),
-            ("dot-PE rerun, row_thinning=pairs",
+            ("dot-PE rerun, row_selection=phase_marginalized_priority",
              pd.read_feather(Path(reruns[POSTER]) / "samples_lvc.feather"), None,
              dict(color="#1f77b4")),
         ):
@@ -121,7 +122,7 @@ def main() -> None:
         ax.set_title(POSTER, fontsize=9)
         ax.legend(fontsize=7)
         fig.tight_layout()
-        fig.savefig(HERE / "review" / "fig4_chieff_lvk_pairs.png", dpi=150)
+        fig.savefig(HERE / "review" / "fig4_chieff_lvk_phase_marginalized_priority.png", dpi=150)
 
 
 if __name__ == "__main__":

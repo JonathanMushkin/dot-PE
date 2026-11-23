@@ -62,7 +62,7 @@ warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
 from cogwheel.utils import exp_normalize
 from dot_pe import inference, thin_coherent
-from dot_pe import row_thinning as rt
+from dot_pe import priority_sampling
 from dot_pe.base_sampler_free_sampling import get_n_effective_total_i_e
 from dot_pe.coherent_processing import CoherentLikelihoodProcessor
 from dot_pe.likelihood_calculating import incoherent_lookup
@@ -334,14 +334,15 @@ def _run_coherent_mp(
     approximant,
     profile_dir=None,
     selected_lnlikes_by_bank=None,
-    row_thinning="bestfit",
-    thinning_seed=None,
+    row_selection="bestfit",
+    selection_seed=None,
 ):
     """
     Parallel replacement for run_coherent_inference_per_bank().
 
-    `row_thinning` = "pairs" keeps rows by phase-marginalized priority sampling instead of by
-    highest `bestfit_lnlike` (`dot_pe.row_thinning`); "bestfit" is the original rule.
+    `row_selection` = "phase_marginalized_priority" keeps rows by phase marginalization and
+    priority sampling (`dot_pe.priority_sampling`) instead of by highest `bestfit_lnlike`;
+    "bestfit" is the original rule.
 
     `selected_lnlikes_by_bank` (Stage 3 incoherent log-likelihoods, aligned with
     `selected_inds_by_bank`) bounds each template's coherent best fit
@@ -429,9 +430,9 @@ def _run_coherent_mp(
         # Load setup into main process; workers inherit via COW fork
         _thin_setup = thin_coherent.load_thin_setup(setup_dir, rundir)
         _thin_setup["_profile_dir"] = profile_dir  # None when not profiling
-        _thin_setup["row_thinning"] = row_thinning
+        _thin_setup["row_selection"] = row_selection
         _thin_setup["ln_N_k"] = float(np.log(n_total_samples))
-        _thin_setup["thinning_seed"] = thinning_seed
+        _thin_setup["selection_seed"] = selection_seed
         if selected_lnlikes_by_bank is not None:
             _thin_setup["incoherent_lnlike_i"] = incoherent_lookup(
                 len(_thin_setup["logw_i"]), inds, selected_lnlikes_by_bank[bank_id]
@@ -450,7 +451,7 @@ def _run_coherent_mp(
         # Incremental merge: process results as they arrive to cap
         # memory rather than collecting all i_block results first.
         accumulated = None
-        tau_bank = -np.inf  # largest thin_key dropped in this bank's merge
+        tau_bank = -np.inf  # largest priority_key dropped in this bank's merge
         n_disc_total = 0
         logsumexp_disc = -np.inf
         logsumsqrexp_disc = -np.inf
@@ -474,8 +475,9 @@ def _run_coherent_mp(
                         accumulated = df
                     else:
                         accumulated = pd.concat([accumulated, df], ignore_index=True)
-                        if row_thinning == "pairs" and len(accumulated) > size_limit:
-                            accumulated, tau = rt.top_by_key(accumulated, size_limit)
+                        if (row_selection == "phase_marginalized_priority"
+                                and len(accumulated) > size_limit):
+                            accumulated, tau = priority_sampling.top_by_key(accumulated, size_limit)
                             tau_bank = max(tau_bank, tau)
                         elif len(accumulated) > size_limit:
                             top_idx = np.argpartition(
@@ -493,14 +495,14 @@ def _run_coherent_mp(
                 columns=CoherentLikelihoodProcessor.PROB_SAMPLES_COLS
             )
 
-        if row_thinning == "pairs":
-            combined = rt.raise_tau(combined, tau_bank)
-            combined["ln_thinning_weight"] = rt.ln_thinning_weight(
+        if row_selection == "phase_marginalized_priority":
+            combined = priority_sampling.raise_tau(combined, tau_bank)
+            combined["ln_priority_weight"] = priority_sampling.ln_priority_weight(
                 combined, np.log(n_total_samples)
             )
         else:
-            combined["ln_thinning_weight"] = 0.0
-        ln_w_rows = combined["ln_posterior"].values + combined["ln_thinning_weight"].values
+            combined["ln_priority_weight"] = 0.0
+        ln_w_rows = combined["ln_posterior"].values + combined["ln_priority_weight"].values
         combined["weights"] = exp_normalize(ln_w_rows)
         combined.to_feather(bank_rundir / "prob_samples.feather")
 
@@ -637,7 +639,7 @@ def run(
     inds_path: Union[Path, str, Dict[str, Union[Path, str]], None] = None,
     seed_pool_lnlike_drop: Optional[float] = None,
     seed_pool_inds: Optional[Dict[str, Union[NDArray[np.int_], List[int]]]] = None,
-    row_thinning: str = "bestfit",
+    row_selection: str = "bestfit",
     preselected_indices: Union[
         Dict[str, Union[NDArray[np.int_], List[int], str, Path]],
         NDArray[np.int_],
@@ -749,7 +751,7 @@ def run(
                 if seed_pool_inds is not None
                 else None
             ),
-            "row_thinning": rt.check_mode(row_thinning),
+            "row_selection": priority_sampling.check_mode(row_selection),
         },
     )
     # coherent_posterior is not used beyond Stage 1 (only ctx["pr"]
@@ -954,8 +956,8 @@ def run(
         approximant=ctx["approximant"],
         profile_dir=str(profiles_dir) if profiles_dir else None,
         selected_lnlikes_by_bank=selected_lnlikes_by_bank,
-        row_thinning=row_thinning,
-        thinning_seed=seed,
+        row_selection=row_selection,
+        selection_seed=seed,
     )
     t_stages["5_coherent"] = time.perf_counter() - _t
 
@@ -972,7 +974,7 @@ def run(
         n_draws=n_draws,
         draw_subset=draw_subset,
         size_limit=size_limit,
-        row_thinning=row_thinning,
+        row_selection=row_selection,
     )
 
     t_stages["6_postprocess"] = time.perf_counter() - _t
