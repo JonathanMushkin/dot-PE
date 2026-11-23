@@ -116,3 +116,15 @@ The code was renamed so that names describe the two steps, not the goal: module
 `lc` → `likelihood_calculator` (`thin_coherent.py`) and `likelihood_calc` →
 `likelihood_calculator` (`evidence_calibration.py`). No behaviour changes; this design's text
 uses the new names, and the commits it cites before the rename carry the old ones.
+
+## Design note, 2026-11-23 08:04 (before the GW240525_201644 result; user decision)
+
+If the fix passes on the control and GW240525_201644, reruns 3 and 4 of 6 follow, at once, on
+the other two E0 events: GW230902_150325 (o4a-pe-paper `run_2`) and GW231113_150041
+(o4a-pe-paper `run_0`), the production runs E0 used. `rerun.py` now reads O4a runs from
+o4a-pe-paper. E0's test is then rerun with all four reruns, and the pass criterion becomes E0's
+full one: |ΔW| ≤ 2σ_ΔW with σ_ΔW < 0.1 under both priors for the control, GW240525_201644 and
+GW230902_150325 (GW231113_150041 is reported, not counted, as in E0). The report is written
+first on the two events, then extended. If the fix fails, a null-result report is written and no
+further run is made. The code is not merged into `size-limit` until the user has reviewed the
+report.

@@ -24,6 +24,12 @@ import time
 from pathlib import Path
 
 O4B = Path("/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper")
+O4A = O4B.parent / "o4a-pe-paper"
+
+
+def root_of(event: str) -> Path:
+    """Paper repo holding the event's production run (O4a before GW240117)."""
+    return O4A if event[:8] < "GW240117" else O4B
 REPO = Path(__file__).resolve().parents[2]
 OUT = REPO / "artifacts/research/row-limit/runs"
 
@@ -33,7 +39,7 @@ def run_dotpe(event: str, run: str, row_selection: str, tag: str, n_workers: int
 
     from dot_pe import mp_inference
 
-    src = O4B / "artifacts/pe/dotpe" / event / run
+    src = root_of(event) / "artifacts/pe/dotpe" / event / run
     kw = json.loads((src / "run_kwargs.json").read_text())
     banks = {f"bank_{k}": b for k, b in enumerate(kw["bank_folder"])}
     event_dir = OUT / event
