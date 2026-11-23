@@ -1067,6 +1067,14 @@ def main():
     p.add_argument("--blocksize", type=int, default=512)
     p.add_argument("--single-detector-blocksize", type=int, default=512)
     p.add_argument("--seed", type=int, default=None)
+    p.add_argument(
+        "--row-selection",
+        choices=priority_sampling.ROW_SELECTION_MODES,
+        default="bestfit",
+        help="rows kept under size_limit: 'bestfit' keeps the highest bestfit_lnlike; "
+        "'phase_marginalized_priority' marginalizes over phase and keeps a priority sample "
+        "(dot_pe.priority_sampling); also seeded by --seed",
+    )
     p.add_argument("--mchirp-guess", type=float, default=None)
     p.add_argument("--max-incoherent-lnlike-drop", type=float, default=20.0)
     p.add_argument(
@@ -1130,6 +1138,7 @@ def main():
         inds_path=args.inds_path,
         preselected_indices=args.preselected_indices,
         profile=args.profile,
+        row_selection=args.row_selection,
     )
 
 

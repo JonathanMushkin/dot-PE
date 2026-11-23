@@ -138,3 +138,38 @@ def test_ln_n_k_required_in_priority_mode():
     for setup in ({}, {"ln_N_k": None}):
         with pytest.raises(ValueError):
             priority_sampling.ln_n_k_of(setup, mode)
+
+
+def test_cli_passes_row_selection(monkeypatch):
+    from dot_pe import mp_inference
+
+    got = {}
+    monkeypatch.setattr(mp_inference, "run", lambda **kw: got.update(kw))
+    base = ["mp_inference", "--event", "ev.npz", "--bank", "bank"]
+    monkeypatch.setattr("sys.argv", base)
+    mp_inference.main()
+    assert got["row_selection"] == "bestfit"
+    monkeypatch.setattr("sys.argv", base + ["--row-selection", "phase_marginalized_priority"])
+    mp_inference.main()
+    assert got["row_selection"] == "phase_marginalized_priority"
+    monkeypatch.setattr("sys.argv", base + ["--row-selection", "bogus"])
+    with pytest.raises(SystemExit):
+        mp_inference.main()
+
+
+def test_aggregate_rejects_priority_mode_on_bestfit_tables(tmp_path):
+    # Tables without priority_key (made with row_selection="bestfit", or by the serial path)
+    # must not be merged as if they were priority samples.
+    from dot_pe import inference
+
+    (tmp_path / "bank_0").mkdir()
+    pd.DataFrame({"i": [0, 1], "e": [0, 0], "o": [0, 0], "ln_posterior": [0.0, -1.0],
+                  "bestfit_lnlike": [10.0, 9.0]}).to_feather(tmp_path / "bank_0/prob_samples.feather")
+    with pytest.raises(ValueError, match="priority_key"):
+        inference.aggregate_and_save_results(
+            per_bank_results=[{"bank_id": "bank_0", "N_k": 10, "lnZ_k": 0.0,
+                               "lnZ_discarded_k": -np.inf}],
+            banks={"bank_0": tmp_path}, event_data=None, rundir=tmp_path,
+            banks_dir=tmp_path, n_phi=1, pr=None, n_draws=None, draw_subset=False,
+            size_limit=10, row_selection="phase_marginalized_priority",
+        )

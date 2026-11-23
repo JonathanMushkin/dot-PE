@@ -1533,6 +1533,12 @@ def aggregate_and_save_results(
             )
 
     if row_selection == "phase_marginalized_priority":
+        if "priority_key" not in combined_prob_samples.columns:
+            raise ValueError(
+                'row_selection="phase_marginalized_priority" needs per-bank tables made with '
+                "that option (column priority_key); only the multiprocessing path "
+                "(dot_pe.mp_inference) produces them"
+            )
         combined_prob_samples, tau_glob = priority_sampling.top_by_key(
             combined_prob_samples, size_limit
         )
