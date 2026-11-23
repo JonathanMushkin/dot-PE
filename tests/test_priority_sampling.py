@@ -117,3 +117,15 @@ def test_unthinned_rows_keep_their_pair_weight():
     lt = priority_sampling.ln_priority_weight(df, np.log(10.0))
     # weight = W, i.e. ln_posterior - ln N_k + ln_priority_weight = ln_phase_marginalized_weight
     assert np.allclose(df["ln_posterior"] - np.log(10.0) + lt, df["ln_phase_marginalized_weight"])
+
+
+def test_selection_rng_differs_between_banks():
+    # The template index restarts at 0 in every bank: the same run seed and i-block start in
+    # two banks must give different streams, and the same inputs the same stream.
+    a = priority_sampling.selection_rng(7, 0, 0).random(5)
+    b = priority_sampling.selection_rng(7, 1, 0).random(5)
+    c = priority_sampling.selection_rng(7, 0, 0).random(5)
+    assert not np.allclose(a, b)
+    assert np.array_equal(a, c)
+    assert np.array_equal(priority_sampling.selection_rng(None, 0, 3).random(3),
+                          priority_sampling.selection_rng(0, 0, 3).random(3))

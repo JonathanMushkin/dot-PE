@@ -433,6 +433,7 @@ def _run_coherent_mp(
         _thin_setup["row_selection"] = row_selection
         _thin_setup["ln_N_k"] = float(np.log(n_total_samples))
         _thin_setup["selection_seed"] = selection_seed
+        _thin_setup["bank_index"] = list(banks).index(bank_id)
         if selected_lnlikes_by_bank is not None:
             _thin_setup["incoherent_lnlike_i"] = incoherent_lookup(
                 len(_thin_setup["logw_i"]), inds, selected_lnlikes_by_bank[bank_id]

@@ -245,9 +245,11 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
     likelihood_calculator = LikelihoodCalculator(n_phi, m_arr)
     rng = np.random.default_rng(int(i_block[0]) if len(i_block) else 0)
     # Separate stream for the phase and priority-sampling draws,
-    # seeded by the run seed and the i-block.
-    selection_rng = np.random.default_rng(
-        [int(setup.get("selection_seed") or 0), int(i_block[0]) if len(i_block) else 0]
+    # seeded by the run seed, the bank's position and the i-block.
+    selection_rng = priority_sampling.selection_rng(
+        setup.get("selection_seed"),
+        setup.get("bank_index", 0),
+        int(i_block[0]) if len(i_block) else 0,
     )
 
     # Running state

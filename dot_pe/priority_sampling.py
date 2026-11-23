@@ -38,6 +38,16 @@ def check_mode(mode: str) -> str:
     return mode
 
 
+def selection_rng(seed, bank_index: int, i_block_start: int) -> np.random.Generator:
+    """Random stream for the phase and priority-sampling draws of one i-block.
+
+    Seeded by the run seed (None -> 0), the bank's position among the run's banks and the
+    i-block's first template index. The template index restarts at 0 in every bank, so the bank
+    position is needed for the streams of different banks to be independent.
+    """
+    return np.random.default_rng([int(seed or 0), int(bank_index), int(i_block_start)])
+
+
 def marginalize_phase(i_k, e_k, ln_post_k, rng):
     """One row per (i, e) pair, its phase drawn with probability w_o / W.
 
