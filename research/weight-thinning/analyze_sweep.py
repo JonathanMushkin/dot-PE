@@ -75,6 +75,40 @@ def figures(d, ref) -> None:
 
     rev = HERE / "review"
     rev.mkdir(exist_ok=True)
+    import thin
+
+    T = np.load(OUT / "T_hists.npz")
+    bc = 0.5 * (thin.B_BINS[1:] + thin.B_BINS[:-1])
+    fig, ax = plt.subplots(figsize=(6.5, 4))
+    ax.step(bc, T["b_counts"], where="mid", color="k", lw=2, label="all rows above the cut (T)")
+    for r, (lab, col) in RULES.items():
+        h = np.load(OUT / f"{r}_seed0.npz")["b_counts"].astype(float)
+        h[h == 0] = np.nan
+        ax.step(bc, h, where="mid", color=col, lw=1, label=lab)
+    ax.set_yscale("log")
+    ax.set_xlabel("distance-maximized log-likelihood b of a stored row")
+    ax.set_ylabel("stored rows per 0.25 bin")
+    ax.set_title("production budget (equivalent size_limit 1e7), one draw", fontsize=9)
+    ax.legend(fontsize=7)
+    fig.tight_layout()
+    fig.savefig(rev / "fig1_b_kept.png", dpi=150)
+    plt.close(fig)
+
+    cc = 0.5 * (thin.CHI_BINS[1:] + thin.CHI_BINS[:-1])
+    fig, ax = plt.subplots(figsize=(6.5, 4))
+    ax.step(cc, T["chi_lvk"], where="mid", color="k", lw=2, label="all rows above the cut (T)")
+    for r, (lab, col) in RULES.items():
+        ax.step(cc, np.load(OUT / f"{r}_seed0.npz")["chi_lvk"], where="mid", color=col, lw=1,
+                label=lab)
+    ax.axvline(0.4, color="0.5", ls=":")
+    ax.set_xlim(-0.2, 1)
+    ax.set_xlabel("chi_eff")
+    ax.set_ylabel("posterior mass per bin, LVK spin prior")
+    ax.set_title("production budget (equivalent size_limit 1e7), one draw", fontsize=9)
+    ax.legend(fontsize=7)
+    fig.tight_layout()
+    fig.savefig(rev / "fig2_chieff_lvk.png", dpi=150)
+    plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6.5, 4))
     for n, (r, (lab, col)) in enumerate(RULES.items()):
@@ -128,4 +162,7 @@ def figures(d, ref) -> None:
 
 
 if __name__ == "__main__":
+    import sys
+
+    sys.path.insert(0, str(HERE))
     main()

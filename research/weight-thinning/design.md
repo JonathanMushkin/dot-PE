@@ -196,3 +196,6 @@ behaves under different settings. Changes, made after the first results:
 - Figure chain: (1) b of kept rows, production budget; (2) chi_eff under the LVK spin prior,
   production budget; (3) P_LVK per seed against the budget, per rule; (4) quantile shifts per
   seed against the budget, per rule; (5) n_effective_i against the budget.
+- After figure 5, one table: the error of one run (root mean square over the 30 draws) of P_LVK
+  and of the chi_eff and chirp-mass 5 % quantile shifts, per rule and budget, summarizing
+  figures 3 and 4.
