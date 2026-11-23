@@ -684,6 +684,15 @@ def run(
         bank's selection; banks not listed contribute no seeds.  Stage 5
         still uses the full selection.  Cannot be combined with
         ``seed_pool_lnlike_drop``.
+    row_selection : {"bestfit", "phase_marginalized_priority"}
+        Which coherent rows are kept under ``size_limit``.  "bestfit" (default)
+        keeps the rows of highest ``bestfit_lnlike``.
+        "phase_marginalized_priority" marginalizes each (intrinsic, extrinsic)
+        pair over phase and keeps a priority sample whose weights carry the
+        correction column ``ln_priority_weight`` (``dot_pe.priority_sampling``).
+        Its random draws are seeded by ``seed``; with ``seed=None`` they use
+        seed 0, so two runs without a seed make identical draws (pass
+        different seeds for independent repetitions).
 
     Notes
     -----
@@ -1073,7 +1082,7 @@ def main():
         default="bestfit",
         help="rows kept under size_limit: 'bestfit' keeps the highest bestfit_lnlike; "
         "'phase_marginalized_priority' marginalizes over phase and keeps a priority sample "
-        "(dot_pe.priority_sampling); also seeded by --seed",
+        "(dot_pe.priority_sampling); its draws use --seed, or seed 0 when --seed is omitted",
     )
     p.add_argument("--mchirp-guess", type=float, default=None)
     p.add_argument("--max-incoherent-lnlike-drop", type=float, default=20.0)
