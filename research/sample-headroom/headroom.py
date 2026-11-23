@@ -41,8 +41,9 @@ def main() -> None:
         rows.append(r)
     df = pd.DataFrame(rows)
     df["lvk_missing"] = df["neff_i_LVK"].isna()
-    hi = df[["neff_i_IAS", "neff_i_LVK"]].min(axis=1) / MIN_NEFF_I
-    he = df[["neff_e_IAS", "neff_e_LVK"]].min(axis=1) / MIN_NEFF_E
+    # minima under the IAS prior only, the production criterion (design note 2026-11-23 06:52)
+    hi = df["neff_i_IAS"] / MIN_NEFF_I
+    he = df["neff_e_IAS"] / MIN_NEFF_E
     df["head_i"], df["head_e"] = hi, he
     df["H"] = hi.clip(lower=1) * he.clip(lower=1)
     df["fails_min"] = (hi < 1) | (he < 1)
@@ -76,8 +77,8 @@ def figures(df) -> None:
     ax.axhline(1, color="0.6", lw=0.8)
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel("min over priors of n_effective_i / 150")
-    ax.set_ylabel("min over priors of n_effective_e / 100")
+    ax.set_xlabel("n_effective_i / 150, IAS prior")
+    ax.set_ylabel("n_effective_e / 100, IAS prior")
     ax.set_title("headroom per production run", fontsize=9)
     ax.legend(fontsize=7)
     fig.tight_layout()
@@ -92,6 +93,7 @@ def figures(df) -> None:
     ax.set_yscale("log")
     ax.set_xlabel("best-fit log-likelihood (summary value)")
     ax.set_ylabel("H, row reduction allowed by the minima")
+    ax.axhline(74, color="#d62728", ls=":", lw=1, label="R = 74, needed by GW240525_201644")
     ax.legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(rev / "fig2_H_vs_best.png", dpi=150)

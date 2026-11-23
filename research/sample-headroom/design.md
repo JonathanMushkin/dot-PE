@@ -74,3 +74,14 @@ Output `artifacts/research/sample-headroom/headroom.csv` and `review/`.
 H as defined (max(1, h_i) × max(1, h_e)) is 1 or more for a run that already fails a minimum,
 which reads as "no reduction possible" only implicitly. The report states H only for the runs
 that pass both minima and marks the others as failing; the definition is unchanged.
+
+## Design note, 2026-11-23 06:52 (after the results; user decision)
+
+The minima 150 and 100 are applied under the IAS prior only. This is the production criterion:
+o4b-pe-paper `failure_modes.analyze_rundir` reads `summary_results.json`, the IAS-prior summary.
+The earlier version took the minimum over the IAS and LVK priors, which this design chose without
+a source; the LVK-reweighted effective sample sizes are lower, and 174 of the 175 runs that
+failed a minimum failed it only under the LVK prior. The user (2026-11-23): high n_effective
+under the LVK prior is welcome but not a goal of this project. So h_i = n_effective_i,IAS / 150
+and h_e = n_effective_e,IAS / 100; the LVK-prior values stay in `headroom.csv` and are quoted in
+the report for context only. H's definition is otherwise unchanged.
