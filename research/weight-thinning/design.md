@@ -167,3 +167,32 @@ deviation), stands as a failure.
 Selection: the user's instruction of 2026-11-22 ("try to use both phase marginalization and the
 thinning method") overrides the rule "smallest spread of P_LVK wins": if (f) passes it goes to
 E5 even if another passing rule has a smaller P_LVK spread; that comparison is reported.
+
+## Design note, 2026-11-23 (after the results; user review of the first report)
+
+User, 2026-11-23: the report "is not readable"; a made-up quantity such as the bias is good only
+if it is shown to carry meaning; the report must say what is measured, why, and how the thing
+behaves under different settings. Changes, made after the first results:
+
+- Swept variable added: the row budget. Besides the production budget (equivalent
+  `size_limit` 1e7, k = 1 231 583 rows of T), the rules run at equivalent `size_limit` 4e7, 2.5e6,
+  6.25e5 and 1.5625e5 (k × 4, 1/4, 1/16, 1/64), with production's block cap formula at each.
+  30 seeds per randomized rule and budget; at the production budget the first 30 of the existing
+  100 seeds are used.
+- Rules shown: (d) the current rule, (b) thinning of rows, (e) thinning of rows with the
+  LVK-protected key, (f) thinning of phase-marginalized pairs. (a) gave results identical to (b)
+  and (c) is a deterministic variant of (d); both are dropped from the report.
+- Measures, each with its meaning: P_LVK, the weight at chi_eff < 0.4 under the LVK spin prior,
+  the number whose discrepancy with cogwheel (0.247 against 0.044 for production) started this
+  work; the shift of the 5 %, 50 % and 95 % quantiles of chi_eff and chirp mass from T's, in units
+  of T's 90 % interval width (a shift of 0.01 is invisible on a corner plot, a shift of 0.3 moves
+  the interval visibly); n_effective_i, the quantity the paper repos gate on (minimum 150). The
+  error of one run is its value minus T's; the scatter of the errors over seeds is the noise one
+  dot-PE run would carry, and the mean error over seeds shows whether there is a systematic part.
+- The accept/reject test of the earlier version (bias against spread with fixed ceilings) is
+  replaced by this reading: a rule is acceptable at a budget if its error of one run is smaller
+  than the current rule's and smaller than 0.1 of the 90 % width for the quantiles and 0.02 for
+  P_LVK. Stated in the report as chosen after the results.
+- Figure chain: (1) b of kept rows, production budget; (2) chi_eff under the LVK spin prior,
+  production budget; (3) P_LVK per seed against the budget, per rule; (4) quantile shifts per
+  seed against the budget, per rule; (5) n_effective_i against the budget.

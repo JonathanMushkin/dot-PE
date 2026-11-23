@@ -2,7 +2,8 @@
 """E3: thinning rules applied offline to T, the complete rows of E1's sampled i-blocks.
 
 Design: research/weight-thinning/design.md. Env o4a-pe (needs o4a_pe_paper.pe_lib.lvk_reweight).
-Usage: python thin.py --rule a|b|c|d|e|f [--seeds 100]
+Usage: python thin.py --rule a|b|c|d|e|f [--seeds 100] [--scale 1.0]
+--scale multiplies the row budget: the equivalent `size_limit` is 1e7 x scale.
 Writes artifacts/research/weight-thinning/<rule>.csv (one row per seed) and, for seed 0,
 <rule>_seed0.npz (kept rows' b, chi_eff and weights) for the figures.
 """
@@ -36,7 +37,7 @@ def hists(b, chi, w_lvk) -> dict:
 
 # ── reference table T ───────────────────────────────────────────────────────
 
-def load_T() -> tuple[pd.DataFrame, dict]:
+def load_T(scale: float = 1.0) -> tuple[pd.DataFrame, dict]:
     res = json.loads((E1 / "result.json").read_text())
     c = res["c"]
     plan = pd.read_csv(E1 / "plan.csv")
@@ -68,8 +69,9 @@ def load_T() -> tuple[pd.DataFrame, dict]:
         T.loc[m, "ln_r_lvk"] = ln_prior_ratio_fast(br)[inv]
     blk_bank = plan.bank.map(lambda s: int(s.split("_")[1])).to_numpy()
     B_k = plan.groupby("bank").B_k.first()
-    caps = {int(b.split("_")[1]): max(50_000, 2 * SIZE_LIMIT // int(n)) for b, n in B_k.items()}
-    k = int(round(len(T) * SIZE_LIMIT / res["N_hat_c"]))
+    size_limit = int(round(SIZE_LIMIT * scale))
+    caps = {int(b.split("_")[1]): max(50_000, 2 * size_limit // int(n)) for b, n in B_k.items()}
+    k = int(round(len(T) * size_limit / res["N_hat_c"]))
     meta = {"c": c, "k": k, "caps": caps, "blk_bank": blk_bank, "n_T": len(T)}
     return T, meta
 
@@ -211,8 +213,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--rule", required=True, choices=list("abcdef"))
     ap.add_argument("--seeds", type=int, default=100)
+    ap.add_argument("--scale", type=float, default=1.0)
     a = ap.parse_args()
-    T, meta = load_T()
+    T, meta = load_T(a.scale)
+    tag = a.rule if a.scale == 1.0 else f"{a.rule}_s{a.scale:g}"
     lnw = T["ln_w"].to_numpy()
     shift = lnw.max()
     lnw = lnw - shift  # common constant; cancels in every measure
@@ -222,7 +226,7 @@ def main() -> None:
     S, S_lvk = w_T.sum(), w_T_lvk.sum()
     ln_def = np.log((w_T / S + w_T_lvk / S_lvk) / 2)
     OUT.mkdir(parents=True, exist_ok=True)
-    if a.rule == "d":  # reference values on T, written once
+    if a.rule == "d" and a.scale == 1.0:  # reference values on T, written once
         ref = measures(T, np.arange(len(T)), w_T, w_T_lvk, S)
         for par in ("chieff", "mchirp", "q"):
             v = T[par].to_numpy()
@@ -246,10 +250,12 @@ def main() -> None:
         r["seed"] = s
         rows.append(r)
         if s == 0:
-            np.savez(OUT / f"{a.rule}_seed0.npz", **hists(T["bestfit_lnlike"].to_numpy()[kept],
+            np.savez(OUT / f"{tag}_seed0.npz", **hists(T["bestfit_lnlike"].to_numpy()[kept],
                                                           T["chieff"].to_numpy()[kept], w_lvk))
         print(json.dumps(r), flush=True)
-    pd.DataFrame(rows).to_csv(OUT / f"{a.rule}.csv", index=False)
+    df = pd.DataFrame(rows)
+    df["scale"], df["k"] = a.scale, meta["k"]
+    df.to_csv(OUT / f"{tag}.csv", index=False)
 
 
 if __name__ == "__main__":
