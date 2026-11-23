@@ -232,7 +232,7 @@ def run_thin_iblock(i_block, e_blocks, setup, waveform_dir):
     incoherent_i  = setup.get("incoherent_lnlike_i")  # bank-indexed; None = no bound
     row_selection = priority_sampling.check_mode(setup.get("row_selection", "bestfit"))
     use_priority  = row_selection == "phase_marginalized_priority"
-    ln_n_k        = float(setup.get("ln_N_k", 0.0))
+    ln_n_k        = priority_sampling.ln_n_k_of(setup, row_selection)
     rank_col      = "priority_key" if use_priority else "bestfit_lnlike"
     tau_blk       = -np.inf  # largest priority_key dropped in this i-block
 

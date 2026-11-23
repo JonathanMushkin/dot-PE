@@ -38,6 +38,23 @@ def check_mode(mode: str) -> str:
     return mode
 
 
+def ln_n_k_of(setup: dict, mode: str) -> float:
+    """ln N_k (log of the bank's number of (i, e, o) rows) from a coherent-worker setup.
+
+    Required with ``mode="phase_marginalized_priority"``: the keys of all banks must be on the
+    common scale ln W - ln N_k, and a silent default would put each bank on its own scale.
+    Unused (0) with ``mode="bestfit"``.
+    """
+    if check_mode(mode) == "bestfit":
+        return 0.0
+    if setup.get("ln_N_k") is None:
+        raise ValueError(
+            'row_selection="phase_marginalized_priority" needs setup["ln_N_k"], the log of the '
+            "bank's number of (i, e, o) rows (set by mp_inference._run_coherent_mp)"
+        )
+    return float(setup["ln_N_k"])
+
+
 def selection_rng(seed, bank_index: int, i_block_start: int) -> np.random.Generator:
     """Random stream for the phase and priority-sampling draws of one i-block.
 

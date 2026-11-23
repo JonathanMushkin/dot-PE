@@ -129,3 +129,12 @@ def test_selection_rng_differs_between_banks():
     assert np.array_equal(a, c)
     assert np.array_equal(priority_sampling.selection_rng(None, 0, 3).random(3),
                           priority_sampling.selection_rng(0, 0, 3).random(3))
+
+
+def test_ln_n_k_required_in_priority_mode():
+    mode = "phase_marginalized_priority"
+    assert priority_sampling.ln_n_k_of({}, "bestfit") == 0.0
+    assert priority_sampling.ln_n_k_of({"ln_N_k": 3.5}, mode) == 3.5
+    for setup in ({}, {"ln_N_k": None}):
+        with pytest.raises(ValueError):
+            priority_sampling.ln_n_k_of(setup, mode)
