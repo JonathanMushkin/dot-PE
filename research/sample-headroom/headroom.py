@@ -86,8 +86,8 @@ def figures(df) -> None:
     plt.close(fig)
     fig, ax = plt.subplots(figsize=(5, 4))
     f = df.fails_min
-    ax.scatter(df.best[~f], df.H[~f], s=10, c="k", label="runs")
-    ax.scatter(df.best[f], df.H[f], s=12, c="0.6", marker="x", label="fails a minimum")
+    # H is defined only for runs that pass both minima (design note 2026-11-22 12:05)
+    ax.scatter(df.best[~f], df.H[~f], s=10, c="k", label="runs passing both minima")
     ax.scatter(p.best, p.H, s=60, marker="*", c="#d62728", label="GW240525_201644")
     ax.set_xscale("log")
     ax.set_yscale("log")
