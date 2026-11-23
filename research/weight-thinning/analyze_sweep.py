@@ -15,10 +15,10 @@ import pandas as pd
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parents[1] / "artifacts/research/weight-thinning"
 SCALES = [0.015625, 0.0625, 0.25, 1.0, 4.0]
-RULES = {"d": ("current rule: top rows by likelihood", "#d62728"),
-         "b": ("thinning of rows", "#2ca02c"),
-         "e": ("thinning of rows, LVK-protected weights", "#9467bd"),
-         "f": ("thinning of phase-marginalized pairs", "#1f77b4")}
+RULES = {"d": ("rule 1: current, top rows by likelihood", "#d62728"),
+         "b": ("rule 2: thinning of rows", "#2ca02c"),
+         "e": ("rule 3: LVK-protected thinning of rows", "#9467bd"),
+         "f": ("rule 4: thinning of phase-marginalized pairs", "#1f77b4")}
 QS = [("chieff", 5), ("chieff", 50), ("chieff", 95), ("mchirp", 5), ("mchirp", 50),
       ("mchirp", 95)]
 N_SEEDS = 30

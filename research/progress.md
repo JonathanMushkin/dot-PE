@@ -51,3 +51,4 @@ One row per decision, design approval, gate outcome or LSF job. Times are local 
 | 2026-11-23 04:21 | E3 sweep done; report rewritten | 16 jobs exit 0. At production's budget the current rule gives P_LVK 0.032 against T's 0.156; thinning rules within 0.005 (rows), 0.002 (pairs), 0.0002 (LVK-protected) in one draw (rms over 30). Report rewritten from scratch; sent to both reviewers. |
 | 2026-11-23 04:21 | LSF 563110 failed; 563257 | 563110 collected no tests: the worktree was under /tmp, which compute nodes do not see. Worktree moved to `artifacts/research/wt_size_limit` (git-ignored); resubmitted as 563257. |
 | 2026-11-23 04:24 | E3 report | Rewritten report: reviewer 1 FIX ×2 then 3 wording items applied; reviewer 2 PASS. Final. |
+- 2026-11-23 06:28 E3 report: rules numbered 1-4 and referred to by number; rule 3 (LVK-protected) defined with formula before use; figure legends renumbered (analyze_sweep.py rerun, login node, 7 s). No numbers changed.
