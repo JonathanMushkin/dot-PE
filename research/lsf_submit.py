@@ -39,6 +39,7 @@ def main() -> None:
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     a = ap.parse_args()
     gpu_lines = ""
+    nthr = 1
     gpu_setup = ""
     if a.gpu:
         lim_w, lim_n = (180, 8) if a.exclusive else (30, 8 if a.end_to_end else 4)
@@ -50,6 +51,8 @@ def main() -> None:
         if not a.exclusive and (a.gmem is None or a.gmem > 40):
             raise SystemExit("shared GPU job needs --gmem <= 40")
         a.queue = "short-gpu"
+        if a.end_to_end or a.exclusive:
+            nthr = a.cores  # as production: BLAS/OpenMP threads match the cores
         g = f"num=1:gmodel={a.gpu}:" + ("j_exclusive=yes" if a.exclusive
                                          else f"gmem={a.gmem}G:j_exclusive=no")
         gpu_lines = f'#BSUB -gpu "{g}"\n'
@@ -75,7 +78,7 @@ def main() -> None:
 #BSUB -W {a.walltime_min}
 {gpu_lines}{gpu_setup}set -e
 export PYTHONUNBUFFERED=1
-export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
+export OMP_NUM_THREADS={nthr} MKL_NUM_THREADS={nthr} OPENBLAS_NUM_THREADS={nthr} NUMEXPR_NUM_THREADS={nthr}
 {pythonpath}
 cd /tmp
 echo "[$(date '+%F %T')] starting on $(hostname); dot-PE $(git -C {REPO} rev-parse --short HEAD)"

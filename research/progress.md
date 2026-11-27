@@ -50,3 +50,5 @@ last column.
 | 872212 | 2026-11-27 09:38 | short-gpu, L40S shared (lgn17), gmem 24 GB, 8 cores, 64 GB | P4 test 1 (like-for-like GW240525 run_2) | 806 s | 8439 MB | 13.4 | 0.42 | gates 1, 2 pass |
 | 872383 | 2026-11-27 09:55 | physics-short, 1 core, o4a-pe env | P4 gate 3: o4b `reweight_rundir` on the test-1 rundir | 95 s | — | 0 | 0.42 | passes |
 | 872384 | 2026-11-27 09:55 | short-gpu, L40S shared (lgn07), gmem 30 GB, 8 cores, 64 GB | P4 test 2 (fresh, priority mode, residency) | 772 s | 10693 MB | 12.9 | 0.63 | completes in 722 s; gate 4 passes |
+| 873613 | 2026-11-27 10:18 | short-gpu, L40S exclusive | P5 event 4 timed run | 0 s | — | 0 | 0.63 | killed while pending: BLAS threads were 1, not production's 8 |
+| 873651 | 2026-11-27 10:18 | short-gpu, L40S exclusive, 8 cores, 64 GB | P5 event 4 timed run (GW240920_124024), threads = 8 as production | | | | | pending |
