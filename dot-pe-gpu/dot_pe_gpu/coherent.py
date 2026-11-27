@@ -325,12 +325,17 @@ class CoherentGPU:
         return t
 
     # ── per-block inner products ────────────────────────────────────────────
-    def inner_products(self, i_block, amp, phase):
-        """dh (4, n_i, n_e) and hh (10, n_i, n_e) complex64 on the device."""
+    def inner_products(self, i_block, amp=None, phase=None, h=None):
+        """dh (4, n_i, n_e) and hh (10, n_i, n_e) complex64 on the device.
+
+        Waveforms either as host amp, phase (the time shift ``dt_linfree`` is applied here) or as
+        a device complex128 array h (i, m, p, b) with the time shift already applied.
+        """
         cp = self.cp
-        dt = cp.asarray(self.dt_linfree[i_block])
-        ph = cp.asarray(phase) + 2 * np.pi * dt[:, None, None, None] * self.fbin[None, None, None, :]
-        h = cp.asarray(amp) * cp.exp(1j * ph)                              # (i, m, p, b) complex128
+        if h is None:
+            dt = cp.asarray(self.dt_linfree[i_block])
+            ph = cp.asarray(phase) + 2 * np.pi * dt[:, None, None, None] * self.fbin[None, None, None, :]
+            h = cp.asarray(amp) * cp.exp(1j * ph)                          # (i, m, p, b) complex128
         n_i = h.shape[0]
         # A[m, i, (d, p, b)] = dh_w[d, m, p, b] * conj(h[i, m, p, b])  (float64, then complex64)
         a = (cp.transpose(self.dh_w, (1, 0, 2, 3))[:, None]                 # (m, 1, d, p, b)
@@ -343,14 +348,14 @@ class CoherentGPU:
         return cp.ascontiguousarray(dh), cp.ascontiguousarray(hh)
 
     # ── one intrinsic block ─────────────────────────────────────────────────
-    def run_iblock(self, i_block, amp, phase, return_device=False):
+    def run_iblock(self, i_block, amp=None, phase=None, return_device=False, h=None):
         import time
         cp = self.cp
         t0 = time.perf_counter()
         i_block = np.asarray(i_block, dtype=np.int64)
         n_i, n_e, n_phi = len(i_block), self.n_e, self.n_phi
         npairs = n_i * n_e
-        dh, hh = self.inner_products(i_block, amp, phase)
+        dh, hh = self.inner_products(i_block, amp, phase, h)
         t0 = self._tick("inner_products", t0)
         bound = (np.full(n_i, np.inf) if self.incoherent_i is None
                  else self.incoherent_i[i_block] + INCOHERENT_BOUND_TOL)

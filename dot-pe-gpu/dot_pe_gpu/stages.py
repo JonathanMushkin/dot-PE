@@ -79,8 +79,9 @@ class Residency:
                     b["inds"][j], b["lnl"][j] = b["inds"][j][k], b["lnl"][j][k]
                     b["h"][j] = b["h"][j][xp.asarray(np.flatnonzero(k))]
 
-    def finalize(self, bank_id, selected_inds):
-        """complex128 device array (n_sel, m, p, b) of raw h for `selected_inds`, in that order."""
+    def finalize(self, bank_id, selected_inds, scaled=False):
+        """Device array (n_sel, m, p, b) of raw h for `selected_inds`, in that order: complex128 h,
+        or (``scaled``) the stored complex64 h * H_SCALE."""
         xp = self.xp
         selected_inds = np.asarray(selected_inds, np.int64)
         b = self.banks.get(bank_id, {"inds": [], "lnl": [], "h": []})
@@ -98,7 +99,9 @@ class Residency:
             out = None
         else:
             h = xp.concatenate(parts_h)
-            out = h[xp.asarray(first[pos])].astype(xp.complex128) / H_SCALE
+            out = h[xp.asarray(first[pos])]
+            if not scaled:
+                out = out.astype(xp.complex128) / H_SCALE
         self.banks[bank_id] = {"inds": [], "lnl": [], "h": []}  # free the rest of this bank
         return out
 
@@ -109,7 +112,7 @@ class Residency:
 
 def incoherent_bank_gpu(*, event_data, par_dic_0, bank_folder, fbin, approximant, m_arr, n_phi, n_t,
                         n_int, preselected_indices, size_limit, residency, bank_id, batch=2048,
-                        threads=8, timings=None):
+                        threads=32, timings=None):
     """Stage 2 for one bank: (inds, lnlike_di, incoherent_lnlikes), as ``_collect_incoherent_mp``."""
     import time
     from dot_pe.inference import _create_single_detector_processor
@@ -130,7 +133,7 @@ def incoherent_bank_gpu(*, event_data, par_dic_0, bank_folder, fbin, approximant
     pos_of = {}
     t_wait = 0.0
     tw = time.perf_counter()
-    for k, inds, amp, phase in iter_blocks(bank_folder, files, threads=threads):
+    for k, inds, amp, phase in iter_blocks(bank_folder, files, threads=threads, prefetch=threads):
         t_wait += time.perf_counter() - tw
         m = np.isin(inds, want, assume_unique=True)
         if not m.all():

@@ -44,3 +44,19 @@ def iter_blocks(bank_folder, files=None, threads=8, prefetch=8):
             amp, phase = futs.pop(j).result()
             inds = np.arange(k * blocksize, k * blocksize + len(amp))
             yield k, inds, amp, phase
+
+
+def load_selected(bank_folder, inds, h_scale=2.0 ** 64, threads=8):
+    """Raw waveforms of templates `inds` (sorted) as device complex64 of h * h_scale.
+
+    Reads only the files that hold them, through the same prefetching reader.
+    """
+    import cupy as cp
+    inds = np.asarray(inds, np.int64)
+    _, blocksize, _ = bank_layout(bank_folder)
+    parts = []
+    for k, file_inds, amp, phase in iter_blocks(bank_folder, np.unique(inds // blocksize), threads=threads):
+        m = np.isin(file_inds, inds, assume_unique=True)
+        h = cp.asarray(amp[m]) * cp.exp(1j * cp.asarray(phase[m]))
+        parts.append((h * h_scale).astype(cp.complex64))
+    return (cp.concatenate(parts) if parts else None), h_scale

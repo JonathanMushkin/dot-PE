@@ -156,11 +156,11 @@ class IncoherentGPU:
         return linfree_dt(self.cp, h[:, self.m2, 0], self.h2plus0, self.polyfit_w, self.fbin)
 
     def run_batch(self, amp, phase, dt=None, return_raw=False):
-        """lnlike_di (d, i) on the host, dt_i (device), and h (i, m, p, b) complex64: with dt
-        applied, or (``return_raw``) without it."""
+        """lnlike_di (d, i) on the host, dt_i (device), and h (i, m, p, b): complex64 with dt
+        applied, or (``return_raw``) complex128 without it."""
         cp = self.cp
         h = cp.asarray(amp) * cp.exp(1j * cp.asarray(phase))
-        h_raw = h.astype(cp.complex64) if return_raw else None
+        h_raw = h if return_raw else None  # complex128; the caller scales before any cast
         if dt is None:
             dt = self.linfree_dt(h)
         else:

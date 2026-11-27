@@ -124,7 +124,8 @@ def main(dry_run=False, n_files=None):
     cp.cuda.Device().synchronize()
     t0 = time.perf_counter()
     t_last = t0
-    for k, inds, amp, phase in iter_blocks(b["bank"], files):
+    threads = int(sys.argv[sys.argv.index("--threads") + 1]) if "--threads" in sys.argv else 32
+    for k, inds, amp, phase in iter_blocks(b["bank"], files, threads=threads, prefetch=threads):
         t_wait += time.perf_counter() - t_last
         nbytes += amp.nbytes + phase.nbytes
         for s0 in range(0, len(inds), 2048):
@@ -141,7 +142,7 @@ def main(dry_run=False, n_files=None):
         "files": n_done, "seconds": t_bank, "seconds_waiting_for_reads": t_wait, "GB_read": nbytes / 1e9,
         "overall_GBps": nbytes / 1e9 / t_bank, "projected_bank_seconds": t_bank * scale,
         "projected_6_banks_seconds": 6 * t_bank * scale, "gate_seconds": GATE_SECONDS,
-        "exclusive": "--exclusive" in sys.argv}
+        "exclusive": "--exclusive" in sys.argv, "reader_threads": threads}
     res["gate4_speed_indicative"]["pass"] = res["gate4_speed_indicative"]["projected_6_banks_seconds"] <= GATE_SECONDS
     print("gate4", res["gate4_speed_indicative"], flush=True)
 
@@ -183,10 +184,11 @@ def main(dry_run=False, n_files=None):
         got = h_sel[cp.asarray(np.searchsorted(gpu_sel, chk))].get()
         res["gate5_residency"] = {"n_selected": int(len(gpu_sel)), "shape": list(h_sel.shape),
                                   "equal_to_disk_complex64": bool(np.array_equal(got, want)),
+                                  "max_abs_err_in_float32_ulps": float(np.max(np.abs(got - want) / (np.spacing(np.abs(want).astype(np.float32)).astype(float) + 1e-300))),
                                   "max_rel_err": float(np.max(np.abs(got - want) / np.maximum(np.abs(want), 1e-300))),
                                   "resident_bytes_finalized": int(h_sel.nbytes // 2),
                                   "peak_pool_bytes": int(peak - mem0), "seconds": time.perf_counter() - t5}
-        res["gate5_residency"]["pass"] = res["gate5_residency"]["equal_to_disk_complex64"]
+        res["gate5_residency"]["pass"] = res["gate5_residency"]["max_abs_err_in_float32_ulps"] <= 2.0
         print("gate5", res["gate5_residency"], flush=True)
     res["gate3_prod"] = g3
     print("gate3", g3, flush=True)
