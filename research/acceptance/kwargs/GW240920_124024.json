@@ -1,0 +1,27 @@
+{
+ "event": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/data/clean_data/GW240920_124024.npz",
+ "bank_folder": [
+  "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/banks/ad_hoc/GW240920_124024/bank_0"
+ ],
+ "n_int": null,
+ "n_ext": 2048,
+ "n_phi": 100,
+ "n_t": 128,
+ "blocksize": 512,
+ "single_detector_blocksize": 512,
+ "seed": 240920124024,
+ "load_inds": false,
+ "inds_path": null,
+ "size_limit": 10000000,
+ "draw_subset": true,
+ "n_draws": null,
+ "max_incoherent_lnlike_drop": 20.0,
+ "min_incoherent_survivors": 100,
+ "mchirp_guess": 36.3202531359223,
+ "extrinsic_samples": null,
+ "preselected_indices": null,
+ "bank_logw_override": null,
+ "seed_pool_lnlike_drop": null,
+ "row_selection": "bestfit",
+ "rundir": "/home/projects/barakz/jonatahm/dot-pe-future/artifacts/research/acceptance/GW240920_124024_gpu"
+}

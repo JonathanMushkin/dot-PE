@@ -37,9 +37,12 @@ def run(event, bank_folder, n_ext, n_phi, n_t, n_int=None, blocksize=512, single
         mchirp_guess=None, extrinsic_samples=None, bank_logw_override=None, load_inds=False,
         inds_path=None, seed_pool_lnlike_drop=None, seed_pool_inds=None, row_selection="bestfit",
         preselected_indices=None, n_ext_workers=1, n_workers=None, profile=False, reader_threads=32,
-        stop_after_setup=False):
+        stop_after_setup=False, residency_max_gb=None, residency=True):
     """Same arguments and outputs as ``dot_pe.mp_inference.run``; ``n_workers`` and ``profile`` are
-    accepted and ignored. ``stop_after_setup``: run stage 1 only (a CPU dry run). Returns the rundir."""
+    accepted and ignored. ``stop_after_setup``: run stage 1 only (a CPU dry run).
+    ``residency_max_gb``: cap on the device memory that keeps selected waveforms between stages 2
+    and 5 (default: free device memory minus 12 GB); past it, stage 5 streams them from disk.
+    ``residency=False`` always streams. Returns the rundir."""
     import cupy as cp
     from dot_pe import inference, priority_sampling
     from dot_pe.mp_inference import draw_extrinsic_samples_parallel, explicit_seed_pool, restrict_seed_pool
@@ -95,7 +98,12 @@ def run(event, bank_folder, n_ext, n_phi, n_t, n_int=None, blocksize=512, single
             cand[bank_id], lnl_by_bank[bank_id], lnl_di_by_bank[bank_id] = (
                 z["inds"], z["incoherent_lnlikes"], z["lnlikes_di"])
     else:
-        resid = Residency(margin=max_incoherent_lnlike_drop, top_n=min_incoherent_survivors)
+        if residency_max_gb is None:
+            free, _ = cp.cuda.runtime.memGetInfo()
+            residency_max_gb = max(0.0, free / 1e9 - 12.0)
+        resid = (Residency(margin=max_incoherent_lnlike_drop, top_n=min_incoherent_survivors,
+                           max_bytes=residency_max_gb * 1e9) if residency else None)
+        detail["residency_max_gb"] = residency_max_gb
         print("\n=== Incoherent selection per bank (GPU) ===")
         for bank_id, bank_path in ctx["banks"].items():
             pre = None
@@ -108,9 +116,12 @@ def run(event, bank_folder, n_ext, n_phi, n_t, n_int=None, blocksize=512, single
                 fbin=ctx["fbin"], approximant=ctx["approximant"], m_arr=ctx["m_arr"], n_phi=n_phi, n_t=n_t,
                 n_int=ctx["n_int_dict"][bank_id], preselected_indices=pre, size_limit=size_limit,
                 residency=resid, bank_id=bank_id, threads=reader_threads, timings=detail)
+            if resid is not None and resid.overflowed and "residency_overflow_bank" not in detail:
+                detail["residency_overflow_bank"] = bank_id
             cand[bank_id], lnl_by_bank[bank_id], lnl_di_by_bank[bank_id] = inds, lnl, lnl_di
-            print(f"Bank {bank_id}: {len(inds)} intrinsic samples evaluated "
-                  f"(device residency {resid.nbytes() / 1e9:.2f} GB).")
+            print(f"Bank {bank_id}: {len(inds)} intrinsic samples evaluated (device residency "
+                  + ("off" if resid is None else "over its cap" if resid.overflowed
+                     else f"{resid.nbytes() / 1e9:.2f} GB") + ").")
     t_stages["2_incoherent"] = time.perf_counter() - _t
 
     # ── Stage 3: cross-bank threshold (CPU) ─────────────────────────────
@@ -154,7 +165,7 @@ def run(event, bank_folder, n_ext, n_phi, n_t, n_int=None, blocksize=512, single
         if resid is not None and len(inds):
             h = resid.finalize(bank_id, inds, scaled=True)
         print(f"Bank {bank_id}: {len(inds)} selected templates "
-              f"({'device-resident' if h is not None else 'read from disk'}).")
+              f"({'device-resident' if h is not None else 'streamed from disk'}).")
         per_bank.append(coherent_bank_gpu(
             bank_id=bank_id, bank_index=k, bank_path=Path(bank_path), event_data=ctx["event_data"],
             par_dic_0=ctx["par_dic_0"], fbin=ctx["fbin"], approximant=ctx["approximant"], m_arr=ctx["m_arr"],
@@ -162,7 +173,7 @@ def run(event, bank_folder, n_ext, n_phi, n_t, n_int=None, blocksize=512, single
             h_scale=H_SCALE, blocksize=blocksize, size_limit=size_limit,
             max_bestfit_lnlike_diff=max_bestfit_lnlike_diff, rundir=ctx["rundir"],
             bank_rundir=ctx["banks_dir"] / bank_id, row_selection=row_selection, selection_seed=seed,
-            selected_lnlikes=lnl, lookup=lookup, timings=detail))
+            selected_lnlikes=lnl, lookup=lookup, timings=detail, reader_threads=reader_threads))
         del h
         cp.get_default_memory_pool().free_all_blocks()
     t_stages["5_coherent"] = time.perf_counter() - _t

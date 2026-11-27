@@ -10,6 +10,9 @@ in products); ``finalize`` returns complex128 h. It keeps two sets:
 2. the ``top_n`` templates of largest incoherent log-likelihood over all banks, whatever the
    margin: stage 3 falls back to these when fewer than ``min_incoherent_survivors`` pass.
 
+With ``max_bytes`` set, exceeding it drops all stored waveforms (``overflowed``); ``finalize``
+then returns None and the coherent stage streams the selected waveforms from disk.
+
 The coherent stage then reads no waveform files. Non-finite per-detector log-likelihoods are
 stored as -inf (the CPU would carry NaN into the sum).
 """
@@ -25,10 +28,12 @@ H_SCALE = 2.0 ** 64  # exact power of two: scaling is lossless
 
 
 class Residency:
-    def __init__(self, margin, top_n=100, xp=None):
+    def __init__(self, margin, top_n=100, xp=None, max_bytes=None):
         if xp is None:
             import cupy as xp
         self.xp = xp
+        self.max_bytes = max_bytes  # None: no cap
+        self.overflowed = False     # True once the cap was exceeded: no waveform is kept
         self.margin = float(margin)
         self.top_n = int(top_n)
         self.running_max = -np.inf
@@ -39,6 +44,8 @@ class Residency:
     def offer(self, bank_id, inds, lnl, h_raw):
         """Offer a batch: inds (n,), lnl (n,) host arrays, h_raw (n, m, p, b) device (unscaled)."""
         xp = self.xp
+        if self.overflowed:
+            return
         inds = np.asarray(inds, np.int64)
         lnl = np.where(np.isfinite(lnl), lnl, -np.inf)
         if np.isfinite(lnl).any():
@@ -52,6 +59,11 @@ class Residency:
             b["h"].append(hs[xp.asarray(keep)])
         self._update_top(bank_id, inds, lnl, hs)
         self._prune()
+        if self.max_bytes is not None and self.nbytes() > self.max_bytes:
+            # Over the cap: drop everything; the coherent stage streams waveforms from disk.
+            self.overflowed = True
+            self.banks = {}
+            self.top = {"bank": np.zeros(0, object), "inds": np.zeros(0, np.int64), "lnl": np.zeros(0), "h": None}
 
     def _update_top(self, bank_id, inds, lnl, hs):
         xp = self.xp
@@ -83,6 +95,8 @@ class Residency:
         """Device array (n_sel, m, p, b) of raw h for `selected_inds`, in that order: complex128 h,
         or (``scaled``) the stored complex64 h * H_SCALE."""
         xp = self.xp
+        if self.overflowed:
+            return None
         selected_inds = np.asarray(selected_inds, np.int64)
         b = self.banks.get(bank_id, {"inds": [], "lnl": [], "h": []})
         in_top = self.top["bank"] == bank_id

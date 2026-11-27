@@ -60,3 +60,28 @@ def load_selected(bank_folder, inds, h_scale=2.0 ** 64, threads=8):
         h = cp.asarray(amp[m]) * cp.exp(1j * cp.asarray(phase[m]))
         parts.append((h * h_scale).astype(cp.complex64))
     return (cp.concatenate(parts) if parts else None), h_scale
+
+
+def iter_selected(bank_folder, inds, chunk, h_scale=2.0 ** 64, threads=32, xp=None):
+    """Yield (start, h_scaled) for consecutive chunks of the sorted templates `inds`: rows
+    inds[start:start + len(h_scaled)] as device complex64 of h * h_scale, `chunk` rows per chunk
+    (the last may be shorter). Each file is read once, in order."""
+    if xp is None:
+        import cupy as xp
+    inds = np.asarray(inds, np.int64)
+    _, blocksize, _ = bank_layout(bank_folder)
+    pending, n_pending, start = [], 0, 0
+    for k, file_inds, amp, phase in iter_blocks(bank_folder, np.unique(inds // blocksize),
+                                                threads=threads, prefetch=threads):
+        m = np.isin(file_inds, inds, assume_unique=True)
+        h = xp.asarray(amp[m]) * xp.exp(1j * xp.asarray(phase[m]))
+        pending.append((h * h_scale).astype(xp.complex64))
+        n_pending += int(m.sum())
+        while n_pending >= chunk:
+            allh = xp.concatenate(pending) if len(pending) > 1 else pending[0]
+            yield start, allh[:chunk]
+            start += chunk
+            rest = allh[chunk:]
+            pending, n_pending = ([rest] if len(rest) else []), len(rest)
+    if n_pending:
+        yield start, xp.concatenate(pending) if len(pending) > 1 else pending[0]

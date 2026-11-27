@@ -4,9 +4,9 @@
 Differences from the CPU stage:
 1. no ``mp_coherent_setup_<bank>`` directory is written; the summary weights come from one
    ``CoherentLikelihoodProcessor`` built in memory;
-2. the linear-free time shifts of the selected templates are fitted on the device from resident
-   waveforms (same fit, same likelihood as ``precompute_coherent_setup``), so no waveform file is
-   read again;
+2. the linear-free time shifts of the selected templates are fitted on the device (same fit, same
+   likelihood as ``precompute_coherent_setup``), from resident waveforms, or from waveforms
+   streamed once from disk in i-block-aligned chunks when the residency is off or over its cap;
 3. the per-bank merge (concatenate, keep ``size_limit`` rows by ``bestfit_lnlike`` or
    ``priority_key``, track the largest dropped key) runs on the device.
 The outputs (``banks/<bank>/prob_samples.feather``, ``intrinsic_sample_processor_cache.json`` and
@@ -74,11 +74,12 @@ def _top_k(cp, cols, rank, k):
 def coherent_bank_gpu(*, bank_id, bank_index, bank_path, event_data, par_dic_0, fbin, approximant, m_arr,
                       n_phi, n_ext, n_int_k, inds, h_raw_scaled, h_scale, blocksize, size_limit,
                       max_bestfit_lnlike_diff, rundir, bank_rundir, row_selection, selection_seed,
-                      selected_lnlikes=None, lookup=None, timings=None):
+                      selected_lnlikes=None, lookup=None, timings=None, stream_blocks=64,
+                      reader_threads=32):
     """Coherent stage for one bank; returns the per-bank result dict of ``_run_coherent_mp``.
 
     h_raw_scaled: device complex64 (n_sel, m, p, b) of raw waveforms × h_scale, rows aligned with
-    `inds` (sorted). None: read them from the bank files.
+    `inds` (sorted). None: stream them from the bank files in chunks of `stream_blocks` i-blocks.
     selected_lnlikes: the selected templates' incoherent log-likelihoods (aligned with `inds`), for
     the incoherent bound (``incoherent_bound_mask``); None disables it, as in the CPU stage.
     """
@@ -110,25 +111,26 @@ def coherent_bank_gpu(*, bank_id, bank_index, bank_path, event_data, par_dic_0, 
         rundir=rundir)
     t_setup = time.perf_counter() - t0
 
-    if h_raw_scaled is None:
-        from .bank import load_selected
-        h_raw_scaled, h_scale = load_selected(bank_path, inds)
     fbin_d = cp.asarray(np.asarray(fbin, float))
     m2 = list(np.asarray(m_arr)).index(2)
     h0 = cp.asarray(np.asarray(lk._h2plus0_fbin, np.complex128))
     pw = cp.asarray(np.asarray(lk._polyfit_weights, float))
-    dt = cp.empty(len(inds))
-    for s in range(0, len(inds), 8192):  # time shifts of the selected templates
-        dt[s:s + 8192] = linfree_dt(cp, h_raw_scaled[s:s + 8192, m2, 0].astype(cp.complex128) / h_scale,
-                                    h0, pw, fbin_d)
-    dt_full = np.zeros(len(setup["logw_i"]))
-    dt_h = dt.get()
-    dt_full[inds] = dt_h
-    setup.update({"dt_linfree": dt_full, "row_selection": row_selection, "ln_N_k": float(np.log(n_total)),
-                  "selection_seed": selection_seed, "bank_index": bank_index})
+    setup.update({"dt_linfree": np.zeros(len(setup["logw_i"])), "row_selection": row_selection,
+                  "ln_N_k": float(np.log(n_total)), "selection_seed": selection_seed, "bank_index": bank_index})
     if selected_lnlikes is not None:
         from dot_pe.likelihood_calculating import incoherent_lookup
         setup["incoherent_lnlike_i"] = incoherent_lookup(len(setup["logw_i"]), inds, selected_lnlikes)
+
+    # Waveform chunks aligned with the i-blocks: the resident array, or a stream from disk that
+    # reads each file once (when the residency is off or over its cap).
+    chunk = blocksize * stream_blocks
+    if h_raw_scaled is not None:
+        chunks = ((s0, h_raw_scaled[s0:s0 + chunk]) for s0 in range(0, len(inds), chunk))
+        source = "device-resident"
+    else:
+        from .bank import iter_selected
+        chunks = iter_selected(bank_path, inds, chunk, h_scale=h_scale, threads=reader_threads)
+        source = "disk stream"
 
     g = CoherentGPU(setup, blocksize_e=blocksize, lookup=lookup)
     use_priority = g.use_priority
@@ -136,25 +138,27 @@ def coherent_bank_gpu(*, bank_id, bank_index, bank_path, event_data, par_dic_0, 
     acc, tau_bank = None, -np.inf
     n_disc_total, n_dist_marg = 0, 0
     lse_terms, lsse_terms = [], []
+    dt_h = np.empty(len(inds))
     t1 = time.perf_counter()
-    pos = 0
-    for i_block in inds_to_blocks(inds, blocksize):
-        n = len(i_block)
-        h = (h_raw_scaled[pos:pos + n].astype(cp.complex128) / h_scale
-             * cp.exp(2j * np.pi * dt[pos:pos + n, None, None, None] * fbin_d[None, None, None, :]))
-        pos += n
-        cols, n_disc, lse, lsse, n_dm = g.run_iblock(i_block, h=h, return_device=True)
-        n_disc_total += n_disc
-        n_dist_marg += n_dm
-        lse_terms.append(lse)
-        lsse_terms.append(lsse)
-        if acc is None:
-            acc = cols
-        else:
-            acc = {c: cp.concatenate([acc[c], cols[c]]) for c in acc}
-        if len(acc[rank_col]) > 2 * size_limit:
-            acc, dropped = _top_k(cp, acc, acc[rank_col], size_limit)
-            tau_bank = max(tau_bank, dropped)
+    for s0, hc in chunks:
+        n_c = len(hc)
+        dtc = linfree_dt(cp, hc[:, m2, 0].astype(cp.complex128) / h_scale, h0, pw, fbin_d)
+        dt_h[s0:s0 + n_c] = dtc.get()
+        for b0 in range(0, n_c, blocksize):
+            i_block = inds[s0 + b0:s0 + min(b0 + blocksize, n_c)]
+            n = len(i_block)
+            h = (hc[b0:b0 + n].astype(cp.complex128) / h_scale
+                 * cp.exp(2j * np.pi * dtc[b0:b0 + n, None, None, None] * fbin_d[None, None, None, :]))
+            cols, n_disc, lse, lsse, n_dm = g.run_iblock(i_block, h=h, return_device=True)
+            n_disc_total += n_disc
+            n_dist_marg += n_dm
+            lse_terms.append(lse)
+            lsse_terms.append(lsse)
+            acc = cols if acc is None else {c: cp.concatenate([acc[c], cols[c]]) for c in acc}
+            if len(acc[rank_col]) > 2 * size_limit:
+                acc, dropped = _top_k(cp, acc, acc[rank_col], size_limit)
+                tau_bank = max(tau_bank, dropped)
+        del hc
     acc, dropped = _top_k(cp, acc, acc[rank_col], size_limit)
     tau_bank = max(tau_bank, dropped)
     t_blocks = time.perf_counter() - t1
@@ -177,7 +181,7 @@ def coherent_bank_gpu(*, bank_id, bank_index, bank_path, event_data, par_dic_0, 
     ln_evidence_discarded = safe_logsumexp(lse_terms) - np.log(n_total)
     n_eff, n_eff_i, n_eff_e = get_n_effective_total_i_e(combined, assume_normalized=False)
     if timings is not None:
-        timings[f"5_coherent_{bank_id}"] = {"cpu_setup": t_setup, "blocks": t_blocks,
+        timings[f"5_coherent_{bank_id}"] = {"cpu_setup": t_setup, "blocks": t_blocks, "source": source,
                                             "write": time.perf_counter() - t1 - t_blocks,
                                             "n_iblocks": -(-len(inds) // blocksize)}
     del g

@@ -151,3 +151,39 @@ def test_residency_margin_top_n_and_finalize():
     res2.offer("b", np.array([0]), np.array([1e5]), np.ones((1, 4, 2, 8), complex) * 1e-20)
     got = res2.finalize("a", np.array([8, 9]))  # the stage-3 fallback keeps the top of bank a
     assert got.shape == (2, 4, 2, 8) and np.allclose(np.abs(got), 1e-20, rtol=1e-6)
+
+
+def test_residency_cap_overflow():
+    from dot_pe_gpu.stages import Residency
+    res = Residency(margin=20.0, top_n=3, xp=np, max_bytes=50 * 4 * 2 * 8 * 8 * 1.5)  # room for ~75 rows
+    h = np.ones((50, 4, 2, 8), complex) * 1e-20
+    res.offer("a", np.arange(50), np.zeros(50), h)
+    assert not res.overflowed
+    res.offer("a", np.arange(50, 100), np.zeros(50), h)
+    assert res.overflowed and res.nbytes() == 0
+    assert res.finalize("a", np.arange(10)) is None
+    res.offer("a", np.arange(100, 150), np.zeros(50), h)  # ignored after overflow
+    assert res.nbytes() == 0
+
+
+def test_iter_selected_chunks(tmp_path):
+    import json
+    from dot_pe_gpu.bank import iter_selected
+    rng = np.random.default_rng(2)
+    wdir = tmp_path / "waveforms"
+    wdir.mkdir()
+    blocksize, n_files = 16, 5
+    json.dump({"blocksize": blocksize}, open(tmp_path / "bank_config.json", "w"))
+    amps, phases = [], []
+    for k in range(n_files):
+        a, p = rng.uniform(0.5, 1, (blocksize, 4, 2, 6)) * 1e-20, rng.uniform(-3, 3, (blocksize, 4, 2, 6))
+        np.save(wdir / f"amplitudes_block_{k}.npy", a)
+        np.save(wdir / f"phase_block_{k}.npy", p)
+        amps.append(a)
+        phases.append(p)
+    amp, phase = np.concatenate(amps), np.concatenate(phases)
+    inds = np.sort(rng.choice(blocksize * n_files, 37, replace=False))
+    got = list(iter_selected(tmp_path, inds, chunk=8, xp=np, threads=2))
+    assert [s for s, _ in got] == list(range(0, 37, 8))
+    h = np.concatenate([c for _, c in got]).astype(np.complex128) / 2.0 ** 64
+    np.testing.assert_allclose(h, amp[inds] * np.exp(1j * phase[inds]), rtol=1e-6)
