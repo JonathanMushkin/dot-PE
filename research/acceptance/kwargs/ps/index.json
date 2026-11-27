@@ -1,0 +1,66 @@
+{
+ "GW240515_005301": {
+  "number": 1,
+  "reference_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/dev/priority_sampling/p4_remaining/GW240515_005301",
+  "production_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/pe/dotpe/GW240515_005301/run_0",
+  "reference_wall_seconds": 10119.468596935272,
+  "dot_pe_commit": "8d55dae",
+  "recycled_extrinsic": true
+ },
+ "GW240923_204006": {
+  "number": 2,
+  "reference_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/dev/priority_sampling/p4_remaining/GW240923_204006",
+  "production_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/pe/dotpe/GW240923_204006/run_0",
+  "reference_wall_seconds": 3910.8688864707947,
+  "dot_pe_commit": "8d55dae",
+  "recycled_extrinsic": true
+ },
+ "GW231028_153006": {
+  "number": 3,
+  "reference_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/dev/priority_sampling/p4_remaining/GW231028_153006",
+  "production_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4a-pe-paper/artifacts/pe/dotpe/GW231028_153006/run_0",
+  "reference_wall_seconds": 2933.858375310898,
+  "dot_pe_commit": "8d55dae",
+  "recycled_extrinsic": true
+ },
+ "GW240920_124024": {
+  "number": 4,
+  "reference_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/dev/priority_sampling/p4_remaining/GW240920_124024",
+  "production_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/pe/dotpe/GW240920_124024/run_1",
+  "reference_wall_seconds": 542.4246881008148,
+  "dot_pe_commit": "8d55dae",
+  "recycled_extrinsic": true
+ },
+ "GW241011_233834": {
+  "number": 5,
+  "reference_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/dev/priority_sampling/p4_remaining/GW241011_233834",
+  "production_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/pe/dotpe/GW241011_233834/run_1",
+  "reference_wall_seconds": 3331.285845041275,
+  "dot_pe_commit": "8d55dae",
+  "recycled_extrinsic": true
+ },
+ "GW240916_184352": {
+  "number": 6,
+  "reference_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/dev/priority_sampling/p4_remaining/GW240916_184352",
+  "production_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/pe/dotpe/GW240916_184352/run_2",
+  "reference_wall_seconds": 10583.317715168,
+  "dot_pe_commit": "8d55dae",
+  "recycled_extrinsic": true
+ },
+ "GW231002_143916": {
+  "number": 7,
+  "reference_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/dev/priority_sampling/p5_seed_pool/GW231002_143916",
+  "production_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4a-pe-paper/artifacts/pe/dotpe/GW231002_143916/run_0",
+  "reference_wall_seconds": 21544.552653074265,
+  "dot_pe_commit": "8d55dae",
+  "recycled_extrinsic": false
+ },
+ "GW240525_201644": {
+  "number": "R",
+  "reference_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/dev/priority_sampling/p3_compromised/GW240525_201644",
+  "production_rundir": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/pe/dotpe/GW240525_201644/run_2",
+  "reference_wall_seconds": 23586.79194331169,
+  "dot_pe_commit": "8d55dae",
+  "recycled_extrinsic": true
+ }
+}

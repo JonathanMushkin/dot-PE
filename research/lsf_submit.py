@@ -6,7 +6,8 @@ Usage: python research/lsf_submit.py --name NAME --env dot-pe|dot-pe-gpu|o4a-pe 
        [--gpu MODEL --gmem GB [--exclusive]] -- <command ...>
 GPU jobs (--gpu, e.g. NVIDIAL40S, NVIDIAA100_SXM4_80GB, NVIDIAH100NVL): queue short-gpu, 1 GPU,
 `module load CUDA/12.6.0`, nvidia-smi header in the log. Limits in research/protocol.md "GPU usage"
-are enforced here: walltime <= 30 min shared / 180 min exclusive, cores <= 4 shared / 8 exclusive,
+are enforced here: walltime <= 30 min shared (60 min shared --end-to-end) / 180 min exclusive,
+cores <= 4 shared / 8 exclusive or --end-to-end,
 gmem <= 40 GB shared.
 Logs: artifacts/research/logs/<NAME>/%J.{out,err}. The bsub file is kept next to the logs.
 """
@@ -42,7 +43,7 @@ def main() -> None:
     nthr = 1
     gpu_setup = ""
     if a.gpu:
-        lim_w, lim_n = (180, 8) if a.exclusive else (30, 8 if a.end_to_end else 4)
+        lim_w, lim_n = (180, 8) if a.exclusive else ((60, 8) if a.end_to_end else (30, 4))
         lim_mem = 96000 if a.end_to_end else (64000 if a.exclusive else 32000)
         if a.mem_mb > lim_mem:
             raise SystemExit(f"GPU limits: host memory <= {lim_mem} MB")

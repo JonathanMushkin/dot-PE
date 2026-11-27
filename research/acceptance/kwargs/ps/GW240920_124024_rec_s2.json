@@ -1,0 +1,30 @@
+{
+ "event": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/dev/edge_events_rerun/clean/GW240920_124024.npz",
+ "bank_folder": [
+  "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/banks/ad_hoc/GW240920_124024/bank_0"
+ ],
+ "n_int": null,
+ "n_ext": 2048,
+ "n_phi": 100,
+ "n_t": 128,
+ "blocksize": 512,
+ "single_detector_blocksize": 512,
+ "seed": 240920124026,
+ "load_inds": true,
+ "inds_path": {
+  "bank_0": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/pe/dotpe/GW240920_124024/run_1/banks/bank_0/intrinsic_samples.npz"
+ },
+ "size_limit": 10000000,
+ "draw_subset": true,
+ "n_draws": null,
+ "max_incoherent_lnlike_drop": 20.0,
+ "min_incoherent_survivors": 100,
+ "mchirp_guess": 36.3202531359223,
+ "extrinsic_samples": "/home/projects/barakz/Collaboration-gw/mushkin/dot-pe/o4b-pe-paper/artifacts/pe/dotpe/GW240920_124024/run_1/extrinsic_samples.feather",
+ "preselected_indices": null,
+ "bank_logw_override": null,
+ "seed_pool_lnlike_drop": null,
+ "row_selection": "phase_marginalized_priority",
+ "event_dir": "/home/projects/barakz/jonatahm/dot-pe-future/artifacts/research/acceptance/ps",
+ "rundir": "/home/projects/barakz/jonatahm/dot-pe-future/artifacts/research/acceptance/ps/GW240920_124024_rec_s2"
+}

@@ -182,6 +182,11 @@ The cluster's GPUs are shared, and GPU time weighs heavily on fairshare (`short-
    - exclusive;
    - `-W` at most 3 h;
    - at most 8 cores.
+
+   Untimed end-to-end runs (P4, P5 seed and recycled runs):
+   - shared, `gmem` at most 40 GB;
+   - `-W` at most 60 min (decision of 2026-11-27 in `progress.md`);
+   - at most 8 cores and 96 GB of host memory.
 4. Every GPU job is preceded by a CPU run of the same entry point on a tiny input and by a
    `bjobs`/`bqueues` check. It is a row in `progress.md` with its submission time, GPU model,
    GPU-minutes and outcome. The rows keep a running total.

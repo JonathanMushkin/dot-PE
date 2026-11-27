@@ -1,9 +1,13 @@
 """P5 comparison and pass/fail (criteria of research/acceptance/design.md, coded here).
 
 Usage:
-  python research/acceptance/compare.py PROD_RUNDIR GPU_RUNDIR [--seed-runs RD1 RD2] [--json OUT]
+  python research/acceptance/compare.py REF_RUNDIR GPU_RUNDIR [--seed-runs RD1 RD2]
+      [--timed TIMED_RUNDIR] [--production PROD_RUNDIR] [--json OUT]
 --seed-runs: the extra-seed GPU runs of a regime-2 event; seed scatter = largest value over the
-three pairs among (GPU_RUNDIR, RD1, RD2).
+three pairs among (GPU_RUNDIR, RD1, RD2). Priority-sampling runs are always regime 2.
+--timed: the timed GPU run (default GPU_RUNDIR); --production: a second reference wall time
+(the speed criterion uses the smaller one). Wall times come from gpu_timing.json, timing.json or
+rerun_info.json.
 """
 
 import itertools
@@ -49,7 +53,7 @@ def js_pair(xa, xb):
 
 
 def wall(rd):
-    for f in ("gpu_timing.json", "timing.json"):
+    for f in ("gpu_timing.json", "timing.json", "rerun_info.json"):
         if (Path(rd) / f).exists():
             return json.load(open(Path(rd) / f)).get("wall_seconds")
     return None
@@ -77,13 +81,26 @@ def same_extrinsic(a, b):
     return bool(np.allclose(ea[cols].to_numpy(float), eb[cols].to_numpy(float), rtol=1e-12, atol=0, equal_nan=True))
 
 
-def evaluate(prod, gpu, seed_runs=()):
+def row_selection(rd):
+    f = Path(rd) / "run_kwargs.json"
+    return json.load(open(f)).get("row_selection", "bestfit") if f.exists() else "bestfit"
+
+
+def evaluate(prod, gpu, seed_runs=(), timed=None, production=None):
+    """prod: the reference rundir (revision 2: the o4b priority-sampling rerun).
+    timed: the timed GPU run (default: gpu); production: the production rundir, whose wall time
+    also bounds the speed criterion (revision 2: ratio to the smaller of the two wall times)."""
     m = measures(prod, gpu)
-    res = {"production": str(prod), "gpu": str(gpu), "measures": m,
-           "wall_production": wall(prod), "wall_gpu": wall(gpu)}
+    timed = timed or gpu
+    walls = [w for w in (wall(prod), wall(production) if production else None) if w]
+    res = {"production": str(prod), "gpu": str(gpu), "timed": str(timed), "measures": m,
+           "wall_production": min(walls) if walls else None, "wall_reference_all": walls,
+           "wall_gpu": wall(timed)}
     res["wall_ratio"] = res["wall_gpu"] / res["wall_production"] if res["wall_gpu"] and res["wall_production"] else None
     res["pass_speed"] = bool(res["wall_ratio"] is not None and res["wall_ratio"] <= 0.5)
-    regime = 1 if same_extrinsic(prod, gpu) else 2
+    res["same_extrinsic"] = same_extrinsic(prod, gpu)
+    stochastic = "priority" in row_selection(gpu) or "priority" in row_selection(prod)
+    regime = 1 if res["same_extrinsic"] and not stochastic else 2
     res["regime"] = regime
     checks = {}
     if regime == 1:
@@ -122,7 +139,8 @@ def evaluate(prod, gpu, seed_runs=()):
 if __name__ == "__main__":
     a = sys.argv
     seeds = a[a.index("--seed-runs") + 1:a.index("--seed-runs") + 3] if "--seed-runs" in a else ()
-    out = evaluate(a[1], a[2], seeds)
+    opt = lambda k: a[a.index(k) + 1] if k in a else None
+    out = evaluate(a[1], a[2], seeds, timed=opt("--timed"), production=opt("--production"))
     print(json.dumps(out, indent=1, default=float))
     if "--json" in a:
         json.dump(out, open(a[a.index("--json") + 1], "w"), indent=1, default=float)

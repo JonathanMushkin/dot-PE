@@ -113,3 +113,57 @@ For every event:
 - At most 14 shared seed runs.
 - In total at most 20 GPU-hours, which would bring the project's total to about 21 of 60. Jobs
   run one at a time.
+
+## Revision 2 (2026-11-27, before any revision-2 result)
+
+Reason: the user proposed comparing against the priority-sampling runs instead of production. They
+are o4b CPU reruns in `o4b-pe-paper/artifacts/dev/priority_sampling/<phase>/<EVENT>/`
+(`o4b-pe-paper/dev/priority_sampling/README.md`), made with dot-PE 8d55dae, whose `dot_pe/`
+equals gpu-v2's, with `row_selection="phase_marginalized_priority"`, on 7 workers. Each recycles
+its production run's intrinsic selection, and all but event 7 also its extrinsic samples. This
+removes confounder 1 (code version) and criterion 4, and tests the mode new runs will use. The one
+result of revision 1 (event 4's timed run, 64 s) is kept in `progress.md` and not used here.
+
+Terms added:
+- Reference run: the event's priority-sampling rerun. Its wall time is `rerun_info.json`
+  `wall_seconds`.
+- Reference wall time: the smaller of the reference run's and the production run's wall times.
+  The reference runs skip stages 2 and 4, so a fresh CPU priority run would take longer than
+  either; the smaller one is the stricter yardstick.
+- Recycled GPU run: `dot_pe_gpu.run` with the reference run's arguments exactly
+  (`research/acceptance/kwargs/ps/<EVENT>_rec_s0.json`). Its inputs equal the reference's, so the
+  remaining differences are the priority-sampling random draws and float32 arithmetic.
+- Fresh GPU run: the same settings with nothing recycled (`<EVENT>_fresh.json`).
+
+Events (from `make_ps_kwargs.py`; selected templates are the recycled selection):
+
+| # | Event, reference | Banks | n_ext | Selected templates | Production wall [s] | Reference rerun wall [s] |
+|---|---|---|---|---|---|---|
+| 1 | GW240515_005301, P4 | 6 | 2048 | 409945 | 9947 | 10119 |
+| 2 | GW240923_204006, P4 | 3 | 2048 | 275478 | 4942 | 3911 |
+| 3 | GW231028_153006, P4 | 2 | 2048 | 35623 | 1824 | 2934 |
+| 4 | GW240920_124024, P4 (production run_1) | 1 | 2048 | 36195 | 521 | 542 |
+| 5 | GW241011_233834, P4 | 1 | 2048 | 3603 | 1329 | 3331 |
+| 6 | GW240916_184352, P4 | 6 | 8192 | 248509 | 11422 | 10583 |
+| 7 | GW231002_143916, P5 (seed pool 8, extrinsic drawn) | 9 | 2048 | 1512115 | 26598 | 21545 |
+| R | GW240525_201644, P3 | 3 | 13312 | 594510 | 21022 | 23587 |
+
+Event 5 replaces GW231127_061546, which has no priority-sampling rerun. The rule that picked it:
+among the reruns with 1 bank and a reference wall time of at least 4 minutes, the lowest
+production n_effective_e (70). Event 4's reference is production run_1, made on the regenerated
+event file; revision 1 used run_0.
+
+Measures and criteria:
+1. Speed: the fresh GPU run, timed in an exclusive L40S job with 8 cores. Pass: GPU wall ≤ 0.5 ×
+   reference wall time. The short-run cutoff and the disk-throughput rule of revision 1 stand.
+2. Results: the recycled GPU run (seed + 0) against the reference run, with two more recycled GPU
+   runs (seed + 1, + 2) for the seed scatter. Priority sampling makes every comparison regime 2:
+   revision 1's criterion 3, coded in `compare.py`.
+3. The fresh GPU run against the reference run is reported, without a criterion: it adds the
+   scatter of a different extrinsic draw.
+4. Regression: the GW240525 rows above, under the same criteria; it is not acceptance evidence.
+
+Compute: 8 exclusive timed jobs and 24 recycled runs in shared jobs. A recycled run reads its
+selected waveforms from disk in stage 5; P4 test 1 took 744 s for 594510 templates. The shared
+jobs therefore get `-W` up to 60 min (`progress.md`, decision of 2026-11-27). The estimate stays
+within revision 1's 20 GPU-hours.
