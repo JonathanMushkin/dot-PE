@@ -36,9 +36,10 @@ def run(event, bank_folder, n_ext, n_phi, n_t, n_int=None, blocksize=512, single
         max_incoherent_lnlike_drop=20, min_incoherent_survivors=100, max_bestfit_lnlike_diff=20,
         mchirp_guess=None, extrinsic_samples=None, bank_logw_override=None, load_inds=False,
         inds_path=None, seed_pool_lnlike_drop=None, seed_pool_inds=None, row_selection="bestfit",
-        preselected_indices=None, n_ext_workers=1, n_workers=None, profile=False, reader_threads=32):
+        preselected_indices=None, n_ext_workers=1, n_workers=None, profile=False, reader_threads=32,
+        stop_after_setup=False):
     """Same arguments and outputs as ``dot_pe.mp_inference.run``; ``n_workers`` and ``profile`` are
-    accepted and ignored. Returns the rundir."""
+    accepted and ignored. ``stop_after_setup``: run stage 1 only (a CPU dry run). Returns the rundir."""
     import cupy as cp
     from dot_pe import inference, priority_sampling
     from dot_pe.mp_inference import draw_extrinsic_samples_parallel, explicit_seed_pool, restrict_seed_pool
@@ -75,6 +76,9 @@ def run(event, bank_folder, n_ext, n_phi, n_t, n_int=None, blocksize=512, single
     del ctx["coherent_posterior"]
     gc.collect()
     t_stages["1_setup"] = time.perf_counter() - _t
+    if stop_after_setup:
+        print(f"Stage 1 done in {t_stages['1_setup']:.1f} s; stopping (stop_after_setup).")
+        return ctx["rundir"]
     print("GPU:", cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["name"].decode())
 
     # ── Stage 2: incoherent selection (GPU) ─────────────────────────────

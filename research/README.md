@@ -16,12 +16,17 @@ A GPU run of dot-PE that writes `summary_results.json` and `samples.feather` has
 | # | Slug | Class | Status |
 |---|---|---|---|
 | P0 | (setup) | — | done 2026-11-27 |
-| P1 | [gpu-forensics](gpu-forensics/) | measurement | open |
-| P2 | coherent-kernel | feature (engineering) | not started |
-| P3 | incoherent-gpu | feature (engineering) | not started |
-| P4 | runner | feature (engineering) | not started |
+| P1 | [gpu-forensics](gpu-forensics/) | measurement | report done, reviewed |
+| P2 | [coherent-kernel](coherent-kernel/) | feature (engineering) | gates 1–3 pass (3.1 revised after diagnosis); gate 4 (exclusive timing) pending |
+| P3 | [incoherent-gpu](incoherent-gpu/) | feature (engineering) | gates 1, 2, 3, 5 pass; gate 4 (exclusive timing) pending |
+| P4 | [runner](runner/) | feature (engineering) | code written; CPU dry run of stage 1 passes |
 | P5 | acceptance | feature (acceptance) | not started |
 
 ## Open decisions for the user
 
-None.
+1. "Half the time for every event": runs whose production wall time is under about 4 minutes
+   cannot reach 0.5×, because their CPU-side stages (setup, extrinsic proposal, postprocess)
+   alone take about 2 minutes. Example: o4b GW240601_061200 run_0, 230 s in total. The acceptance
+   set starts at 662 s. The acceptance report will give the fraction of production runs for which
+   0.5× is reachable. Is a criterion over typical runs, excluding runs under about 4 minutes,
+   acceptable?
