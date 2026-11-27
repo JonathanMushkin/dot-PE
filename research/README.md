@@ -19,7 +19,7 @@ A GPU run of dot-PE that writes `summary_results.json` and `samples.feather` has
 | P1 | [gpu-forensics](gpu-forensics/) | measurement | report done, reviewed |
 | P2 | [coherent-kernel](coherent-kernel/) | feature (engineering) | closed: gates 1–4 pass (3.1 revised after diagnosis); 0.058 s per i-block on L40S |
 | P3 | [incoherent-gpu](incoherent-gpu/) | feature (engineering) | closed: gates 1–5 pass; 59 s per cold 56 GB bank on L40S |
-| P4 | [runner](runner/) | feature (engineering) | code written; CPU dry run of stage 1 passes |
+| P4 | [runner](runner/) | feature (engineering) | closed: gates 1–4 pass; GW240525 run_2 in 722 s fresh (production 21022 s) |
 | P5 | acceptance | feature (acceptance) | not started |
 
 ## Open decisions for the user
