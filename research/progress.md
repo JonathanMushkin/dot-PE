@@ -27,6 +27,7 @@ last column.
 | 2026-11-27 | P3 recheck (job 871694, lgn02): gates 1, 2, 3 and 5 pass. Gate 5's maximum error is 5e-15 float32 ulps (relative 9.5e-16). Indicative gate 4: 24 s per bank, 2.1 GB/s with 32 reader threads; the earlier job ran on lgn10, but the storage server may have cached bank 0. The exclusive timing job reads bank 2 (`very_low_q_bank_56`), which no job read today. | |
 | 2026-11-27 | End-to-end GPU runs (P4 test runs, P5 acceptance) may request up to 8 cores and 96 GB host memory, because production run_2 peaked at 40 GB. They run shared, with `-W` ≤ 30, unless they are timed; timed runs are exclusive (protocol "GPU usage" item 3). The development-job limit of 32 GB is kept for everything else. | Production run_2 log 482524: Max Memory 40359 MB |
 | 2026-11-27 | P4 runner: CPU dry run of stage 1 on the test-1 arguments (job 872061, 51 s, 3.6 GB) passes; stage 1 takes 32 s. Test 1 is submitted after exclusive job 872052, keeping to one GPU job at a time. | `runner/design.md` |
+| 2026-11-27 | User decision: the speed criterion applies to typical runs and excludes runs under 4 minutes of production wall time. The cutoff may be raised to 10 minutes, and raised again if too-short runs fail it again; a cutoff that reaches 1 hour is reported to the user first. | User message |
 
 ## Jobs
 

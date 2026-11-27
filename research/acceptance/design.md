@@ -51,13 +51,13 @@ mask and the top-N fallback). Where one of them triggers on an event, a CPU reru
 code (at most 2, protocol budget) replaces production as the reference for that event, and the
 report says so.
 
-## Open point for the user
+## Short runs (user decision, 2026-11-27)
 
-Runs whose production wall time is under about 4 minutes cannot reach 0.5×, because their
-CPU-side stages alone (setup, extrinsic, postprocess) take about 2 minutes. Example: o4b
-GW240601_061200 run_0, 230 s in total. Event 6 (662 s) is the shortest event in the set. The
-report gives the fraction of all 369 production runs for which 0.5× is reachable by
-construction, using the measured GPU stage times.
+The speed criterion excludes events whose production wall time is under 4 minutes, because their
+CPU-side stages alone take about 2 minutes. If an event fails speed only because of these fixed
+CPU stages, the cutoff may be raised to 10 minutes, and raised again in further steps, each
+recorded in `progress.md`. A cutoff that reaches 1 hour is reported to the user first. The
+report gives the fraction of the 369 production runs that the cutoff in force excludes.
 
 ## Compute
 

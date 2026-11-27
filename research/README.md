@@ -24,9 +24,11 @@ A GPU run of dot-PE that writes `summary_results.json` and `samples.feather` has
 
 ## Open decisions for the user
 
-1. "Half the time for every event": runs whose production wall time is under about 4 minutes
-   cannot reach 0.5×, because their CPU-side stages (setup, extrinsic proposal, postprocess)
-   alone take about 2 minutes. Example: o4b GW240601_061200 run_0, 230 s in total. The acceptance
-   set starts at 662 s. The acceptance report will give the fraction of production runs for which
-   0.5× is reachable. Is a criterion over typical runs, excluding runs under about 4 minutes,
-   acceptable?
+None.
+
+## Decisions by the user
+
+1. 2026-11-27: the speed criterion applies to typical runs, and excludes runs whose production
+   wall time is under 4 minutes. If too-short runs fail it again, the cutoff may be raised to
+   10 minutes, and raised again in further steps. A cutoff that reaches 1 hour is reported to the
+   user before it is used.
