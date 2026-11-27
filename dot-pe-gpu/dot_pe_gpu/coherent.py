@@ -17,9 +17,9 @@ and returns the same tuple. Semantics kept from the CPU code:
    phase drawn with probability w_o / W, ``ln_phase_marginalized_weight`` = ln W - ln N_k,
    ``priority_key`` = that - ln u; the block keeps its ``max_output_per_block`` pairs of largest
    key and ``priority_tau`` = the largest key it dropped.
-5. Discarded rows (not accepted): count exact; log-sum of exp(ln_posterior) and of
-   exp(2 ln_posterior) estimated from a deterministic subsample of rows (the CPU uses a random
-   subsample), with lnl = 0 where <d|h> <= 0.
+5. Discarded rows (not accepted): count, log-sum of exp(ln_posterior) and of exp(2 ln_posterior)
+   over every discarded row with a finite value, with lnl = 0 where <d|h> <= 0. The CPU estimates
+   the same sums from a random subsample, so the two agree only within its sampling error.
 
 Nothing of size (i, e, o) is stored: two passes over the (i, e) pairs each loop over the phase
 grid in registers. Only the kept rows leave the device. Random numbers come from a counter-based
@@ -37,7 +37,9 @@ from .lookup_table import LOOKUP_DEVICE_SRC, GPULookupTable
 
 MIN_D_LUMINOSITY = 1.0  # dot_pe.likelihood_calculating.MIN_D_LUMINOSITY
 INCOHERENT_BOUND_TOL = 20.0  # dot_pe.likelihood_calculating.INCOHERENT_BOUND_TOL
-N_DISC_SAMPLE = 100_000  # target number of discarded rows sampled per i-block
+DISC_STRIDE = 1  # 1: discarded-row statistics over every discarded row (exact)
+EMIT_MARGIN = 1e-3  # emit rows down to emit_cut - EMIT_MARGIN: pass 1 and 2 need not agree to the bit
+MAX_EMIT_ROWS = 200_000_000  # device buffer limit for emitted rows (bestfit mode)
 
 _KERNEL_SRC = LOOKUP_DEVICE_SRC + r"""
 #define NM 4
@@ -52,14 +54,9 @@ __device__ __forceinline__ unsigned long long splitmix64(unsigned long long z) {
     return z ^ (z >> 31);
 }
 
-// uniform in (0, 1), 24 bits, float32
-__device__ __forceinline__ float u01f(unsigned long long h) {
-    return ((float)(h >> 40) + 0.5f) * 5.9604644775390625e-08f;
-}
-
-// uniform in (0, 1), 53 bits, float64
+// uniform in (0, 1), 52 bits, float64: extremes 2^-53 and 1 - 2^-53, both exact
 __device__ __forceinline__ double u01d(unsigned long long h) {
-    return ((double)(h >> 11) + 0.5) * 1.1102230246251565e-16;
+    return ((double)(h >> 12) + 0.5) * 2.220446049250313e-16;
 }
 
 struct Pair {
@@ -87,7 +84,7 @@ __device__ __forceinline__ void row_at(const Pair& q, const float2* sdp, const f
 
 __device__ __forceinline__ float bestfit_of(float dh, float hh, float bound) {
     // invalid_bestfit_mask: hh <= 0, or dh > 0 and hh / dh < MIN_D_LUMINOSITY
-    if (!(hh > 0.f) || (dh > 0.f && hh < MIN_D * dh)) return (-INF_F);
+    if (!isfinite(dh) || !(hh > 0.f) || (dh > 0.f && hh < MIN_D * dh)) return (-INF_F);
     float b = dh > 0.f ? 0.5f * dh * dh / hh : 0.f;
     return b > bound ? (-INF_F) : b;  // incoherent_bound_mask (bound = +inf if none)
 }
@@ -156,7 +153,7 @@ extern "C" __global__ void k_eval(
     // discarded-row statistics (subsample): count, max-shifted sums of exp(x) and exp(2x)
     float dn = 0.f, dm = (-INF_F), ds1 = 0.f, ds2 = 0.f;
     // phase marginalization state (mode 1)
-    float wm = (-INF_F), ws = 0.f, gbest = (-INF_F);
+    float wm = (-INF_F), ws = 0.f; double gbest = (-INF_F);
     int obest = -1; float b_lnl = 0.f, b_post = 0.f, b_bf = 0.f, b_dh = 0.f, b_hh = 0.f;
 
     for (int o = 0; o < nphi; ++o) {
@@ -174,18 +171,17 @@ extern "C" __global__ void k_eval(
                         out_bf[k] = bf; out_dh[k] = d; out_hh[k] = h;
                     }
                 }
-            } else {
+            } else if (isfinite(post)) {
                 // online log-sum-exp of the accepted rows' ln_posterior
                 if (post > wm) { ws = ws * __expf(wm - post) + 1.f; wm = post; }
                 else ws += __expf(post - wm);
-                // Gumbel-max phase draw: probability w_o / W
-                float u = u01f(splitmix64(hbase ^ ((unsigned long long)e << 9) ^ (unsigned long long)o));
-                float g = post - __logf(-__logf(u));
-                if (g > gbest) { gbest = g; obest = o; b_lnl = lnl; b_post = post; b_bf = bf; b_dh = d; b_hh = h; }
+                // Gumbel-max phase draw, probability w_o / W; double precision (not fast-math)
+                double u = u01d(splitmix64(hbase ^ ((unsigned long long)e << 9) ^ (unsigned long long)o));
+                double g = (double)post - log(-log(u));
+                if (obest < 0 || g > gbest) { gbest = g; obest = o; b_lnl = lnl; b_post = post; b_bf = bf; b_dh = d; b_hh = h; }
             }
         } else {
-            long long row = p * nphi + o;
-            if (row % disc_stride == 0) {
+            if (disc_stride == 1 || ((p * nphi + o) % disc_stride) == 0) {
                 float lnl = d > 0.f ? lnlike_marg(d, h, tx, ntx, ty, nty, cf, dmax, sigmas, z0) : 0.f;
                 float x = lnl + lw;
                 if (isfinite(x)) {
@@ -214,6 +210,23 @@ extern "C" __global__ void k_eval(
     }
 }
 """.replace("MIN_D", repr(float(MIN_D_LUMINOSITY)) + "f")
+
+
+def running_thresholds(eb_max, max_diff):
+    """Threshold per extrinsic block of thin_coherent.run_thin_iblock's growing cut.
+
+    eb_max[j]: maximum valid best fit in extrinsic block j (over the i-block). The CPU raises
+    its threshold to (maximum of the accepted rows - max_diff) after each block; when block j has
+    accepted rows, their maximum is eb_max[j]. Returns thr[j], the threshold block j is cut at.
+    """
+    eb_max = np.asarray(eb_max, float)
+    thr = np.full(len(eb_max), -np.inf)
+    run = -np.inf
+    for j, m in enumerate(eb_max):
+        thr[j] = run
+        if m > run:
+            run = max(run, m - max_diff)
+    return thr
 
 
 def _logsumexp_cp(cp, x):
@@ -254,6 +267,8 @@ class CoherentGPU:
         self.m_arr = np.asarray(setup["m_arr"])
         if len(self.m_arr) != 4:
             raise NotImplementedError("kernels are compiled for 4 modes")
+        if self.n_phi >= 511:
+            raise ValueError("n_phi must be < 511 (phase index uses 9 bits of the random-number counter)")
         self.max_diff = float(setup["max_bestfit_lnlike_diff"])
         self.max_per_block = setup.get("max_output_per_block")
         self.blocksize_e = int(blocksize_e)
@@ -353,12 +368,7 @@ class CoherentGPU:
         if pad:
             pm = cp.concatenate([pm, cp.full((n_i, pad), -cp.inf, cp.float32)], axis=1)
         eb_max = pm.reshape(n_i, n_eb, self.blocksize_e).max(axis=(0, 2)).get().astype(float)
-        thr = np.full(n_eb, -np.inf)
-        run = -np.inf
-        for j in range(n_eb):
-            thr[j] = run
-            if eb_max[j] > run:  # accepted rows exist; block max of accepted = eb_max[j]
-                run = max(run, eb_max[j] - self.max_diff)
+        thr = running_thresholds(eb_max, self.max_diff)
         thr_d = cp.asarray(thr.astype(np.float32))
         t0 = self._tick("pass1_threshold", t0)
         thr_pair = cp.repeat(thr_d, self.blocksize_e)[:n_e][None, :]
@@ -373,10 +383,14 @@ class CoherentGPU:
             acc_max = cp.where(accepted_pair, pm[:, :n_e], -cp.inf).ravel()
             emit_cut = (-np.inf if n_acc_pairs <= k
                         else float(cp.partition(acc_max, npairs - k)[npairs - k]))
-        if not np.isfinite(emit_cut):
-            emit_cap = n_acc_pairs * n_phi
+        if np.isfinite(emit_cut):
+            emit_cut -= EMIT_MARGIN
+            emit_cap = int((acc_max >= emit_cut - EMIT_MARGIN).sum()) * n_phi
         else:
-            emit_cap = int((acc_max >= emit_cut).sum()) * n_phi
+            emit_cap = n_acc_pairs * n_phi
+        if not self.use_priority and emit_cap > MAX_EMIT_ROWS:
+            raise RuntimeError(f"bestfit mode would emit up to {emit_cap} rows (> {MAX_EMIT_ROWS}); "
+                               "set max_output_per_block")
         cap = npairs if self.use_priority else max(1, emit_cap)
 
         ln_ = lambda dtype: cp.empty(cap, dtype)
@@ -388,7 +402,7 @@ class CoherentGPU:
         pair_disc = cp.empty(3 * npairs, cp.float32)
         emit_count = cp.zeros(1, cp.int32)
         n_rows = npairs * n_phi
-        disc_stride = max(1, n_rows // N_DISC_SAMPLE)
+        disc_stride = DISC_STRIDE
         logw_i = cp.asarray(self.logw_i[i_block].astype(np.float32))
         ibank = cp.asarray(i_block)
         self.k_eval(grid, blk, (
@@ -435,6 +449,8 @@ class CoherentGPU:
             n_emit = int(emit_count.get()[0])
             if n_emit > cap:
                 raise RuntimeError(f"emit buffer overflow: {n_emit} > {cap}")
+            if np.isfinite(emit_cut) and n_emit < k:
+                raise RuntimeError(f"emitted {n_emit} rows < k = {k} above emit_cut {emit_cut}")
             sel = cp.arange(n_emit)
             if k is not None and n_emit > k:
                 sel = cp.argsort(-out_bf[:n_emit])[:k]

@@ -18,6 +18,9 @@ REPO = Path(__file__).resolve().parents[2]
 OUT = REPO / "artifacts/research/coherent-kernel"
 BLOCKSIZE = 512
 TOP_TEMPLATE = 378018
+# The production bound (incoherent lnlike + 20) never triggers on the test blocks; the bound
+# configurations lower each template's incoherent value by BOUND_SHIFT so the mask path is exercised.
+BOUND_SHIFT = 25.0
 CONFIGS = [("bestfit", False), ("bestfit", True),
            ("phase_marginalized_priority", False), ("phase_marginalized_priority", True)]
 
@@ -47,7 +50,7 @@ def setup_for(row_selection, bound, seed=240525201644):
     s["bank_index"] = 0
     if bound:
         inds, lnl = selected()
-        s["incoherent_lnlike_i"] = incoherent_lookup(len(s["logw_i"]), inds, lnl)
+        s["incoherent_lnlike_i"] = incoherent_lookup(len(s["logw_i"]), inds, lnl - BOUND_SHIFT)
     return s
 
 

@@ -163,7 +163,8 @@ class GPULookupTable:
         self.c = cp.asarray(c, dtype=cp.float32)
         self.ntx, self.nty = len(tx), len(ty)
         self.scalars = (np.float32(dmax), np.float32(sigmas), np.float32(z0))
-        self._kernel = cp.RawKernel(_ELEMENTWISE_SRC, "lnlike_marg_kernel")
+        # Same options as the fused kernels, so the standalone kernel tests their arithmetic.
+        self._kernel = cp.RawKernel(_ELEMENTWISE_SRC, "lnlike_marg_kernel", options=("--use_fast_math",))
 
     def kernel_args(self):
         """Arguments to append to a fused kernel call that includes ``LOOKUP_DEVICE_SRC``."""

@@ -37,7 +37,10 @@ def main(dry_run=False):
         s = common.setup_for("bestfit", True)
         print("setup ok:", {k: getattr(v, "shape", v) for k, v in s.items() if k != "_profile_dir"})
         return
+    only_bound = "--only-bound" in sys.argv
     for rs, bound in common.CONFIGS:
+        if only_bound and not bound:
+            continue
         s = common.setup_for(rs, bound)
         eb = common.e_blocks(s)
         for k, b in blocks.items():
