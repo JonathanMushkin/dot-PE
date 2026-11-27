@@ -34,12 +34,17 @@ def main() -> None:
     ap.add_argument("--gmem", type=int, default=None, help="GPU memory to reserve [GB] (shared)")
     ap.add_argument("--exclusive", action="store_true", help="exclusive GPU (timing benchmarks)")
     ap.add_argument("--dry-run", action="store_true", help="print the bsub file, do not submit")
+    ap.add_argument("--end-to-end", action="store_true",
+                    help="end-to-end GPU run (P4/P5): up to 8 cores and 96 GB host memory")
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     a = ap.parse_args()
     gpu_lines = ""
     gpu_setup = ""
     if a.gpu:
-        lim_w, lim_n = (180, 8) if a.exclusive else (30, 4)
+        lim_w, lim_n = (180, 8) if a.exclusive else (30, 8 if a.end_to_end else 4)
+        lim_mem = 96000 if a.end_to_end else (64000 if a.exclusive else 32000)
+        if a.mem_mb > lim_mem:
+            raise SystemExit(f"GPU limits: host memory <= {lim_mem} MB")
         if a.walltime_min > lim_w or a.cores > lim_n:
             raise SystemExit(f"GPU limits: walltime <= {lim_w} min, cores <= {lim_n}")
         if not a.exclusive and (a.gmem is None or a.gmem > 40):
