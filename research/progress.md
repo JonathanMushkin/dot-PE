@@ -28,6 +28,7 @@ last column.
 | 2026-11-27 | End-to-end GPU runs (P4 test runs, P5 acceptance) may request up to 8 cores and 96 GB host memory, because production run_2 peaked at 40 GB. They run shared, with `-W` ≤ 30, unless they are timed; timed runs are exclusive (protocol "GPU usage" item 3). The development-job limit of 32 GB is kept for everything else. | Production run_2 log 482524: Max Memory 40359 MB |
 | 2026-11-27 | P4 runner: CPU dry run of stage 1 on the test-1 arguments (job 872061, 51 s, 3.6 GB) passes; stage 1 takes 32 s. Test 1 is submitted after exclusive job 872052, keeping to one GPU job at a time. | `runner/design.md` |
 | 2026-11-27 | User decision: the speed criterion applies to typical runs and excludes runs under 4 minutes of production wall time. The cutoff may be raised to 10 minutes, and raised again if too-short runs fail it again; a cutoff that reaches 1 hour is reported to the user first. | User message |
+| 2026-11-27 | Exclusive timing (job 872052, L40S lgn25):<br>1. P2 gate 4 passes: 0.0576 s per i-block (priority mode with the bound), so 67 s projected for run_2's 1162 i-blocks (gate 1879 s).<br>2. P3 gate 4 passes on cold bank 2 (`very_low_q_bank_56`, 50.7 GB): 58.6 s per bank, of which 40.1 s is spent waiting for reads (0.87 GB/s, 32 threads); 6 banks project to 352 s (gate 746 s).<br>3. P3 gates 3 and 5 also pass on bank 2: the selection is 217315 against 217314 (1 template within 1e-3 of the threshold); median \|Δ\| is 4.1e-6; the residency error is ≤ 9e-16 float32 ulps; peak pool 8.4 GB.<br>The P2 script's `pass_gates_1_3` flag still applies the original gate 3.1, so it reads False; under the revised gate 3.1 all configurations pass. P2 and P3 are closed. | `artifacts/research/*/gpu_check*.json` |
 
 ## Jobs
 
@@ -41,5 +42,5 @@ last column.
 | 870177 | 2026-11-27 09:14 | short-gpu, L40S shared (lgn10), gmem 16 GB, 4 cores | P3 gates 1–5 | 248 s | 2999 MB | 4.1 | 0.10 | gates 1–3 pass; 4 (indicative) and 5 fail (see decisions) |
 | 871546 | 2026-11-27 09:20 | physics-short, 8 cores | read throughput against reader threads (`read_bench.py`, low_q_bank_56) | 65 s | — | 0 | 0.10 | 4.76 GB per setting: 0.19, 0.30, 0.49 and 0.54 GB/s at 4, 8, 16 and 32 threads. Reader default set to 32 threads; 6 banks at 0.54 GB/s project to about 630 s of reads |
 | 871694 | 2026-11-27 09:21 | short-gpu, L40S shared, gmem 16 GB, 4 cores | P2 recheck with the gate 3.1 diagnostic; P3 recheck of gates 1–5 (residency fix, 32 threads) | 116 s | 6958 MB | 1.9 | 0.13 | see decisions |
-| 872052 | 2026-11-27 09:25 | short-gpu, L40S exclusive, 4 cores | P2 gate 4 and P3 gate 4 timing (bank 2, cold) | | | | | pending |
+| 872052 | 2026-11-27 09:25 | short-gpu, L40S exclusive (lgn25), 4 cores | P2 gate 4 and P3 gate 4 timing (bank 2, cold) | 241 s | 6809 MB | 4.0 | 0.20 | both pass; waited 8.5 min in the queue |
 | 872061 | 2026-11-27 09:25 | physics-short, 1 core | P4 CPU dry run (stage 1) | 51 s | 3602 MB | 0 | 0.13 | passes |
