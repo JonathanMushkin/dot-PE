@@ -8,7 +8,7 @@ linear-free time shift of ``IntrinsicSampleProcessor.get_relative_linfree_dt_fro
    ``Polynomial.fit`` weights w = polyfit_weights sqrt(|ratio|) (least squares in w * residual);
    the phase gets + 2 pi dt f.
 2. Per detector: <d|h> on a grid of n_t arrival times (above the detector), and <h|h> per
-   polarization pair, on the phase grid; per (phase, time) the 2x2 polarization solve
+   polarization pair, on the phase grid, all in float64; per (phase, time) the 2x2 polarization solve
    r = <h|h>^-1 <d|h>, lnl = r . <d|h> / 2, masked where det <h|h> <= 0 or |r| > 1
    (best-fit distance below 1 Mpc); the template's lnlike is the maximum over (phase, time).
 
@@ -28,49 +28,54 @@ _KERNEL_SRC = r"""
 #define INF_F __int_as_float(0x7f800000)
 
 // One thread per (template i, phase o): max over the time grid of the polarization-solved lnlike.
+// All in double (<d|h> from a complex128 matmul, <h|h>, the inverse and the quadratic form): for
+// templates whose two polarizations are nearly degenerate, the solve depends on the difference of
+// the two polarizations' <d|h>, which float32 loses (P5, GW240923_204006 bank 2 template 692874:
+// 117.7 instead of 14.6 in L; design note research/acceptance/2026-11-27_incoherent_precision.md).
 extern "C" __global__ void k_single_det(
-        const float2* __restrict__ dh,   // (i, m, p, t)
-        const float2* __restrict__ hh,   // (i, M, p, P)
-        const float2* __restrict__ dph,  // (m, o)
-        const float2* __restrict__ hph,  // (M, o)
+        const double2* __restrict__ dh,   // (i, m, p, t)
+        const double2* __restrict__ hh,   // (i, M, p, P)
+        const double2* __restrict__ dph,  // (m, o)
+        const double2* __restrict__ hph,  // (M, o)
         int n_i, int nphi, int nt, float* __restrict__ out_io) {
     long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= (long long)n_i * nphi) return;
     int i = (int)(k / nphi), o = (int)(k % nphi);
-    float h[2][2] = {{0.f, 0.f}, {0.f, 0.f}};
+    double h[2][2] = {{0., 0.}, {0., 0.}};
     #pragma unroll
     for (int M = 0; M < NMM; ++M) {
-        float2 f = hph[M * nphi + o];
+        double2 f = hph[M * nphi + o];
         #pragma unroll
         for (int p = 0; p < 2; ++p)
             #pragma unroll
             for (int P = 0; P < 2; ++P) {
-                float2 v = hh[((i * NMM + M) * 2 + p) * 2 + P];
+                double2 v = hh[((long long)(i * NMM + M) * 2 + p) * 2 + P];
                 h[p][P] += v.x * f.x - v.y * f.y;
             }
     }
-    // determinant and inverse in double: near-singular <h|h> is the case the mask exists for
-    double det = (double)h[0][0] * h[1][1] - (double)h[0][1] * h[1][0];
+    double det = h[0][0] * h[1][1] - h[0][1] * h[1][0];
     float best = -INF_F;
     if (det > 0.0) {
-        float inv00 = (float)(h[1][1] / det), inv01 = (float)(-h[0][1] / det);
-        float inv10 = (float)(-h[1][0] / det), inv11 = (float)(h[0][0] / det);
-        float2 f[NM];
+        double inv00 = h[1][1] / det, inv01 = -h[0][1] / det;
+        double inv10 = -h[1][0] / det, inv11 = h[0][0] / det;
+        double2 f[NM];
         #pragma unroll
         for (int m = 0; m < NM; ++m) f[m] = dph[m * nphi + o];
-        const float2* d0 = dh + (long long)i * NM * 2 * nt;
+        const double2* d0 = dh + (long long)i * NM * 2 * nt;
+        double bestd = -1.0 / 0.0;
         for (int t = 0; t < nt; ++t) {
-            float a0 = 0.f, a1 = 0.f;
+            double a0 = 0., a1 = 0.;
             #pragma unroll
             for (int m = 0; m < NM; ++m) {
-                float2 v0 = d0[(m * 2 + 0) * nt + t], v1 = d0[(m * 2 + 1) * nt + t];
+                double2 v0 = d0[(m * 2 + 0) * nt + t], v1 = d0[(m * 2 + 1) * nt + t];
                 a0 += v0.x * f[m].x - v0.y * f[m].y;
                 a1 += v1.x * f[m].x - v1.y * f[m].y;
             }
-            float r0 = inv00 * a0 + inv01 * a1, r1 = inv10 * a0 + inv11 * a1;
-            float lnl = 0.5f * (r0 * a0 + r1 * a1);
-            if (r0 * r0 + r1 * r1 <= 1.f) best = fmaxf(best, lnl);  // d_best = 1/|r| >= 1 Mpc
+            double r0 = inv00 * a0 + inv01 * a1, r1 = inv10 * a0 + inv11 * a1;
+            double lnl = 0.5 * (r0 * a0 + r1 * a1);
+            if (r0 * r0 + r1 * r1 <= 1.0 && lnl > bestd) bestd = lnl;  // d_best = 1/|r| >= 1 Mpc
         }
+        best = (float)bestd;
     }
     out_io[k] = best;
 }
@@ -137,9 +142,9 @@ class IncoherentGPU:
         self.m_inds, self.mprime_inds = map(
             list, zip(*itertools.combinations_with_replacement(range(4), 2)))
         phi = np.linspace(0, 2 * np.pi, self.n_phi, endpoint=False)
-        self.dph = cp.asarray(np.exp(-1j * np.outer(self.m_arr, phi)).astype(np.complex64))
+        self.dph = cp.asarray(np.exp(-1j * np.outer(self.m_arr, phi)))                      # complex128
         self.hph = cp.asarray(np.exp(1j * np.outer(self.m_arr[self.m_inds] - self.m_arr[self.mprime_inds],
-                                                   phi)).astype(np.complex64))
+                                                   phi)).astype(np.complex128))
         self.dets = []
         for sdp in sdps:
             drift_inv2 = float(sdp.likelihood.asd_drift[0]) ** -2
@@ -147,7 +152,7 @@ class IncoherentGPU:
             self.dets.append({
                 "dh_w": cp.asarray(np.asarray(sdp.dh_weights_dmpb[0]) * drift_inv2),   # (m, p, b) c128
                 "hh_w": cp.asarray(np.asarray(sdp.hh_weights_dmppb[0]) * drift_inv2),  # (M, p, P, b)
-                "tsc": cp.asarray(np.conj(ts).astype(np.complex64)),                   # (b, t)
+                "tsc": cp.asarray(np.conj(ts)),                                        # (b, t) c128
             })
         self.kernel = cp.RawModule(code=_KERNEL_SRC, options=("--use_fast_math",)).get_function("k_single_det")
 
@@ -172,10 +177,10 @@ class IncoherentGPU:
         res = cp.empty(n_i * self.n_phi, cp.float32)
         grid = ((n_i * self.n_phi + self.THREADS - 1) // self.THREADS,)
         for d, det in enumerate(self.dets):
-            x = (det["dh_w"][None] * hc).reshape(n_i * 8, -1).astype(cp.complex64)       # (i m p, b)
+            x = (det["dh_w"][None] * hc).reshape(n_i * 8, -1)                             # (i m p, b) c128
             dh = cp.ascontiguousarray(cp.matmul(x, det["tsc"]))                           # (i m p, t)
             hh = cp.einsum("MpPb, iMpb, iMPb -> iMpP", det["hh_w"], h[:, self.m_inds],
-                           hc[:, self.mprime_inds]).astype(cp.complex64)
+                           hc[:, self.mprime_inds])                                       # complex128
             hh = cp.ascontiguousarray(hh)
             self.kernel(grid, (self.THREADS,), (dh, hh, self.dph, self.hph, np.int32(n_i),
                                                 np.int32(self.n_phi), np.int32(self.n_t), res))
@@ -183,30 +188,32 @@ class IncoherentGPU:
         return out, dt, (h_raw if return_raw else h.astype(cp.complex64))
 
 
-def single_det_lnlike_numpy(dh_w, hh_w, h, tsc, n_phi, m_arr, dtype=np.float32):
+def single_det_lnlike_numpy(dh_w, hh_w, h, tsc, n_phi, m_arr, dtype=np.float64):
     """Numpy mirror of ``k_single_det`` + the max over phase, for CPU tests.
 
     dh_w (m, p, b) and hh_w (M, p, P, b): weights with the ASD drift applied; h (i, m, p, b)
-    complex128 with dt applied; tsc (b, t) = conj(timeshifts). Products in complex128, cast to
-    ``dtype``'s complex type as on the device; determinant and inverse in float64.
+    complex128 with dt applied; tsc (b, t) = conj(timeshifts). The device computes in float64
+    (the default here). ``dtype=np.float32`` casts <d|h> to complex64 as an earlier device version
+    did, to show the precision loss on nearly degenerate polarizations; <h|h>, its inverse and the
+    quadratic form are float64 in both.
     """
     m_arr = np.asarray(m_arr)
     ctype = np.complex64 if dtype == np.float32 else np.complex128
     m_inds, mp_inds = map(list, zip(*itertools.combinations_with_replacement(range(len(m_arr)), 2)))
     phi = np.linspace(0, 2 * np.pi, n_phi, endpoint=False)
     dph = np.exp(-1j * np.outer(m_arr, phi)).astype(ctype)
-    hph = np.exp(1j * np.outer(m_arr[m_inds] - m_arr[mp_inds], phi)).astype(ctype)
+    hph = np.exp(1j * np.outer(m_arr[m_inds] - m_arr[mp_inds], phi))
     n_i = h.shape[0]
     x = (dh_w[None] * np.conj(h)).reshape(n_i * len(m_arr) * 2, -1).astype(ctype)
     dh = (x @ tsc.astype(ctype)).reshape(n_i, len(m_arr), 2, -1)                    # (i, m, p, t)
-    hh = np.einsum("MpPb, iMpb, iMPb -> iMpP", hh_w, h[:, m_inds], np.conj(h[:, mp_inds])).astype(ctype)
-    a = np.einsum("impt, mo -> iotp", dh, dph).real.astype(dtype)                    # (i, o, t, p)
-    H = np.einsum("iMpP, Mo -> iopP", hh, hph).real.astype(dtype)                     # (i, o, p, P)
-    det = H[..., 0, 0].astype(float) * H[..., 1, 1] - H[..., 0, 1].astype(float) * H[..., 1, 0]
+    hh = np.einsum("MpPb, iMpb, iMPb -> iMpP", hh_w, h[:, m_inds], np.conj(h[:, mp_inds]))
+    a = np.einsum("impt, mo -> iotp", dh, dph).real.astype(dtype).astype(float)      # (i, o, t, p)
+    H = np.einsum("iMpP, Mo -> iopP", hh, hph).real                                   # (i, o, p, P)
+    det = H[..., 0, 0] * H[..., 1, 1] - H[..., 0, 1] * H[..., 1, 0]
     with np.errstate(divide="ignore", invalid="ignore"):
         inv = np.stack([np.stack([H[..., 1, 1] / det, -H[..., 0, 1] / det], -1),
-                        np.stack([-H[..., 1, 0] / det, H[..., 0, 0] / det], -1)], -2).astype(dtype)
-    r = np.einsum("iopP, iotP -> iotp", inv, a)
-    lnl = 0.5 * (r * a).sum(-1)
+                        np.stack([-H[..., 1, 0] / det, H[..., 0, 0] / det], -1)], -2)
+        r = np.einsum("iopP, iotP -> iotp", inv, a)
+        lnl = 0.5 * (r * a).sum(-1)
     ok = ((r ** 2).sum(-1) <= 1) & (det[..., None] > 0)
     return np.where(ok, lnl, -np.inf).max(axis=(1, 2))
