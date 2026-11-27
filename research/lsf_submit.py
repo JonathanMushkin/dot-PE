@@ -53,7 +53,8 @@ def main() -> None:
         a.queue = "short-gpu"
         if a.end_to_end or a.exclusive:
             nthr = a.cores  # as production: BLAS/OpenMP threads match the cores
-        g = f"num=1:gmodel={a.gpu}:" + ("j_exclusive=yes" if a.exclusive
+        model = "" if a.gpu == "any" else f"gmodel={a.gpu}:"  # "any": untimed jobs on any model
+        g = f"num=1:{model}" + ("j_exclusive=yes" if a.exclusive
                                          else f"gmem={a.gmem}G:j_exclusive=no")
         gpu_lines = f'#BSUB -gpu "{g}"\n'
         gpu_setup = ("source /etc/profile >/dev/null 2>&1\n"
