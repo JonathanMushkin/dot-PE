@@ -24,10 +24,13 @@ PARAMS = ["mchirp", "lnq", "chieff", "d_luminosity", "costheta_jn"]
 def marginal(df, col, edges):
     w = df["weights"].to_numpy() if "weights" in df else None
     h, _ = np.histogram(df[col].to_numpy(), bins=edges, weights=w)
-    return h / h.sum()
+    tot = h.sum()
+    return h / tot if tot > 0 else None
 
 
 def js_bits(p, q):
+    if p is None or q is None:
+        return np.nan
     m = 0.5 * (p + q)
     kl = lambda a, b: np.sum(np.where(a > 0, a * np.log2(np.where(a > 0, a, 1) / np.where(b > 0, b, 1)), 0))
     return 0.5 * kl(p, m) + 0.5 * kl(q, m)
@@ -52,19 +55,28 @@ def main():
             sa = pd.read_feather(Path(a) / "samples.feather")
             sb = pd.read_feather(Path(b) / "samples.feather")
             r = {"event": key[0], "n_ext": key[3], "run_a": Path(a).name, "run_b": Path(b).name,
+                 "n_samples_a": len(sa), "n_samples_b": len(sb),
+                 "seed_a": json.load(open(Path(a) / "run_kwargs.json")).get("seed"),
+                 "seed_b": json.load(open(Path(b) / "run_kwargs.json")).get("seed"),
                  "d_ln_evidence": abs(za - zb), "ratio_n_eff_i": ib / ia, "ratio_n_eff_e": eb / ea}
             for c in PARAMS:
                 if c in sa and c in sb:
                     lo, hi = np.percentile(np.r_[sa[c], sb[c]], [0.5, 99.5])
                     e = np.linspace(lo, hi, 51)
                     r[f"js_{c}"] = js_bits(marginal(sa, c, e), marginal(sb, c, e))
+                    # estimator floor: two random halves of run a, same bins
+                    idx = np.random.default_rng(0).permutation(len(sa))
+                    h1, h2 = sa.iloc[idx[: len(sa) // 2]], sa.iloc[idx[len(sa) // 2:]]
+                    r[f"js_floor_{c}"] = js_bits(marginal(h1, c, e), marginal(h2, c, e))
             rows.append(r)
     out = pd.DataFrame(rows)
     out.to_csv(OUT / "repeat_scatter.csv", index=False)
     pd.set_option("display.width", 200)
     print(out.round(4).to_string(index=False))
     print("\nmedian / max over pairs:")
-    print(out.drop(columns=["event", "run_a", "run_b", "n_ext"]).agg(["median", "max"]).round(4).to_string())
+    num = out.drop(columns=["event", "run_a", "run_b", "n_ext", "seed_a", "seed_b"])
+    print(num.agg(["median", "max"]).round(4).to_string())
+    print("pairs with equal seeds:", int((out.seed_a == out.seed_b).sum()), "of", len(out))
 
 
 if __name__ == "__main__":

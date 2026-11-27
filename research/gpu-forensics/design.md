@@ -58,3 +58,17 @@ files: a 1-core LSF job.
 ## Report
 
 `research/gpu-forensics/YYYY-MM-DD_forensics.md`, with figures in `review/`.
+
+## Revisions
+
+2026-11-27, after the review of the report (findings 2 to 15). These were not in the design and
+were added in the report:
+1. ln q and cos θ_JN were added to the marginals of measure 5.
+2. Per pair, the Jensen–Shannon estimator floor (two random halves of one run) and the sample
+   counts were added, and pairs with too few samples are flagged.
+3. The DataFrame and argpartition lines of measure 4 were dropped, being under 2% of the
+   coherent CPU time.
+4. The cross-bank stage was counted among the CPU-side stages.
+5. The four questions above are answered one by one in the report. A single-question design was
+   not written, because this measurement is the protocol's forensics step, run once.
+6. The report file is `2026-11-27_measurement.md` (protocol naming), not `_forensics.md`.

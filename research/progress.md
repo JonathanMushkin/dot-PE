@@ -25,4 +25,5 @@ last column.
 |---|---|---|---|---|---|---|---|---|
 | 868939 | 2026-11-27 08:41 | physics-short, 1 core | P2 CPU reference | 0 s | — | 0 | 0 | failed: relative script path (the job runs from /tmp); resubmitted with an absolute path |
 | 868940 | 2026-11-27 08:41 | physics-short, 1 core | P2 CPU reference (`make_reference.py`) | 718 s | 5802 MB | 0 | 0 | done; 8 configurations × blocks, 80–85 s per block; bound configurations equal no-bound (bound never triggers), superseded by 869105 |
-| 869105 | 2026-11-27 08:56 | physics-short, 1 core | P2 CPU reference, bound configurations with `BOUND_SHIFT` = 25 | | | 0 | 0 | running |
+| 869105 | 2026-11-27 08:56 | physics-short, 1 core | P2 CPU reference, bound configurations with `BOUND_SHIFT` = 25 | 438 s | 5738 MB | 0 | 0 | done; the bound triggers (n_dist_marg 36450283 against 35683307 without it, block 0) |
+| 869185 | 2026-11-27 09:04 | short-gpu, L40S shared, gmem 16 GB, 4 cores | P2 gates 1–3, indicative timing (`gpu_check.py --seeds 20`) | | | | | pending |
