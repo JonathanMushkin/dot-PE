@@ -59,3 +59,6 @@ last column.
 | 886175 | 2026-11-27 20:17 | short-gpu, any GPU, shared | P5 event 4 seed runs | 0 s | — | 0 | 0.67 | killed while pending: they used the regenerated event file (see decisions) |
 | 886286 | 2026-11-27 20:21 | short-gpu, any GPU, shared, 8 cores | P5 event 4 corrected run (production event file) and seeds +1, +2 | 0 s | — | 0 | 0.67 | killed while pending: superseded by design revision 2 |
 | 886288 | 2026-11-27 20:21 | short-gpu, L40S exclusive, 8 cores | P5 event 2 timed run (GW240923_204006) | 0 s | — | 0 | 0.67 | killed while pending: superseded by design revision 2 |
+| 887699 | 2026-11-27 23:03 | physics-short, 1 core | P5 revision 2 CPU dry run (stage 1 of 4 argument files, incl. event 7 seed pool) | 239 s | — | 0 | 0.67 | passes |
+| 887856 | 2026-11-27 23:07 | short-gpu, L40S exclusive, 8 cores | P5 r2 event 2 timed fresh run (`drive.py` job 0) | | | | | pending |
+| 887857 | 2026-11-27 23:07 | short-gpu, any GPU, shared, gmem 24 GB, 8 cores | P5 r2 event 2 recycled runs, seeds +0, +1, +2 (`drive.py` job 1) | | | | | pending |
