@@ -45,3 +45,41 @@ templates is a second reference, run inside the GPU job.
 - 1 GPU job: L40S, shared, `gmem` 30 GB, 4 cores, 32 GB host memory, `-W` 30.
 - Its memory peak is the pinned buffers (2 × 64 MB per file) plus the resident selected
   waveforms (at most 158131 × 3024 × 8 B = 3.8 GB).
+
+## Revisions (before any GPU result)
+
+2026-11-27, after the design review (findings 1 to 13):
+1. Gate 4 is tied to the median run, which has 6 banks. The projected 6-bank incoherent time must
+   be at most 746 s, so one bank must take at most 124 s (finding 7). It runs in an exclusive job,
+   together with P2's gate 4 (finding 6). The shared correctness job reports it as indicative. Read
+   time is reported apart (`seconds_waiting_for_reads`) from overall throughput.
+2. Gate 3.2 now passes or fails (finding 2). The threshold is the maximum over the three banks'
+   production `incoherent_lnlikes` (44.65502) minus `max_incoherent_lnlike_drop` (20), so 24.65502.
+   A mismatched template passes if it lies within 1e-3 of the threshold, or if the current CPU
+   code reproduces the GPU value. The second case attributes the difference to code changes
+   after the production run (the best-fit distance mask).
+3. Gates 1 and 2 also run on 512 random templates, 128 from each of 4 random files (finding 8).
+   The CPU dry run found no masked (-inf) template among them.
+4. New gate 5, residency (finding 4): `Residency.finalize` returns exactly the selected set. On
+   256 random selected templates it is equal, element by element, to the disk waveforms
+   amp·exp(i·phase) stored the same way, as complex64 of h·2^64. The peak device memory is reported.
+5. Memory (finding 5): over all banks of run_2, the selected waveforms are 594510 × 3024 × 8 B =
+   14.4 GB on the device as complex64, plus a transient set within the margin of a lower running
+   maximum. P4 sizes `gmem` from gate 5's measured peak. `bank.py` uses plain `np.load`, not
+   pinned memory, and the files are 99.1 MB each.
+6. Code changes (findings 3, 9, 10, 13):
+   1. `Residency` also keeps the global top `min_incoherent_survivors` templates, for stage 3's
+      fallback.
+   2. Waveforms are stored as complex64 of h·2^64, so products stay above float32's subnormal
+      range, and are returned as complex128.
+   3. The 2×2 determinant and inverse are computed in double.
+   4. NaN log-likelihoods are stored as -inf; the CPU would propagate NaN.
+   5. Preselected indices are sorted.
+7. The text above said that `fbin` comes from `Posterior.json`. The code takes it from the bank's
+   `bank_config.json`, as production does (finding 11).
+8. CPU tests (finding 1), in `dot-pe-gpu/tests/test_cpu.py`; 30 pass:
+   1. the closed-form time shift against `Polynomial.fit`;
+   2. a numpy mirror of the kernel against `get_response_over_distance_and_lnlike` on random
+      waveforms. It covers near-degenerate polarizations and checks the masks and values in
+      float64 and float32;
+   3. `Residency` margin, top-N fallback and `finalize`.

@@ -119,6 +119,42 @@ def phase_draw_test(cp, gpu_by_seed, setup, b, amp, phase, last_by_seed, n_pairs
     return {"n_pairs": len(probs), "n_draws": len(chosen_p), "z": float(z), "pass": bool(abs(z) < 3.29)}
 
 
+def diagnose_lnw(setup, b, amp, phase, thr, n_e, p_idx, d, lnw_cpu, lnw_gpu_all, nacc_gpu, max_pairs=200):
+    """For pairs with |d ln W| > 2e-3: float64 smallest |bestfit - threshold| over the pair's phases,
+    float64 accepted count against the GPU's, and ln W relative to the block's largest ln W."""
+    from dot_pe.likelihood_calculating import LikelihoodCalculator, invalid_bestfit_mask, incoherent_bound_mask
+    bad = np.flatnonzero(d > 2e-3)
+    order = bad[np.argsort(-d[bad])][:max_pairs]
+    lc = LikelihoodCalculator(setup["n_phi"], setup["m_arr"])
+    dt = setup["dt_linfree"][b]
+    h = amp * np.exp(1j * (phase + 2 * np.pi * dt[:, None, None, None] * setup["fbin"]))
+    lnw_max = float(np.nanmax(np.where(np.isfinite(lnw_gpu_all), lnw_gpu_all, -np.inf)))
+    rows = []
+    for j in order:
+        p = int(p_idx[j])
+        i, e = divmod(p, n_e)
+        dh, hh = lc.get_dh_hh_ieo(setup["dh_weights_dmpb"], h[i:i + 1], setup["response_dpe"][..., [e]],
+                                  setup["timeshift_dbe"][..., [e]], setup["hh_weights_dmppb"], setup["asd_drift"])
+        dh, hh = dh[0, 0], hh[0, 0]
+        bf = np.where(invalid_bestfit_mask(dh, hh), -np.inf, 0.5 * dh ** 2 / hh * (dh > 0))
+        if setup.get("incoherent_lnlike_i") is not None:
+            bf = np.where(incoherent_bound_mask(bf[None, None], setup["incoherent_lnlike_i"][b[i:i + 1]])[0, 0], -np.inf, bf)
+        t = thr[e // common.BLOCKSIZE]
+        fin = np.isfinite(bf)
+        rows.append({"d_lnW": float(d[j]), "lnW_minus_block_max": float(lnw_cpu[j] - lnw_max),
+                     "min_abs_bf_minus_thr": float(np.abs(bf[fin] - t).min()) if fin.any() else np.inf,
+                     "nacc_float64": int((bf > t).sum()), "nacc_gpu": int(nacc_gpu[p])})
+    if not rows:
+        return {"n_bad": 0}
+    r = pd.DataFrame(rows)
+    return {"n_bad": int(len(bad)), "n_examined": len(r),
+            "frac_nacc_differs": float((r.nacc_float64 != r.nacc_gpu).mean()),
+            "max_min_abs_bf_minus_thr": float(r.min_abs_bf_minus_thr.max()),
+            "max_lnW_minus_block_max": float(r.lnW_minus_block_max.max()),
+            "explained_by_threshold_edge": bool(((r.nacc_float64 != r.nacc_gpu) | (r.min_abs_bf_minus_thr < 1e-3)).all()),
+            "worst": r.head(5).to_dict("records")}
+
+
 def main(dry_run=False, n_seeds=20):
     out = common.OUT
     ref_dir = out / "ref"
@@ -176,7 +212,11 @@ def main(dry_run=False, n_seeds=20):
                 pos = {int(i): j for j, i in enumerate(b)}
                 p_idx = np.array([pos[i] for i in ref.i]) * n_e + ref.e.to_numpy()
                 lnw_g = last["pair_lnw"].get()[p_idx]
-                d_lnw = float(np.abs(lnw_g - ref.ln_phase_marginalized_weight.to_numpy()).max())
+                d_all = np.abs(lnw_g - ref.ln_phase_marginalized_weight.to_numpy())
+                d_lnw = float(d_all.max())
+                diag = diagnose_lnw(s, b, amp, phase, last["thr"], n_e, p_idx, d_all,
+                                    ref.ln_phase_marginalized_weight.to_numpy(), last["pair_lnw"].get(),
+                                    last["pair_nacc"].get())
                 exact = lse(last["pair_lnw"].get())
                 # 3.2: estimates over seeds
                 ests, lasts = [], []
@@ -198,7 +238,7 @@ def main(dry_run=False, n_seeds=20):
                      "sd_est_gpu_seeds": sd_est, "z_cpu": z_cpu, "z_gpu": z_gpu,
                      "z_mean_gpu_seeds": float((np.mean(ests) - exact) / (sd_est / np.sqrt(n_seeds))) if sd_est > 0 else 0.0,
                      "rel_d_n_dist_marg": abs(ref_s["n_dist_marg"] - n_dm) / max(1, ref_s["n_dist_marg"]),
-                     "phase_draws": pdt}
+                     "phase_draws": pdt, "lnW_diagnosis": diag}
                 r["pass"] = bool(d_lnw <= 2e-3 and abs(z_cpu) <= 3 and abs(z_gpu) <= 3 and pdt["pass"])
                 res["gate3_priority"][f"{tg}_block{k}"] = r
             print(tg, k, json.dumps({kk: vv for kk, vv in (res["gate2_bestfit"].get(f"{tg}_block{k}")

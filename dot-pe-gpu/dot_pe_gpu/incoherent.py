@@ -49,10 +49,12 @@ extern "C" __global__ void k_single_det(
                 h[p][P] += v.x * f.x - v.y * f.y;
             }
     }
-    float det = h[0][0] * h[1][1] - h[0][1] * h[1][0];
+    // determinant and inverse in double: near-singular <h|h> is the case the mask exists for
+    double det = (double)h[0][0] * h[1][1] - (double)h[0][1] * h[1][0];
     float best = -INF_F;
-    if (det > 0.f) {
-        float inv00 = h[1][1] / det, inv01 = -h[0][1] / det, inv10 = -h[1][0] / det, inv11 = h[0][0] / det;
+    if (det > 0.0) {
+        float inv00 = (float)(h[1][1] / det), inv01 = (float)(-h[0][1] / det);
+        float inv10 = (float)(-h[1][0] / det), inv11 = (float)(h[0][0] / det);
         float2 f[NM];
         #pragma unroll
         for (int m = 0; m < NM; ++m) f[m] = dph[m * nphi + o];
@@ -73,6 +75,21 @@ extern "C" __global__ void k_single_det(
     out_io[k] = best;
 }
 """
+
+
+def linfree_dt(xp, h2plus, h2plus0, polyfit_w, fbin):
+    """Time shift [s] per template: -slope / (2 pi) of numpy ``Polynomial.fit(fbin, dphase, 1, w)``,
+    with dphase the unwrapped phase of h2plus / h2plus0 and w = polyfit_w sqrt(|ratio|).
+    ``fit`` minimizes sum (w residual)^2, hence the weights w^2 below. xp: numpy or cupy."""
+    ratio = h2plus / h2plus0[None]
+    dphase = xp.unwrap(xp.angle(ratio), axis=-1)
+    w2 = (polyfit_w[None] * xp.sqrt(xp.abs(ratio))) ** 2
+    x = fbin[None]
+    sw = w2.sum(axis=1, keepdims=True)
+    xm = (w2 * x).sum(axis=1, keepdims=True) / sw
+    ym = (w2 * dphase).sum(axis=1, keepdims=True) / sw
+    slope = (w2 * (x - xm) * (dphase - ym)).sum(axis=1) / (w2 * (x - xm) ** 2).sum(axis=1)
+    return -slope / (2 * np.pi)
 
 
 def single_detector_timeshifts(sdp, par_dic_0, n_t):
@@ -136,16 +153,7 @@ class IncoherentGPU:
 
     def linfree_dt(self, h):
         """dt_i [s] of the linear-free time shift, from raw h (i, m, p, b) complex128."""
-        cp = self.cp
-        ratio = h[:, self.m2, 0] / self.h2plus0[None]
-        dphase = cp.unwrap(cp.angle(ratio), axis=-1)
-        w2 = (self.polyfit_w[None] * cp.sqrt(cp.abs(ratio))) ** 2
-        x = self.fbin[None]
-        sw = w2.sum(axis=1, keepdims=True)
-        xm = (w2 * x).sum(axis=1, keepdims=True) / sw
-        ym = (w2 * dphase).sum(axis=1, keepdims=True) / sw
-        slope = (w2 * (x - xm) * (dphase - ym)).sum(axis=1) / (w2 * (x - xm) ** 2).sum(axis=1)
-        return -slope / (2 * np.pi)
+        return linfree_dt(self.cp, h[:, self.m2, 0], self.h2plus0, self.polyfit_w, self.fbin)
 
     def run_batch(self, amp, phase, dt=None, return_raw=False):
         """lnlike_di (d, i) on the host, dt_i (device), and h (i, m, p, b) complex64: with dt
@@ -173,3 +181,32 @@ class IncoherentGPU:
                                                 np.int32(self.n_phi), np.int32(self.n_t), res))
             out[d] = res.reshape(n_i, self.n_phi).max(axis=1).get()
         return out, dt, (h_raw if return_raw else h.astype(cp.complex64))
+
+
+def single_det_lnlike_numpy(dh_w, hh_w, h, tsc, n_phi, m_arr, dtype=np.float32):
+    """Numpy mirror of ``k_single_det`` + the max over phase, for CPU tests.
+
+    dh_w (m, p, b) and hh_w (M, p, P, b): weights with the ASD drift applied; h (i, m, p, b)
+    complex128 with dt applied; tsc (b, t) = conj(timeshifts). Products in complex128, cast to
+    ``dtype``'s complex type as on the device; determinant and inverse in float64.
+    """
+    m_arr = np.asarray(m_arr)
+    ctype = np.complex64 if dtype == np.float32 else np.complex128
+    m_inds, mp_inds = map(list, zip(*itertools.combinations_with_replacement(range(len(m_arr)), 2)))
+    phi = np.linspace(0, 2 * np.pi, n_phi, endpoint=False)
+    dph = np.exp(-1j * np.outer(m_arr, phi)).astype(ctype)
+    hph = np.exp(1j * np.outer(m_arr[m_inds] - m_arr[mp_inds], phi)).astype(ctype)
+    n_i = h.shape[0]
+    x = (dh_w[None] * np.conj(h)).reshape(n_i * len(m_arr) * 2, -1).astype(ctype)
+    dh = (x @ tsc.astype(ctype)).reshape(n_i, len(m_arr), 2, -1)                    # (i, m, p, t)
+    hh = np.einsum("MpPb, iMpb, iMPb -> iMpP", hh_w, h[:, m_inds], np.conj(h[:, mp_inds])).astype(ctype)
+    a = np.einsum("impt, mo -> iotp", dh, dph).real.astype(dtype)                    # (i, o, t, p)
+    H = np.einsum("iMpP, Mo -> iopP", hh, hph).real.astype(dtype)                     # (i, o, p, P)
+    det = H[..., 0, 0].astype(float) * H[..., 1, 1] - H[..., 0, 1].astype(float) * H[..., 1, 0]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inv = np.stack([np.stack([H[..., 1, 1] / det, -H[..., 0, 1] / det], -1),
+                        np.stack([-H[..., 1, 0] / det, H[..., 0, 0] / det], -1)], -2).astype(dtype)
+    r = np.einsum("iopP, iotP -> iotp", inv, a)
+    lnl = 0.5 * (r * a).sum(-1)
+    ok = ((r ** 2).sum(-1) <= 1) & (det[..., None] > 0)
+    return np.where(ok, lnl, -np.inf).max(axis=(1, 2))
