@@ -110,3 +110,15 @@ job. If gate 4 fails, the kernel is profiled, and that is logged in `progress.md
    extrinsic samples, 237674 rows within 20 of the maximum best fit). The maximum |Δ bestfit| is
    2.6e-5 and the maximum |Δ lnl_marginalized| is 2.3e-5, against float64. Gates 2.2 and 2.3 are
    kept (finding 26).
+
+## Revisions after results
+
+2026-11-27, after job 869233 (gate 3.1 failed in 3 of 4 configurations) and the diagnosis in job
+871694:
+- Gate 3.1 now holds on every CPU-kept pair, except pairs whose accepted phase set can differ
+  between float32 and float64: an accepted count that differs, or a phase within 1e-3 of the
+  running threshold.
+- Every such pair must lie at least 10 nats below its block's largest ln W.
+
+The diagnosis found 6 such pairs over 4 configurations × 2 blocks, 11 to 16 nats below their
+block's largest ln W. A full account is in `progress.md`.

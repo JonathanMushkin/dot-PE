@@ -20,13 +20,16 @@ OUT = REPO / "artifacts/research/incoherent-gpu"
 GATE_SECONDS = 746.0  # 15% of the median run's 0.5x target (4972 s); that run has 6 banks
 
 
+BANK_INDEX = int(sys.argv[sys.argv.index("--bank-index") + 1]) if "--bank-index" in sys.argv else 0
+
+
 def build(n_phi=100, n_t=128):
     from dot_pe import inference
     from dot_pe.inference import get_event_data, _create_single_detector_processor
     kw = json.load(open(RUNDIR / "run_kwargs.json"))
     post = json.load(open(RUNDIR / "Posterior.json"))["init_kwargs"]
     par_dic_0 = post["likelihood"]["init_kwargs"]["par_dic_0"]
-    bank = Path(kw["bank_folder"][0])
+    bank = Path(kw["bank_folder"][BANK_INDEX])
     cfg = json.load(open(bank / "bank_config.json"))
     fbin = np.array(cfg["fbin"])
     m_arr = np.asarray(cfg["m_arr"])
@@ -75,7 +78,7 @@ def main(dry_run=False, n_files=None):
     t_build = time.perf_counter() - t0
     n_det = len(b["sdps"])
     print(f"CPU setup ({n_det} SingleDetectorProcessors): {t_build:.1f} s", flush=True)
-    z = np.load(RUNDIR / "banks/bank_0/intrinsic_samples.npz")
+    z = np.load(RUNDIR / f"banks/bank_{BANK_INDEX}/intrinsic_samples.npz")
     sel, prod_di = z["inds"], z["lnlikes_di"]
     # production threshold: max over all banks' incoherent sums - max_incoherent_lnlike_drop
     gmax_prod = max(float(np.load(f)["incoherent_lnlikes"].max())
@@ -131,7 +134,7 @@ def main(dry_run=False, n_files=None):
         for s0 in range(0, len(inds), 2048):
             out, _, h_raw = g.run_batch(amp[s0:s0 + 2048], phase[s0:s0 + 2048], return_raw=True)
             all_lnl[:, inds[s0:s0 + 2048]] = out
-            resid.offer("bank_0", inds[s0:s0 + 2048], out.sum(axis=0), h_raw)
+            resid.offer(f"bank_{BANK_INDEX}", inds[s0:s0 + 2048], out.sum(axis=0), h_raw)
         peak = max(peak, cp.get_default_memory_pool().used_bytes())
         t_last = time.perf_counter()
     cp.cuda.Device().synchronize()
@@ -177,7 +180,7 @@ def main(dry_run=False, n_files=None):
 
         # Gate 5: residency returns exactly the selected set, equal to the waveforms from disk
         t5 = time.perf_counter()
-        h_sel = resid.finalize("bank_0", gpu_sel)
+        h_sel = resid.finalize(f"bank_{BANK_INDEX}", gpu_sel)
         chk = np.sort(rng.choice(gpu_sel, min(256, len(gpu_sel)), replace=False))
         amp, phase = IntrinsicSampleProcessor._load_amp_and_phase(b["bank"] / "waveforms", chk)
         want = ((amp * np.exp(1j * phase)) * 2.0 ** 64).astype(np.complex64).astype(np.complex128) / 2.0 ** 64
@@ -192,7 +195,9 @@ def main(dry_run=False, n_files=None):
         print("gate5", res["gate5_residency"], flush=True)
     res["gate3_prod"] = g3
     print("gate3", g3, flush=True)
-    json.dump(res, open(OUT / "gpu_check.json", "w"), indent=1, default=float)
+    res["bank_index"] = BANK_INDEX
+    json.dump(res, open(OUT / f"gpu_check_bank{BANK_INDEX}{'_exclusive' if '--exclusive' in sys.argv else ''}.json", "w"),
+              indent=1, default=float)
 
 
 if __name__ == "__main__":
