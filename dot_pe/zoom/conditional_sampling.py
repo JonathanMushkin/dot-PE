@@ -87,6 +87,30 @@ class ConditionalPriorSampler:
         if self.inplane_spin_prior is None:
             raise RuntimeError("Could not identify inplane_spin_prior.")
 
+    @property
+    def remaining_sampled_params(self) -> list[str]:
+        """Parameters drawn uniformly over their prior range, given mchirp, lnq, chieff.
+
+        The order fixes which column of the uniform draws each parameter takes.
+        """
+        if self.aligned_spin:
+            return ["costheta_jn", "cumchidiff"]
+        return [
+            "cumchidiff",
+            "costheta_jn",
+            "phi_jl_hat",
+            "phi12",
+            "cums1r_s1z",
+            "cums2r_s2z",
+        ]
+
+    def param_range(self, name: str) -> tuple[float, float]:
+        """Prior range of a parameter in ``remaining_sampled_params``."""
+        prior = (
+            self.aligned_spin_prior if name == "cumchidiff" else self.inplane_spin_prior
+        )
+        return tuple(prior.range_dic[name])
+
     def _get_fixed_sampled_params(
         self, mchirp: float, lnq: float, chieff: float
     ) -> Dict[str, float]:
@@ -147,17 +171,7 @@ class ConditionalPriorSampler:
         """
         fixed_sampled = self._get_fixed_sampled_params(mchirp, lnq, chieff)
 
-        if self.aligned_spin:
-            remaining_sampled_params = ["costheta_jn", "cumchidiff"]
-        else:
-            remaining_sampled_params = [
-                "cumchidiff",
-                "costheta_jn",
-                "phi_jl_hat",
-                "phi12",
-                "cums1r_s1z",
-                "cums2r_s2z",
-            ]
+        remaining_sampled_params = self.remaining_sampled_params
 
         if method == "qmc":
             sampler = qmc.Halton(
@@ -175,10 +189,7 @@ class ConditionalPriorSampler:
             sampled_params = fixed_sampled.copy()
 
             for j, param_name in enumerate(remaining_sampled_params):
-                if param_name == "cumchidiff":
-                    param_range = self.aligned_spin_prior.range_dic[param_name]
-                else:
-                    param_range = self.inplane_spin_prior.range_dic[param_name]
+                param_range = self.param_range(param_name)
                 sampled_params[param_name] = param_range[0] + u[j, i] * (
                     param_range[1] - param_range[0]
                 )
@@ -269,17 +280,7 @@ class ConditionalPriorSampler:
         if len(lnq) != n_samples or len(chieff) != n_samples:
             raise ValueError("All input arrays must have the same length")
 
-        if self.aligned_spin:
-            remaining_sampled_params = ["costheta_jn", "cumchidiff"]
-        else:
-            remaining_sampled_params = [
-                "cumchidiff",
-                "costheta_jn",
-                "phi_jl_hat",
-                "phi12",
-                "cums1r_s1z",
-                "cums2r_s2z",
-            ]
+        remaining_sampled_params = self.remaining_sampled_params
 
         if method == "qmc":
             sampler = qmc.Halton(
@@ -298,10 +299,7 @@ class ConditionalPriorSampler:
 
             sampled_params = fixed_sampled.copy()
             for j, param_name in enumerate(remaining_sampled_params):
-                if param_name == "cumchidiff":
-                    param_range = self.aligned_spin_prior.range_dic[param_name]
-                else:
-                    param_range = self.inplane_spin_prior.range_dic[param_name]
+                param_range = self.param_range(param_name)
                 sampled_params[param_name] = param_range[0] + u[j, i] * (
                     param_range[1] - param_range[0]
                 )
