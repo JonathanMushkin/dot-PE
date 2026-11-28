@@ -8,7 +8,10 @@ imported read-only from o4a-pe-paper. Sample weights are applied.
 For each event of kwargs/ps/index.json, two figures:
 1. <EVENT>_vs_reference.png: reference run (o4b CPU priority-sampling rerun), recycled GPU run
    (seed + 0) and fresh GPU run;
-2. <EVENT>_vs_production.png: production run, production-recycled GPU run and fresh GPU run.
+2. <EVENT>_vs_production.png: production run and production-recycled GPU run (production's
+   method on both sides; the fresh priority-sampling run is not compared with production).
+and corner/corners.md, all events on one page with a wall-time table. Colors: matplotlib's
+default rotation (C0, C1, C2).
 Each figure carries a wall-time box: the CPU runs (cores, host where recorded) against the GPU runs
 (GPU model, host and its CPU model, cores). Runs whose samples.feather is missing are left out and
 listed. Written to artifacts/research/acceptance/ps/corner/.
@@ -39,7 +42,8 @@ RUNS = REPO / "artifacts/research/acceptance/ps"
 LOGS = REPO / "artifacts/research/logs"
 INDEX = REPO / "research/acceptance/kwargs/ps/index.json"
 OUT = RUNS / "corner"
-COLOR_CPU, COLOR_GPU_REC, COLOR_GPU_FRESH = cs.COLOR_DOTPE, "#9467bd", "#d62728"
+# matplotlib's default color rotation, in order: C0, C1, C2
+COLOR_CPU, COLOR_GPU_REC, COLOR_GPU_FRESH = plt.rcParams["axes.prop_cycle"].by_key()["color"][:3]
 
 
 def load(rd):
@@ -134,9 +138,9 @@ def label(kind, rd):
 
 
 def main(events=None):
+    rows = []
     for ev, v in json.load(open(INDEX)).items():
-        if events and ev not in events:
-            continue
+        plot = not events or ev in events  # the index always lists every event
         num = v["number"]
         ref, prod = Path(v["reference_rundir"]), Path(v["production_rundir"])
         rec, fresh, prodrec = RUNS / f"{ev}_rec_s0", RUNS / f"{ev}_fresh", RUNS / f"{ev}_prod"
@@ -155,14 +159,42 @@ def main(events=None):
                   line("CPU production", w_prod, where_prod),
                   line("GPU fresh (timed)", w_fresh, where_fresh or ""),
                   f"{'  GPU / faster CPU':<24}{w_fresh / target:6.3f}" if w_fresh else "  GPU / faster CPU: —"]
-        figure(ev, num, [(label("CPU priority-sampling rerun (reference)", ref), COLOR_CPU, load(ref)),
-                         (label("GPU, recycled reference inputs, seed + 0", rec), COLOR_GPU_REC, load(rec)),
-                         (label("GPU, fresh", fresh), COLOR_GPU_FRESH, load(fresh))],
-               common + [line("GPU recycled (untimed)", w_rec, "skips stages 2 and 4")], "vs_reference")
-        figure(ev, num, [(label("CPU production", prod), COLOR_CPU, load(prod)),
-                         (label("GPU, recycled production inputs (bestfit)", prodrec), COLOR_GPU_REC, load(prodrec)),
-                         (label("GPU, fresh", fresh), COLOR_GPU_FRESH, load(fresh))],
-               common + [line("GPU prod.-recycled", w_prodrec, "skips stages 2 and 4")], "vs_production")
+        if plot:
+            figure(ev, num, [(label("CPU priority-sampling rerun (reference)", ref), COLOR_CPU, load(ref)),
+                             (label("GPU, recycled reference inputs, seed + 0", rec), COLOR_GPU_REC, load(rec)),
+                             (label("GPU, fresh", fresh), COLOR_GPU_FRESH, load(fresh))],
+                   common + [line("GPU recycled (untimed)", w_rec, "skips stages 2 and 4")], "vs_reference")
+        # production's method only: production against the GPU run on production's inputs (bestfit)
+            figure(ev, num, [(label("CPU production", prod), COLOR_CPU, load(prod)),
+                             (label("GPU, recycled production inputs (bestfit)", prodrec), COLOR_GPU_REC, load(prodrec))],
+                   common + [line("GPU prod.-recycled", w_prodrec, "skips stages 2 and 4")], "vs_production")
+        rows.append((num, ev, v, w_ref, w_prod, w_fresh, where_fresh, target))
+    write_index(rows)
+
+
+def write_index(rows):
+    """corner/corners.md: every event's figures on one page, in event-number order."""
+    lines = ["# P5 corner plots", "",
+             "Design: `research/acceptance/design.md` (revisions 2 and 3); script: "
+             "`research/acceptance/corner_plots.py`. Parameters and styling: the o4b event gallery.", "",
+             "1. Against the reference (o4b CPU priority-sampling rerun): reference (C0), GPU run on the "
+             "reference's recycled inputs, seed + 0 (C1), GPU fresh run (C2).",
+             "2. Against production (production's method, bestfit): production (C0), GPU run on production's "
+             "recycled inputs (C1).", "",
+             "| # | event | CPU priority rerun [s] | CPU production [s] | GPU fresh [s] | GPU / faster CPU | GPU |",
+             "|---|---|---|---|---|---|---|"]
+    fmt = lambda w: "—" if w is None else f"{w:.0f}"
+    for num, ev, v, w_ref, w_prod, w_fresh, where, target in rows:
+        ratio = f"{w_fresh / target:.3f}" if w_fresh else "—"
+        lines.append(f"| {num} | {ev} | {fmt(w_ref)} | {fmt(w_prod)} | {fmt(w_fresh)} | {ratio} | {where or '—'} |")
+    for num, ev, *_ in rows:
+        lines += ["", f"## {num}. {ev}", ""]
+        for name, what in (("vs_reference", "Against the priority-sampling reference"),
+                           ("vs_production", "Against production")):
+            f = OUT / f"{ev}_{name}.png"
+            lines += [f"{what}:", "", f"![{ev} {name}]({f.name})" if f.exists() else "(not yet available)", ""]
+    (OUT / "corners.md").write_text("\n".join(lines) + "\n")
+    print("wrote", OUT / "corners.md", flush=True)
 
 
 if __name__ == "__main__":
