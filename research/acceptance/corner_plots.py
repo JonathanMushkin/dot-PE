@@ -10,11 +10,11 @@ For each event of kwargs/ps/index.json, two figures:
    (seed + 0) and fresh GPU run;
 2. <EVENT>_vs_production.png: production run and production-recycled GPU run (production's
    method on both sides; the fresh priority-sampling run is not compared with production).
-and corner/corners.md, all events on one page with a wall-time table. Colors: matplotlib's
+and research/acceptance/review/corners.md, all events on one page with a wall-time table. Colors: matplotlib's
 default rotation (C0, C1, C2).
 Each figure carries a wall-time box: the CPU runs (cores, host where recorded) against the GPU runs
 (GPU model, host and its CPU model, cores). Runs whose samples.feather is missing are left out and
-listed. Written to artifacts/research/acceptance/ps/corner/.
+listed. Written to research/acceptance/review/corners/ (tracked).
 
 Env: o4a-pe (cogwheel and o4a_pe_paper).
 Usage: python research/acceptance/corner_plots.py [EVENT ...]   (default: all events)
@@ -41,7 +41,7 @@ REPO = Path(__file__).resolve().parents[2]
 RUNS = REPO / "artifacts/research/acceptance/ps"
 LOGS = REPO / "artifacts/research/logs"
 INDEX = REPO / "research/acceptance/kwargs/ps/index.json"
-OUT = RUNS / "corner"
+OUT = REPO / "research/acceptance/review/corners"  # tracked, so the figures are on GitHub
 # matplotlib's default color rotation, in order: C0, C1, C2
 COLOR_CPU, COLOR_GPU_REC, COLOR_GPU_FRESH = plt.rcParams["axes.prop_cycle"].by_key()["color"][:3]
 
@@ -173,7 +173,7 @@ def main(events=None):
 
 
 def write_index(rows):
-    """corner/corners.md: every event's figures on one page, in event-number order."""
+    """review/corners.md: every event's figures on one page, in event-number order."""
     lines = ["# P5 corner plots", "",
              "Design: `research/acceptance/design.md` (revisions 2 and 3); script: "
              "`research/acceptance/corner_plots.py`. Parameters and styling: the o4b event gallery.", "",
@@ -192,9 +192,9 @@ def write_index(rows):
         for name, what in (("vs_reference", "Against the priority-sampling reference"),
                            ("vs_production", "Against production")):
             f = OUT / f"{ev}_{name}.png"
-            lines += [f"{what}:", "", f"![{ev} {name}]({f.name})" if f.exists() else "(not yet available)", ""]
-    (OUT / "corners.md").write_text("\n".join(lines) + "\n")
-    print("wrote", OUT / "corners.md", flush=True)
+            lines += [f"{what}:", "", f"![{ev} {name}](corners/{f.name})" if f.exists() else "(not yet available)", ""]
+    (OUT.parent / "corners.md").write_text("\n".join(lines) + "\n")
+    print("wrote", OUT.parent / "corners.md", flush=True)
 
 
 if __name__ == "__main__":
