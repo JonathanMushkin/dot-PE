@@ -28,7 +28,7 @@ def done(rd):
 
 def main():
     idx = json.load(open(INDEX))
-    speed, rec, fresh, pending = [], [], [], []
+    speed, rec, fresh, pending, prodrows = [], [], [], [], []
     for ev, v in idx.items():
         n = v["number"]
         f = RUNS / f"compare_{ev}.json"
@@ -53,8 +53,20 @@ def main():
         fresh.append(f"| {n} | {ev} | {fr['d_ln_evidence']:.3f} | {fr['ratio_n_eff_i']:.2f} | "
                      f"{fr['ratio_n_eff_e']:.2f} | {jr:.4f} ({jrk}) | {fp['d_ln_evidence']:.3f} | "
                      f"{fp['ratio_n_eff_e']:.2f} | {jp:.4f} ({jpk}) |")
-        if r.get("vs_production") is None:
+        vp = r.get("vs_production")
+        if vp is None:
             pending.append(f"{n} {ev}: production-recycled run (revision 3) not yet run")
+        else:
+            mp = vp["measures"]
+            sa = json.load(open(Path(v["production_rundir"]) / "summary_results.json"))
+            sb = json.load(open(RUNS / f"{ev}_prod/summary_results.json"))
+            bad = [k for k, ok in vp["checks"].items() if not ok]
+            prodrows.append(
+                f"| {n} | {ev} | {mp['d_ln_evidence']:.5f} | {mp['ratio_n_eff_i']:.4f} | "
+                f"{mp['ratio_n_eff_e']:.4f} | {js_max(mp)[0]:.4f} ({js_max(mp)[1]}) | "
+                f"{sb['bestfit_lnlike_max'] - sa['bestfit_lnlike_max']:+.4f} | "
+                f"{sb['lnl_marginalized_max'] - sa['lnl_marginalized_max']:+.4f} | "
+                f"{'pass' if vp['pass_results'] else 'FAIL: ' + ', '.join(bad)} |")
     L = ["# P5 interim summary",
          "",
          f"Generated {time.strftime('%Y-%m-%d %H:%M')} by `research/acceptance/interim_summary.py` from "
@@ -95,7 +107,19 @@ def main():
          "| Δ ln Z vs prod. | n_eff_e ratio vs prod. | largest JS vs prod. |",
          "|---|---|---|---|---|---|---|---|---|", *fresh,
          "",
-         "## 4. Points to look at (written 2026-11-28 from the tables above)",
+         "## 4. GPU production-recycled run against production (revision 3, regime 1)",
+         "",
+         "Both runs use production's rule (bestfit), intrinsic selection, extrinsic samples, event file and "
+         "seed, so they should agree up to numerical precision. Criteria: |Δ ln Z| ≤ 1e-3; n_eff ratios in "
+         "[0.99, 1.01]; JS ≤ max(0.02 bits, 2 × sampling floor). Δ max ln L: GPU minus CPU, the largest "
+         "best-fit (over phase and distance) and the largest distance-marginalized log-likelihood ratio "
+         "over all (intrinsic, extrinsic) pairs.",
+         "",
+         "| # | event | Δ ln Z | n_eff_i ratio | n_eff_e ratio | largest JS [bits] | Δ max best-fit ln L "
+         "| Δ max marginalized ln L | results |",
+         "|---|---|---|---|---|---|---|---|---|", *prodrows,
+         "",
+         "## 5. Points to look at (written 2026-11-28 from the tables above)",
          "",
          "1. Recycled Δ ln Z is far above the seed scatter on events 3 (0.081 against 4e-8), 1 (0.030 "
          "against 3e-6) and R (0.012 against 7e-6). It passes because of the 0.1 floor, but it is a "
@@ -106,8 +130,15 @@ def main():
          "3. Fresh runs draw their own intrinsic selection and extrinsic samples. Against the reference, "
          "|Δ ln Z| reaches 0.61 (event 6) and n_eff_e ratios range from 0.70 to 1.35. There is no CPU "
          "repeat-run scatter in this table to set them against.",
+         "4. Section 4 fails on 4 of 7 events, and its Δ ln Z equals the recycled Δ ln Z of section 2 "
+         "(event 3: 0.081 in both). Production and the reference agree with each other; the GPU differs "
+         "from both by the same amount. On identical inputs the largest marginalized ln L differs by up to "
+         "0.070 (event 2) and the largest best-fit ln L by up to 1.08 (event R, whose ln Z nevertheless "
+         "agrees to 4e-5). This points to the GPU coherent stage, precision or the best-fit "
+         "definition (not yet examined). P2's coherent-kernel tolerance (relative error of the marginalized ln L "
+         "below 1e-3, i.e. up to 0.24 at ln L 240) was looser than the 1e-3 absolute ln Z criterion here.",
          "",
-         "## 5. Not yet available",
+         "## 6. Not yet available",
          "",
          *[f"{i}. {p}" for i, p in enumerate(pending, 1)],
          ""]

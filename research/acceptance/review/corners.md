@@ -24,7 +24,7 @@ Against the priority-sampling reference:
 
 Against production:
 
-(not yet available)
+![GW240515_005301 vs_production](corners/GW240515_005301_vs_production.png)
 
 
 ## 2. GW240923_204006
@@ -35,7 +35,7 @@ Against the priority-sampling reference:
 
 Against production:
 
-(not yet available)
+![GW240923_204006 vs_production](corners/GW240923_204006_vs_production.png)
 
 
 ## 3. GW231028_153006
@@ -46,7 +46,7 @@ Against the priority-sampling reference:
 
 Against production:
 
-(not yet available)
+![GW231028_153006 vs_production](corners/GW231028_153006_vs_production.png)
 
 
 ## 4. GW240920_124024
@@ -57,7 +57,7 @@ Against the priority-sampling reference:
 
 Against production:
 
-(not yet available)
+![GW240920_124024 vs_production](corners/GW240920_124024_vs_production.png)
 
 
 ## 5. GW241011_233834
@@ -68,7 +68,7 @@ Against the priority-sampling reference:
 
 Against production:
 
-(not yet available)
+![GW241011_233834 vs_production](corners/GW241011_233834_vs_production.png)
 
 
 ## 6. GW240916_184352
@@ -79,7 +79,7 @@ Against the priority-sampling reference:
 
 Against production:
 
-(not yet available)
+![GW240916_184352 vs_production](corners/GW240916_184352_vs_production.png)
 
 
 ## 7. GW231002_143916
@@ -90,7 +90,7 @@ Against the priority-sampling reference:
 
 Against production:
 
-(not yet available)
+![GW231002_143916 vs_production](corners/GW231002_143916_vs_production.png)
 
 
 ## R. GW240525_201644
@@ -101,5 +101,5 @@ Against the priority-sampling reference:
 
 Against production:
 
-(not yet available)
+![GW240525_201644 vs_production](corners/GW240525_201644_vs_production.png)
 

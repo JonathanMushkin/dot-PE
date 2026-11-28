@@ -1,6 +1,6 @@
 # P5 interim summary
 
-Generated 2026-11-28 10:11 by `research/acceptance/interim_summary.py` from `compare_<EVENT>.json` (`evaluate_all.py`). Design: `research/acceptance/design.md`, revisions 2 and 3. Interim: no verdict until the corner plots are reviewed. Corner plots: [corners.md](corners.md).
+Generated 2026-11-28 19:04 by `research/acceptance/interim_summary.py` from `compare_<EVENT>.json` (`evaluate_all.py`). Design: `research/acceptance/design.md`, revisions 2 and 3. Interim: no verdict until the corner plots are reviewed. Corner plots: [corners.md](corners.md).
 
 Terms:
 1. Reference run: the o4b CPU priority-sampling rerun of the event (7 workers on 8 cores).
@@ -50,19 +50,27 @@ Production uses another row-selection rule (bestfit), so the second comparison m
 | 6 | GW240916_184352 | 0.605 | 0.86 | 1.35 | 0.0104 (costheta_jn) | 0.689 | 1.58 | 0.0126 (costheta_jn) |
 | R | GW240525_201644 | 0.012 | 0.99 | 1.00 | 0.0029 (chieff) | 0.161 | 1.30 | 0.0078 (mchirp) |
 
-## 4. Points to look at (written 2026-11-28 from the tables above)
+## 4. GPU production-recycled run against production (revision 3, regime 1)
+
+Both runs use production's rule (bestfit), intrinsic selection, extrinsic samples, event file and seed, so they should agree up to numerical precision. Criteria: |Δ ln Z| ≤ 1e-3; n_eff ratios in [0.99, 1.01]; JS ≤ max(0.02 bits, 2 × sampling floor). Δ max ln L: GPU minus CPU, the largest best-fit (over phase and distance) and the largest distance-marginalized log-likelihood ratio over all (intrinsic, extrinsic) pairs.
+
+| # | event | Δ ln Z | n_eff_i ratio | n_eff_e ratio | largest JS [bits] | Δ max best-fit ln L | Δ max marginalized ln L | results |
+|---|---|---|---|---|---|---|---|---|
+| 1 | GW240515_005301 | 0.02947 | 1.0006 | 1.0001 | 0.0020 (mchirp) | -0.1943 | -0.0115 | FAIL: d_ln_evidence |
+| 2 | GW240923_204006 | 0.00176 | 1.0002 | 0.9986 | 0.0022 (lnq) | -0.0872 | -0.0703 | FAIL: d_ln_evidence |
+| 3 | GW231028_153006 | 0.08079 | 1.0005 | 0.9977 | 0.0021 (d_luminosity) | +0.0645 | +0.0469 | FAIL: d_ln_evidence |
+| 4 | GW240920_124024 | 0.00017 | 1.0000 | 1.0000 | 0.0020 (d_luminosity) | -0.0000 | -0.0001 | pass |
+| 5 | GW241011_233834 | 0.00948 | 0.9979 | 0.9942 | 0.1488 (chieff) | +0.0095 | +0.0095 | FAIL: d_ln_evidence, js_chieff |
+| 6 | GW240916_184352 | 0.00007 | 1.0000 | 0.9998 | 0.0024 (lnq) | -0.3677 | +0.0587 | pass |
+| R | GW240525_201644 | 0.00004 | 0.9999 | 1.0000 | 0.0023 (mchirp) | -1.0826 | -0.0001 | pass |
+
+## 5. Points to look at (written 2026-11-28 from the tables above)
 
 1. Recycled Δ ln Z is far above the seed scatter on events 3 (0.081 against 4e-8), 1 (0.030 against 3e-6) and R (0.012 against 7e-6). It passes because of the 0.1 floor, but it is a systematic GPU–CPU difference, not sampling noise. Its cause is not known.
 2. Event 5 has a low effective sample size (production n_eff_e 30). Its JS divergences (0.14 to 0.21 bits) are large in every comparison; the threshold there is set by the sampling floor (2 × floor = 0.30 bits on chieff). The corner plot is the better judge.
 3. Fresh runs draw their own intrinsic selection and extrinsic samples. Against the reference, |Δ ln Z| reaches 0.61 (event 6) and n_eff_e ratios range from 0.70 to 1.35. There is no CPU repeat-run scatter in this table to set them against.
+4. Section 4 fails on 4 of 7 events, and its Δ ln Z equals the recycled Δ ln Z of section 2 (event 3: 0.081 in both). Production and the reference agree with each other; the GPU differs from both by the same amount. On identical inputs the largest marginalized ln L differs by up to 0.070 (event 2) and the largest best-fit ln L by up to 1.08 (event R, whose ln Z nevertheless agrees to 4e-5). This points to the GPU coherent stage, precision or the best-fit definition (not yet examined). P2's coherent-kernel tolerance (relative error of the marginalized ln L below 1e-3, i.e. up to 0.24 at ln L 240) was looser than the 1e-3 absolute ln Z criterion here.
 
-## 5. Not yet available
+## 6. Not yet available
 
-1. 1 GW240515_005301: production-recycled run (revision 3) not yet run
-2. 2 GW240923_204006: production-recycled run (revision 3) not yet run
-3. 3 GW231028_153006: production-recycled run (revision 3) not yet run
-4. 4 GW240920_124024: production-recycled run (revision 3) not yet run
-5. 5 GW241011_233834: production-recycled run (revision 3) not yet run
-6. 6 GW240916_184352: production-recycled run (revision 3) not yet run
-7. 7 GW231002_143916: finished: GW231002_143916_rec_s0
-8. R GW240525_201644: production-recycled run (revision 3) not yet run
+1. 7 GW231002_143916: finished: GW231002_143916_rec_s0, GW231002_143916_rec_s1, GW231002_143916_rec_s2, GW231002_143916_prod
