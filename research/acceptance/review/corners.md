@@ -12,15 +12,15 @@ Design: `research/acceptance/design.md` (revisions 2 and 3); script: `research/a
 | 3 | GW231028_153006 | 2934 | 1824 | 125 | 0.068 | 1x NVIDIA L40S + 8 CPU cores, lgn20 (AMD_EPYC) |
 | 4 | GW240920_124024 | 542 | 521 | 81 | 0.156 | 1x NVIDIA L40S + 8 CPU cores, lgn20 (AMD_EPYC) |
 | 5 | GW241011_233834 | 3331 | 1329 | 423 | 0.318 | 1x NVIDIA L40S + 8 CPU cores, lgn20 (AMD_EPYC) |
-| 6 | GW240916_184352 | 10583 | 11422 | — | — | — |
+| 6 | GW240916_184352 | 10583 | 11422 | 763 | 0.072 | 1x NVIDIA L40S + 8 CPU cores, lgn24 (AMD_EPYC) |
 | 7 | GW231002_143916 | 21545 | 26598 | — | — | — |
-| R | GW240525_201644 | 23587 | 21022 | — | — | — |
+| R | GW240525_201644 | 23587 | 21022 | 511 | 0.024 | 1x NVIDIA L40S + 8 CPU cores, lgn27 (AMD_EPYC) |
 
 ## 1. GW240515_005301
 
 Against the priority-sampling reference:
 
-(not yet available)
+![GW240515_005301 vs_reference](corners/GW240515_005301_vs_reference.png)
 
 Against production:
 
@@ -75,7 +75,7 @@ Against production:
 
 Against the priority-sampling reference:
 
-(not yet available)
+![GW240916_184352 vs_reference](corners/GW240916_184352_vs_reference.png)
 
 Against production:
 
@@ -86,7 +86,7 @@ Against production:
 
 Against the priority-sampling reference:
 
-(not yet available)
+![GW231002_143916 vs_reference](corners/GW231002_143916_vs_reference.png)
 
 Against production:
 
@@ -97,7 +97,7 @@ Against production:
 
 Against the priority-sampling reference:
 
-(not yet available)
+![GW240525_201644 vs_reference](corners/GW240525_201644_vs_reference.png)
 
 Against production:
 
