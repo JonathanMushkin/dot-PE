@@ -2,7 +2,8 @@
 pending (protocol "GPU usage", item 2). Runs on the login node: it only polls `bjobs` and calls
 `lsf_submit.py`. Each submission is appended to artifacts/research/acceptance/ps/submitted.tsv.
 
-Usage: python research/acceptance/drive.py [--from N]   (N: first job number of JOBS to submit)
+Usage: python research/acceptance/drive.py [--from N] [--skip I,J]
+(N: first job number of JOBS to submit; I, J: job numbers already done)
 """
 
 import subprocess
@@ -48,9 +49,10 @@ def live():
 
 def main():
     start = int(sys.argv[sys.argv.index("--from") + 1]) if "--from" in sys.argv else 0
+    skip = {int(x) for x in sys.argv[sys.argv.index("--skip") + 1].split(",")} if "--skip" in sys.argv else set()
     LOG.parent.mkdir(parents=True, exist_ok=True)
     for n, (name, opts, kws) in enumerate(JOBS):
-        if n < start:
+        if n < start or n in skip:
             continue
         while live() >= MAX_LIVE:
             time.sleep(60)

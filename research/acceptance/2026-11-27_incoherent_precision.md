@@ -51,8 +51,12 @@ polarization solve.
    GW240923 bank 2, including 692873 to 692875, against the CPU. The same templates are finite
    on both, and the largest |Δ lnlike| is 9.4e-7 (H), 1.9e-6 (L) and 4.7e-7 (V). Template
    692874 now scores 2.913994, 14.560585 and 1.936890.
-3. Cost: 0.0123 s per 2048 templates on H100 NVL. The L40S cost comes from P5's timed run of
-   event 2 (`progress.md`).
+3. Cost: 0.0123 s per 2048 templates on H100 NVL. On L40S (P5 r2 event 2 timed run, job 888166,
+   3 banks of 2^20 templates), stage 2 took 297.6 s against 192.6 s with the float32 kernel
+   (job 887856): +105 s, or 35 s per bank, including disk reads. The event's total was 429.6 s
+   against its target of 1955 s, so the float32 path with a float64 fallback is not needed.
+4. End to end (job 888166): 207559, 67229 and 732 templates passed the global threshold (67.61)
+   per bank, against production's 207533, 67213 and 732. The global maximum is 87.61.
 
 ## Effect on earlier results
 
