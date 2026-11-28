@@ -8,6 +8,8 @@ Per event this writes, into research/acceptance/kwargs/ps/:
 1. <EVENT>_fresh.json: the reference's settings with nothing recycled (the timed run);
 2. <EVENT>_rec_s{0,1,2}.json: the reference's arguments exactly (its intrinsic selection and,
    where it recycled them, its extrinsic samples), with seed + 0, + 1, + 2.
+3. <EVENT>_prod.json (revision 3): the reference's arguments with production's rule (bestfit),
+   production's extrinsic samples and production's copy of the event file;
 and index.json: event -> reference rundir, production (source) rundir.
 
 Usage: python research/acceptance/make_ps_kwargs.py
@@ -65,6 +67,14 @@ def main():
             rec = dict(args, seed=args["seed"] + k, event_dir=str(OUT_RUNS),
                        rundir=str(OUT_RUNS / f"{ev}_rec_s{k}"))
             json.dump(rec, open(OUT_KW / f"{ev}_rec_s{k}.json", "w"), indent=1)
+        # revision 3: production-recycled run (production's rule, selection, extrinsic samples, event file)
+        src = Path(info["source_run"])
+        n_ext_prod = json.load(open(src / "run_kwargs.json"))["n_ext"]  # event 7's rerun drew 2048, production 3072
+        prod = dict(args, row_selection="bestfit", n_ext=n_ext_prod, seed_pool_lnlike_drop=None,
+                    extrinsic_samples=str(src / "extrinsic_samples.feather"), event=str(src / f"{ev}.npz"),
+                    event_dir=str(OUT_RUNS), rundir=str(OUT_RUNS / f"{ev}_prod"))
+        assert Path(prod["extrinsic_samples"]).exists() and Path(prod["event"]).exists(), ev
+        json.dump(prod, open(OUT_KW / f"{ev}_prod.json", "w"), indent=1)
     json.dump(index, open(OUT_KW / "index.json", "w"), indent=1)
     for ev, v in index.items():
         print(v["number"], ev, round(v["reference_wall_seconds"]), "recycled_extrinsic", v["recycled_extrinsic"])

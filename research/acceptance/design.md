@@ -167,3 +167,45 @@ Compute: 8 exclusive timed jobs and 24 recycled runs in shared jobs. A recycled 
 selected waveforms from disk in stage 5; P4 test 1 took 744 s for 594510 templates. The shared
 jobs therefore get `-W` up to 60 min (`progress.md`, decision of 2026-11-27). The estimate stays
 within revision 1's 20 GPU-hours.
+
+## Revision 3 (2026-11-28, before any revision-3 result)
+
+Reason: the user's decision of 2026-11-28. The group is re-evaluating the o4a and o4b runs and
+tends to replace production runs with priority-sampling runs, but has not done so yet. Until then
+the GPU runner is compared against both: the priority-sampling reruns (revision 2, unchanged) and
+the production runs. Also, no verdict on "similar results" is made without per-event corner plots.
+
+Terms added:
+- Production-recycled GPU run: `dot_pe_gpu.run` with the reference run's arguments, except:
+  1. `row_selection="bestfit"` (production's rule);
+  2. `extrinsic_samples` = the production rundir's `extrinsic_samples.feather` (event 7 included);
+  3. `seed_pool_lnlike_drop = None`;
+  4. `event` = the production rundir's own copy of the event file.
+
+  It keeps the production intrinsic selection (`inds_path`) and the production seed
+  (`research/acceptance/kwargs/ps/<EVENT>_prod.json`). Its inputs equal production's, so it is
+  regime 1 of revision 1.
+
+Measures and criteria added, for each of the 8 events:
+1. Results against production: the production-recycled GPU run against the production run, under
+   revision 1's criterion 2 (regime 1). The criterion is coded in `compare.py`; regime 1 is
+   detected there from equal extrinsic samples and bestfit on both sides.
+2. Code version: revision 1's criterion 4 stands for this comparison. Production predates the
+   incoherent-bound mask, and events 1, 2 and 4 also predate b0246ea and dce2acd. If an event
+   fails item 1, the cause is diagnosed before any rerun. At most 2 CPU reruns are allowed.
+3. Reported without a criterion: the fresh GPU run against the production run.
+4. Corner plots: per event, two figures of the 1-D and 2-D marginals of chirp mass, ln q, chi_eff,
+   luminosity distance, cos theta_JN, ra and dec (`research/acceptance/corner_plots.py`, cogwheel
+   `MultiCornerPlot`, sample weights applied):
+   1. reference run, recycled GPU run (seed + 0) and fresh GPU run;
+   2. production run, production-recycled GPU run and fresh GPU run.
+5. Verdict: the report gives, per event, the numerical results of revision 2 and of item 1, and
+   the two corner plots with a description of every visible difference. The verdict on similar
+   results is made after the user has reviewed the corner plots; the numerical criteria alone do
+   not make it.
+
+Speed is unchanged (revision 2).
+
+Compute: 8 production-recycled runs in shared jobs (`-W` ≤ 60), packed as in revision 2 (events
+2 to 5 in one job; events 1, 6, R and 7 one job each). Corner plots run in one CPU job. This
+stays within revision 1's 20 GPU-hours.

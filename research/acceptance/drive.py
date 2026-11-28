@@ -32,13 +32,21 @@ def rec(n, seeds, w=60, gmem=24):
              "--walltime-min", str(w), "--end-to-end"], [f"{E[n]}_rec_s{s}.json" for s in seeds])
 
 
+def prod(nums, w=60, gmem=24):
+    return (f"p5r3_p" + "".join(map(str, nums)),
+            ["--gpu", "any", "--gmem", str(gmem), "--cores", "8", "--mem-mb", "64000",
+             "--walltime-min", str(w), "--end-to-end"], [f"{E[n]}_prod.json" for n in nums])
+
+
 # Order: small events first, so that results arrive early; event 7 (disk streaming) last.
 JOBS = [timed(2, 60), rec(2, [0, 1, 2]), timed(4, 30), rec(4, [0, 1, 2]),
         timed(3, 30), rec(3, [0, 1, 2]), timed(5, 30), rec(5, [0, 1, 2]),
         timed(1, 90), rec(1, [0, 1]), rec(1, [2]),
         timed(6, 120), rec(6, [0, 1]), rec(6, [2]),
         timed("R", 90), rec("R", [0, 1]), rec("R", [2]),
-        timed(7, 180), rec(7, [0]), rec(7, [1]), rec(7, [2])]
+        timed(7, 180), rec(7, [0]), rec(7, [1]), rec(7, [2]),
+        # revision 3: production-recycled runs (jobs 21 to 25)
+        prod([2, 3, 4, 5]), prod([1]), prod([6]), prod(["R"]), prod([7])]
 
 
 def live():
