@@ -26,6 +26,7 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
+import pytest
 from scipy.stats import multivariate_normal
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -337,6 +338,48 @@ def test_zoomer_with_weights():
         print(f"  Warning: Could not create corner plot: {e}")
 
     print("  Zoomer integration test passed\n")
+
+
+@pytest.mark.parametrize("aligned_spin", [False, True])
+def test_zoom_prior_weights_normalised(aligned_spin):
+    """E_proposal[exp(log_prior_weights)] = 1 when the proposal covers the prior.
+
+    The bounds equal the prior support, so the zoom proposal (truncated
+    Gaussian over mchirp, lnq, chieff times the conditional prior sampler)
+    covers the target prior and the mean importance weight must be 1.
+    """
+    cond_sampler = ConditionalPriorSampler(
+        mchirp_range=(25.0, 35.0),
+        q_min=0.3,
+        f_ref=50.0,
+        aligned_spin=aligned_spin,
+        seed=42,
+    )
+
+    zoomer = Zoomer(engine_seed=42)
+    zoomer.mean = np.array([30.0, np.log(0.5), 0.0])
+    zoomer.cov = np.diag([4.0, 0.25, 0.25])
+    zoomer.distribution = multivariate_normal(mean=zoomer.mean, cov=zoomer.cov)
+
+    bounds = {
+        0: (25.0, 35.0),
+        1: (np.log(0.3), 0.0),
+        2: (-1.0, 1.0),
+    }
+
+    n = 2000
+    df = draw_from_zoomer(
+        zoomer=zoomer,
+        cond_sampler=cond_sampler,
+        bounds=bounds,
+        n_samples=n,
+        seed=42,
+    )
+    w = np.exp(df["log_prior_weights"].values)
+    offset = abs(w.mean() - 1.0)
+
+    assert offset < 5 * w.std() / np.sqrt(n), (w.mean(), w.std())
+    assert offset < 0.25, (w.mean(), w.std())
 
 
 if __name__ == "__main__":

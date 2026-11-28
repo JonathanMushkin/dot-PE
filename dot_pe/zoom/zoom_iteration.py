@@ -111,7 +111,10 @@ def draw_from_zoomer(
     )
     aligned_spin_prior = UniformEffectiveSpinPrior()
 
-    log_assumed_prior = np.vectorize(mass_prior.lnprior)(
+    # Weight = target prior density / proposal density, both over the
+    # parameters the sampler actually drew (cond_sampler.remaining_sampled_params
+    # plus mchirp, lnq, chieff).
+    log_target = np.vectorize(mass_prior.lnprior)(
         df["mchirp"].values, df["lnq"].values
     ) + np.vectorize(aligned_spin_prior.lnprior)(
         df["chieff"].values,
@@ -119,26 +122,26 @@ def draw_from_zoomer(
         df["m1"].values,
         df["m2"].values,
     )
-    log_gaussian = np.log(gaussian_pdfs)
+    inplane = cond_sampler.inplane_spin_prior
+    if cond_sampler.aligned_spin:
+        # Only costheta_jn is drawn among the in-plane/inclination parameters;
+        # its target density is isotropic, 1 / width(costheta_jn).
+        lo, hi = inplane.range_dic["costheta_jn"]
+        log_target = log_target - np.log(hi - lo)
+    else:
+        cols = inplane.sampled_params + inplane.conditioned_on
+        log_target = log_target + np.vectorize(inplane.lnprior)(
+            *(df[c].values for c in cols)
+        )
 
-    remaining_sampled_params = [
-        "cumchidiff",
-        "costheta_jn",
-        "phi_jl_hat",
-        "phi12",
-        "cums1r_s1z",
-        "cums2r_s2z",
-    ]
-    log_uniform = 0.0
-    for param_name in remaining_sampled_params:
-        if param_name == "cumchidiff":
-            param_range = cond_sampler.aligned_spin_prior.range_dic[param_name]
-        else:
-            param_range = cond_sampler.inplane_spin_prior.range_dic[param_name]
-        log_uniform -= np.log(param_range[1] - param_range[0])
-
-    log_proposal = log_gaussian + log_uniform
-    df["log_prior_weights"] = log_assumed_prior - log_proposal
+    log_uniform = -sum(
+        np.log(hi - lo)
+        for lo, hi in map(
+            cond_sampler.param_range, cond_sampler.remaining_sampled_params
+        )
+    )
+    log_proposal = np.log(gaussian_pdfs) + log_uniform
+    df["log_prior_weights"] = log_target - log_proposal
 
     return df
 
